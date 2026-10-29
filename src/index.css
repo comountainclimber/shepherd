@@ -1,0 +1,132 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-bg: #0e0f12;
+  --color-surface: #14161b;
+  --color-surface-2: #1b1e25;
+  --color-surface-3: #232733;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.16);
+  --color-text: #e8e6e1;
+  --color-muted: #908d86;
+  --color-faint: #6c6963;
+  --color-brass: #c4a574;
+  --color-brass-2: #d7bc93;
+  --color-ink: #1a140c;
+  --color-queued: #8b909a;
+  --color-running: #d4a054;
+  --color-completed: #8eae88;
+  --color-blocked: #d09255;
+  --color-failed: #d17b6a;
+  --color-approval: #9aa3d4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  background: #0e0f12;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: rgb(196 165 116 / 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2e38 transparent;
+}
+
+@keyframes rail-live {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.rail-live {
+  animation: rail-live 1.6s ease-in-out infinite;
+}
+
+.react-flow {
+  --xy-background-color: #0e0f12;
+  background: #0e0f12;
+}
+
+.react-flow__attribution {
+  display: none !important;
+}
+
+.react-flow__minimap {
+  background: #14161b !important;
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: none !important;
+}
+
+.react-flow__controls {
+  border: 1px solid rgb(255 255 255 / 0.08);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  width: 22px;
+  height: 22px;
+  background: #1b1e25;
+  border-bottom: 1px solid rgb(255 255 255 / 0.08);
+  fill: #e8e6e1;
+}
+
+.react-flow__controls-button:hover {
+  background: #232733;
+}
+
+.react-flow__handle {
+  width: 7px;
+  height: 7px;
+  background: #232733;
+  border: 1px solid rgb(255 255 255 / 0.35);
+}
+
+.react-flow__edge-path {
+  stroke-linecap: round;
+}
+
+.react-flow__selection {
+  background: rgb(196 165 116 / 0.08);
+  border: 1px solid rgb(196 165 116 / 0.45);
+}
+
+.react-flow__node {
+  font-family: inherit;
+}
+
+.react-flow__pane {
+  cursor: grab;
+}
