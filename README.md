@@ -31,9 +31,34 @@ The sidebar shows which ones Shepherd can use.
 - **Gates.** Each dependency opens when the upstream task finishes, or only when it is verified (the default). A task behind a closed gate cannot start.
 - **Decompose.** This turns a description into investigate, implement, and verify steps that you can edit before adding them to the board.
 
+## Adding tasks from an agent or script
+
+Agents and scripts can put tasks on the board without the UI. Running, reviewing, and merging still happen in Shepherd.
+
+`GET /api/tasks` lists every project and its tasks, with ids, status, whether each is verified, its branch, and what it depends on.
+
+`POST /api/tasks` adds one task, or several with a `tasks` list:
+
+```sh
+curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json' -d '{
+  "project": "Greeter",
+  "tasks": [
+    { "name": "Wave CLI", "objective": "Create wave.mjs ...", "checkCommand": "npm test", "agent": "codex" },
+    { "name": "Try the wave", "runner": "human", "dependsOn": [{ "task": "Wave CLI", "gate": "verified" }] }
+  ]
+}'
+```
+
+- `project` is a project's id or name. Each task needs a `name`. `objective` defaults to the name.
+- Optional fields are `description` (extra context for the agent), `acceptance` (a list of "done when" lines), `checkCommand`, `runner` (`agent` or `human`), and `agent` (`codex` or `claude`, default `codex`).
+- `dependsOn` lists tasks by id or name. A task can depend on tasks already in the project, or on earlier tasks in the same request. The gate defaults to `verified`.
+- The response gives the new task ids. A bad request gets a 400 that says what is wrong.
+
+When Shepherd is open in a browser, the server returns 202 and that tab adds the tasks within a few seconds. The server waits for the tab because the tab saves the whole board on every change and would overwrite anything written in between. If no tab has checked in for 90 seconds, the server writes the tasks itself and returns 201.
+
 ## Where things are stored
 
-- The board is saved in `.shepherd/state.json`, with rolling backups in `.shepherd/backups/`. Every open tab reads and writes the same file.
+- The board is saved in `.shepherd/state.json`, with rolling backups in `.shepherd/backups/`. Every open tab reads and writes the same file. Tasks sent to the API wait in `.shepherd/inbox.json` until an open tab saves them.
 - Worktrees live in `.shepherd/worktrees/`. Branches live in each project's repository.
 - Clearing the workspace or deleting a task removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
 

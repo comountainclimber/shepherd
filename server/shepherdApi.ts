@@ -2,7 +2,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
+import { loadState } from "../src/model/migrate";
+import type { OrchestrationState } from "../src/model/types";
 import { CODEX_MODEL, isDemoState, workspace } from "../src/model/workspace";
+import { boardSummary, createInbox } from "./intake";
 import { parseAgentLine } from "../src/runner/parse";
 import {
   changes,
@@ -51,6 +54,9 @@ export function shepherdApi(): Plugin {
   const sandbox = path.resolve(process.cwd(), ".agent-sandbox");
   const worktrees = path.resolve(process.cwd(), ".shepherd/worktrees");
   const stateFile = path.resolve(process.cwd(), ".shepherd/state.json");
+  const inbox = createInbox(path.resolve(process.cwd(), ".shepherd/inbox.json"), (state) =>
+    writeSharedState(stateFile, { state: { state }, version: 2 }),
+  );
   return {
     name: "shepherd-api",
     configureServer(server) {
@@ -66,6 +72,7 @@ export function shepherdApi(): Plugin {
           if (req.method === "PUT") {
             const body = await readJson(req);
             writeSharedState(stateFile, body);
+            inbox.saved(body);
             sendJson(res, 200, { ok: true });
             return;
           }
@@ -74,6 +81,25 @@ export function shepherdApi(): Plugin {
             sendJson(res, 200, { ok: true });
             return;
           }
+        }
+        if (url.pathname === "/api/tasks" && (req.method === "GET" || req.method === "POST")) {
+          const board = savedBoard(stateFile);
+          if ("error" in board) {
+            sendJson(res, 409, { error: board.error });
+            return;
+          }
+          if (req.method === "GET") {
+            const { state, pending } = inbox.flushOrPreview(board.state);
+            sendJson(res, 200, boardSummary(state, pending));
+            return;
+          }
+          const result = inbox.add(board.state, await readJson(req));
+          sendJson(res, "error" in result ? 400 : result.applied ? 201 : 202, result);
+          return;
+        }
+        if (req.method === "GET" && url.pathname === "/api/inbox") {
+          sendJson(res, 200, { batches: inbox.poll() });
+          return;
         }
         if (req.method === "GET" && url.pathname === "/api/agents") {
           const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
@@ -396,6 +422,13 @@ function commandSucceeds(cmd: string, args: string[], accept: (text: string) => 
       resolve(accept(output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")));
     });
   });
+}
+
+function savedBoard(file: string): { state: OrchestrationState } | { error: string } {
+  if (!existsSync(file)) return { state: workspace() };
+  const body = readSharedState(file) as { state?: { state?: unknown } } | null;
+  const state = loadState(body?.state?.state);
+  return state ? { state } : { error: `Shepherd cannot read the saved board in ${file}, so it will not add tasks to it.` };
 }
 
 function readSharedState(file: string): unknown {

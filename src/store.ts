@@ -216,3 +216,18 @@ export async function pullSharedState() {
     applyingRemote = false;
   }
 }
+
+/** Applies tasks that agents and scripts sent to POST /api/tasks. The server drops each batch once a save includes it. */
+export async function drainInbox() {
+  if (!loadedFromServer || !useShepherd.persist.hasHydrated()) return;
+  try {
+    const response = await fetch("/api/inbox");
+    if (!response.ok) return;
+    const body = (await response.json()) as { batches?: { actions?: Action[] }[] };
+    for (const action of (body.batches ?? []).flatMap((batch) => batch.actions ?? [])) {
+      if (action?.type === "createTask") useShepherd.getState().dispatch(action);
+    }
+  } catch {
+    // The next poll tries again.
+  }
+}
