@@ -1,18 +1,35 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { CODEX_MODEL, isDemoState, workspace } from "../src/model/workspace";
 import { parseAgentLine } from "../src/runner/parse";
-import { changedPaths, type FileStamp } from "../src/runner/snapshot";
+import {
+  changes,
+  commitAll,
+  ensureRepo,
+  gitAvailable,
+  isTaskBranch,
+  isTaskName,
+  mergeBranch,
+  openWorktree,
+  prepareRun,
+  serialized,
+  worktreeFolder,
+  type Author,
+  type Worktree,
+} from "./git";
 
 type AgentCli = "claude" | "codex";
 
 interface RunBody {
   taskId?: string;
+  name?: string;
   workspace?: string;
   directory?: string;
   worktree?: string;
+  branch?: string;
+  upstream?: string[];
   prompt?: string;
   resumeId?: string | null;
   provider?: string;
@@ -20,14 +37,19 @@ interface RunBody {
 
 interface ActiveRun {
   child: ChildProcess;
-  dir: string;
-  shared: boolean;
+  stopped: boolean;
 }
 
 const runs = new Map<string, ActiveRun>();
 
+const AUTHORS: Record<AgentCli, Author> = {
+  codex: { name: "Codex", email: "codex@shepherd.local" },
+  claude: { name: "Claude Code", email: "claude-code@shepherd.local" },
+};
+
 export function shepherdApi(): Plugin {
   const sandbox = path.resolve(process.cwd(), ".agent-sandbox");
+  const worktrees = path.resolve(process.cwd(), ".shepherd/worktrees");
   const stateFile = path.resolve(process.cwd(), ".shepherd/state.json");
   return {
     name: "shepherd-api",
@@ -54,25 +76,37 @@ export function shepherdApi(): Plugin {
           }
         }
         if (req.method === "GET" && url.pathname === "/api/agents") {
-          const status = await agentStatus();
-          sendJson(res, 200, { ...status, workspace: sandbox });
+          const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
+          sendJson(res, 200, { ...status, git, workspace: sandbox });
           return;
         }
         if (req.method === "POST" && url.pathname === "/api/checks") {
-          const body = (await readJson(req)) as { workspace?: string; directory?: string; command?: string };
+          const body = (await readJson(req)) as { workspace?: string; directory?: string; branch?: string; command?: string };
           const command = body.command?.trim() ?? "";
-          const workspace = resolveWorkspace(body.workspace, sandbox);
-          if ("error" in workspace) {
-            sendJson(res, 400, { error: workspace.error });
+          const folder = checkFolder(body, sandbox, worktrees);
+          if (!command || "error" in folder) {
+            sendJson(res, 400, { error: command ? (folder as { error: string }).error : "No command to run." });
             return;
           }
-          const dir = inside(workspace.path, body.directory);
-          if (!command || !dir) {
-            sendJson(res, 400, { error: command ? "The project folder must stay inside the workspace." : "No command to run." });
+          sendJson(res, 200, await runCheckCommand(folder.path, command));
+          return;
+        }
+        if (req.method === "POST" && url.pathname === "/api/merge") {
+          const body = (await readJson(req)) as { workspace?: string; directory?: string; branch?: string; name?: string };
+          const dir = projectFolder(body, sandbox);
+          const branch = body.branch ?? "";
+          if ("error" in dir || !isTaskBranch(branch)) {
+            sendJson(res, 400, { error: "error" in dir ? dir.error : "This task has no branch to merge." });
             return;
           }
-          mkdirSync(dir, { recursive: true });
-          sendJson(res, 200, await runCheckCommand(dir, command));
+          try {
+            const merged = await serialized(dir.path, () =>
+              mergeBranch(realpathSync(dir.path), branch, `Merge ${body.name?.trim() || branch} (${branch})`),
+            );
+            sendJson(res, 200, merged);
+          } catch (error) {
+            sendJson(res, 409, { error: message(error) });
+          }
           return;
         }
         if (req.method === "POST" && url.pathname === "/api/runs/cancel") {
@@ -80,6 +114,7 @@ export function shepherdApi(): Plugin {
           const taskId = body.taskId ?? "";
           const run = runs.get(taskId);
           if (run) {
+            run.stopped = true;
             run.child.kill("SIGTERM");
             runs.delete(taskId);
           }
@@ -88,7 +123,7 @@ export function shepherdApi(): Plugin {
         }
         if (req.method === "POST" && url.pathname === "/api/runs") {
           const body = (await readJson(req)) as RunBody;
-          await startRun(res, body, sandbox);
+          await startRun(res, body, sandbox, worktrees);
           return;
         }
         next();
@@ -97,65 +132,65 @@ export function shepherdApi(): Plugin {
   };
 }
 
-async function startRun(res: import("node:http").ServerResponse, body: RunBody, sandbox: string) {
+async function startRun(res: import("node:http").ServerResponse, body: RunBody, sandbox: string, worktrees: string) {
   const taskId = body.taskId?.trim();
   const prompt = body.prompt?.trim();
   if (!taskId || !prompt) {
     sendJson(res, 400, { ok: false, error: "A task id and prompt are required." });
     return;
   }
-  const workspace = resolveWorkspace(body.workspace, sandbox);
-  if ("error" in workspace) {
-    sendJson(res, 400, { ok: false, error: workspace.error });
+  const dir = projectFolder(body, sandbox);
+  const name = body.worktree?.trim() ?? "";
+  if ("error" in dir || !isTaskName(name)) {
+    sendJson(res, 400, { ok: false, error: "error" in dir ? dir.error : `Not a usable task folder name: ${name}` });
     return;
   }
-  const dir = inside(workspace.path, body.directory);
-  const worktree = body.worktree?.trim().replace(/^\/+|\/+$/g, "") ?? "";
-  const own = dir && worktree ? inside(dir, worktree) : dir;
-  if (!dir || !own) {
-    sendJson(res, 400, { ok: false, error: "The project folder and task folder must stay inside the workspace." });
-    return;
-  }
-  mkdirSync(own, { recursive: true });
   const existing = runs.get(taskId);
-  if (existing) existing.child.kill("SIGTERM");
+  if (existing) {
+    existing.stopped = true;
+    existing.child.kill("SIGTERM");
+  }
 
+  res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-cache" });
+  const write = (event: Record<string, unknown>) => {
+    res.write(`${JSON.stringify(event)}\n`);
+  };
   const provider: AgentCli = body.provider === "codex" ? "codex" : "claude";
   const status = await agentStatus();
   if ((provider === "claude" && !status.claude) || (provider === "codex" && !status.codex)) {
-    const name = provider === "codex" ? "Codex" : "Claude Code";
-    res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-cache" });
-    res.end(`${JSON.stringify({ kind: "error", error: `${name} is not logged in.` })}\n`);
+    res.end(`${JSON.stringify({ kind: "error", error: `${AUTHORS[provider].name} is not logged in.` })}\n`);
+    return;
+  }
+
+  const author = AUTHORS[provider];
+  let tree: Worktree;
+  let merged: string[];
+  try {
+    [tree, merged] = await serialized(dir.path, async () => {
+      const repo = await ensureRepo(dir.path);
+      const opened = await openWorktree(repo, worktrees, taskId, name, body.branch);
+      return [opened, await prepareRun(opened, body.upstream ?? [], author)] as const;
+    });
+  } catch (error) {
+    res.end(`${JSON.stringify({ kind: "error", error: message(error) })}\n`);
     return;
   }
 
   const command = agentCommand(provider, prompt, body.resumeId ?? null);
-  const before = listFiles(dir);
   const child = spawn(command.cmd, command.args, {
-    cwd: dir,
+    cwd: tree.folder,
     env: process.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdin?.end();
-  const run: ActiveRun = { child, dir, shared: false };
-  for (const [otherId, other] of runs) {
-    if (otherId === taskId || !overlaps(other.dir, dir)) continue;
-    other.shared = true;
-    run.shared = true;
-  }
+  const run: ActiveRun = { child, stopped: false };
   runs.set(taskId, run);
-
-  res.writeHead(200, {
-    "content-type": "application/x-ndjson; charset=utf-8",
-    "cache-control": "no-cache",
-  });
-  const write = (event: Record<string, unknown>) => {
-    res.write(`${JSON.stringify(event)}\n`);
-  };
-  write({ kind: "started", workspace: dir });
+  write({ kind: "started", branch: tree.branch, folder: tree.folder, target: tree.target });
+  if (merged.length) write({ kind: "activity", text: `Merged ${merged.join(", ")} into ${tree.branch}` });
 
   let buffer = "";
   let lastActivity = "";
+  let summary = "";
   const consume = (chunk: Buffer) => {
     buffer += chunk.toString("utf8");
     const lines = buffer.split(/\r?\n/);
@@ -164,12 +199,12 @@ async function startRun(res: import("node:http").ServerResponse, body: RunBody, 
       const parsed = parseAgentLine(line);
       if (!parsed) continue;
       if (parsed.chatId) write({ kind: "chat", id: parsed.chatId });
-      if (parsed.activity) {
+      if (parsed.activity && parsed.activity !== lastActivity) {
         lastActivity = parsed.activity;
         write({ kind: "activity", text: parsed.activity });
       }
       if (parsed.done) {
-        const summary = parsed.summary && parsed.summary !== "Codex finished" ? parsed.summary : lastActivity || parsed.summary;
+        summary = parsed.summary && parsed.summary !== "Codex finished" ? parsed.summary : lastActivity || parsed.summary || "";
         write({ kind: "result", ok: parsed.ok !== false, summary });
       }
     }
@@ -180,26 +215,69 @@ async function startRun(res: import("node:http").ServerResponse, body: RunBody, 
     const text = chunk.toString("utf8").replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
     if (!text || /Reading additional input from stdin/.test(text)) return;
     stderrTail = `${stderrTail}\n${text}`.slice(-2000);
-    write({ kind: "activity", text: text.slice(0, 240) });
+    const notice = withoutLogLines(text);
+    if (notice) write({ kind: "activity", text: notice.slice(0, 240) });
   });
   child.on("error", (error) => {
     write({ kind: "error", error: error.message });
   });
-  child.on("close", (code) => {
+  child.on("close", async (code) => {
     if (runs.get(taskId) === run) runs.delete(taskId);
     if (buffer.trim()) consume(Buffer.from("\n"));
-    const all = changedPaths(before, listFiles(dir));
-    const mine = worktree ? all.filter((file) => file.startsWith(`${worktree}/`)) : all;
-    const changed = (run.shared ? mine : all).slice(0, 40);
-    const files = changed.length ? `Wrote ${changed.join(", ")}` : "No files changed";
-    const opened = changed.flatMap((file) => {
-      const text = readTextPreview(dir, file);
-      return text == null ? [] : [{ path: file, text }];
-    });
+    // A stopped run's changes stay uncommitted; the next run commits them before it starts.
+    if (run.stopped) {
+      res.end();
+      return;
+    }
     const error = code === 0 ? undefined : exitError(stderrTail);
-    write({ kind: "exit", code: code ?? 1, files, changed, opened, error });
+    try {
+      const diff = await serialized(dir.path, async () => {
+        await commitAll(tree.folder, [(body.name?.trim() || name).slice(0, 72), summary.slice(0, 2000)], author);
+        return changes(tree.folder, tree.branch);
+      });
+      const files = diff.files.length
+        ? `${diff.files.length} ${diff.files.length === 1 ? "file" : "files"} changed on ${tree.branch}`
+        : "No files changed";
+      write({ kind: "exit", code: code ?? 1, files, changed: diff.files, opened: diff.diffs, head: diff.head, error });
+    } catch (commitError) {
+      write({ kind: "error", error: `Could not commit the run: ${message(commitError)}` });
+      write({ kind: "exit", code: code ?? 1 });
+    }
     res.end();
   });
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function projectFolder(body: { workspace?: string; directory?: string }, sandbox: string): { path: string } | { error: string } {
+  if (!body.directory?.trim()) return { error: "This project has no folder." };
+  const workspace = resolveWorkspace(body.workspace, sandbox);
+  if ("error" in workspace) return workspace;
+  const dir = inside(workspace.path, body.directory);
+  return dir ? { path: dir } : { error: "The project folder must stay inside the workspace." };
+}
+
+/** A task with a branch is checked in its worktree; anything else is checked in the project folder. */
+function checkFolder(
+  body: { workspace?: string; directory?: string; branch?: string },
+  sandbox: string,
+  worktrees: string,
+): { path: string } | { error: string } {
+  const dir = projectFolder(body, sandbox);
+  if ("error" in dir || !body.branch) {
+    if (!("error" in dir)) mkdirSync(dir.path, { recursive: true });
+    return dir;
+  }
+  if (!isTaskBranch(body.branch)) return { error: `Not a Shepherd branch: ${body.branch}` };
+  let folder: string;
+  try {
+    folder = worktreeFolder(worktrees, realpathSync(dir.path), body.branch);
+  } catch {
+    return { error: `The project folder ${dir.path} does not exist.` };
+  }
+  return existsSync(folder) ? { path: folder } : { error: `The worktree for ${body.branch} is missing. Run the task again to recreate it.` };
 }
 
 const CHECK_OUTPUT_LIMIT = 64_000;
@@ -233,9 +311,21 @@ export function runCheckCommand(
   });
 }
 
+/** Timestamped tracing output from the CLI itself, such as Codex failing to reach one of its MCP servers. */
+const LOG_LINE = /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/;
+
+export function withoutLogLines(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !LOG_LINE.test(line))
+    .join("\n");
+}
+
 export function exitError(stderr: string): string | undefined {
   const lines = stderr.split("\n").map((line) => line.trim()).filter(Boolean);
-  const line = lines.find((item) => /^error\b/i.test(item)) ?? lines.at(-1);
+  const own = lines.filter((line) => !LOG_LINE.test(line));
+  const line = own.find((item) => /^error\b/i.test(item)) ?? own.at(-1) ?? lines.at(-1);
   return line?.slice(0, 240);
 }
 
@@ -245,10 +335,6 @@ export function inside(base: string, relative: string | undefined): string | nul
   if (path.isAbsolute(trimmed)) return null;
   const resolved = path.resolve(base, trimmed);
   return resolved === base || resolved.startsWith(base + path.sep) ? resolved : null;
-}
-
-export function overlaps(a: string, b: string): boolean {
-  return a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
 }
 
 function resolveWorkspace(requested: string | undefined, sandbox: string): { path: string } | { error: string } {
@@ -310,45 +396,6 @@ function commandSucceeds(cmd: string, args: string[], accept: (text: string) => 
       resolve(accept(output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")));
     });
   });
-}
-
-function readTextPreview(root: string, relative: string): string | null {
-  try {
-    const info = statSync(path.join(root, relative));
-    if (!info.isFile() || info.size > 20_000) return null;
-    const bytes = readFileSync(path.join(root, relative));
-    if (bytes.includes(0)) return null;
-    return bytes.toString("utf8");
-  } catch {
-    return null;
-  }
-}
-
-function listFiles(root: string): FileStamp[] {
-  const out: FileStamp[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (depth > 6) return;
-    let names: string[] = [];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      if (name === ".git" || name === "node_modules" || name === "dist" || name === ".shepherd") continue;
-      const full = path.join(dir, name);
-      let info;
-      try {
-        info = statSync(full);
-      } catch {
-        continue;
-      }
-      if (info.isDirectory()) walk(full, depth + 1);
-      else if (info.isFile()) out.push({ path: path.relative(root, full), size: info.size, mtimeMs: info.mtimeMs });
-    }
-  };
-  walk(root, 0);
-  return out;
 }
 
 function readSharedState(file: string): unknown {

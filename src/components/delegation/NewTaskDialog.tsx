@@ -47,7 +47,7 @@ export function NewTaskDialog() {
     <Dialog
       open={open}
       title="New task"
-      subtitle="An agent runs it in the project folder, or you do it yourself and sign it off."
+      subtitle="An agent runs it on its own branch of the project, or you do it yourself and sign it off."
       onClose={close}
       footer={
         <>
@@ -123,8 +123,8 @@ export function NewTaskDialog() {
           />
         </Field>
         <p className="-mt-2 text-[11px] leading-5 text-faint">
-          Shepherd runs it in {project?.directory ? `${project.directory}/` : "the project folder"} when the work is done. Exit 0 passes; anything
-          else fails the task and its output goes back to the agent.
+          Shepherd runs it when the work is done: in the task's worktree for an agent, in {project?.directory ?? "the project"}/ for you. Exit 0
+          passes; anything else fails the task and its output goes back to the agent.
         </p>
         <fieldset>
           <legend className="mb-1 text-[11px] text-muted">Starts after</legend>

@@ -15,18 +15,18 @@ export function Sidebar() {
   const selectTask = useShepherd((store) => store.selectTask);
   const yours = tasksForProject(state, ui.projectId).filter((task) => needsMe(task, state.tasks, state.dependencies));
   const [workspace, setWorkspace] = useState(workspacePath);
-  const [agentsOnline, setAgentsOnline] = useState<{ claude: boolean; codex: boolean } | null>(null);
+  const [agentsOnline, setAgentsOnline] = useState<{ claude: boolean; codex: boolean; git: boolean } | null>(null);
 
   useEffect(() => {
     agentStatus()
       .then((status) => {
-        setAgentsOnline({ claude: status.claude, codex: status.codex });
+        setAgentsOnline({ claude: status.claude, codex: status.codex, git: status.git });
         if (!workspacePath() && status.workspace) {
           setWorkspacePath(status.workspace);
           setWorkspace(status.workspace);
         }
       })
-      .catch(() => setAgentsOnline({ claude: false, codex: false }));
+      .catch(() => setAgentsOnline({ claude: false, codex: false, git: false }));
   }, []);
 
   return (
@@ -129,6 +129,9 @@ export function Sidebar() {
             ? "Checking Claude and Codex…"
             : `Claude ${agentsOnline.claude ? "ready" : "signed out"} · Codex ${agentsOnline.codex ? "ready" : "signed out"}`}
         </p>
+        {agentsOnline && !agentsOnline.git ? (
+          <p className="mt-1 text-[11px] leading-4 text-failed">git is not installed, so agent tasks cannot run.</p>
+        ) : null}
         <button type="button" className="mt-2 text-[12px] text-muted hover:text-text" onClick={clearWorkspace}>
           Clear workspace
         </button>

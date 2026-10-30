@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { formatClock } from "../../model/format";
 import { outgoing } from "../../model/selectors";
 import { CHECK_LABEL, GATE_LABEL, type Task, type VerificationCheck } from "../../model/types";
 import { dependencySatisfied, isFullyVerified } from "../../model/verify";
-import { runCheck } from "../../runner/live";
+import { mergeTask, runCheck } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Button } from "../ui";
 import { useSelectedTask } from "./useSelectedTask";
@@ -71,16 +72,25 @@ export function Verification() {
           </ul>
         </section>
       ) : null}
+      {task.git && task.filesChanged.length ? (
+        <h3 className="text-[11px] text-muted">
+          What it changed on <span className="font-mono text-text">{task.git.branch}</span>, not counting upstream work
+        </h3>
+      ) : null}
       <ul className="space-y-2">
         {task.previews.map((preview) => (
           <li key={preview.path} className="border border-line">
             <div className="border-b border-line px-2 py-1 font-mono text-[11px] text-muted">{preview.path}</div>
-            <pre className="max-h-52 overflow-auto whitespace-pre-wrap px-2 py-2 font-mono text-[11px] leading-5 text-text">{preview.text}</pre>
+            {task.git ? (
+              <Diff text={preview.text} />
+            ) : (
+              <pre className="max-h-52 overflow-auto whitespace-pre-wrap px-2 py-2 font-mono text-[11px] leading-5 text-text">{preview.text}</pre>
+            )}
           </li>
         ))}
         {unshown.length ? (
           <li className="border border-line px-2 py-1.5">
-            <div className="text-[11px] text-muted">Also changed (too large or not text, open them yourself):</div>
+            <div className="text-[11px] text-muted">Also changed, not shown here:</div>
             <ul className="mt-1 space-y-0.5 font-mono text-[11px] text-text">
               {unshown.map((path) => (
                 <li key={path} className="truncate">
@@ -123,7 +133,69 @@ export function Verification() {
           ),
         )}
       </ul>
+      {task.git && task.runner === "agent" ? <Merge key={task.id} task={task} verified={verified} /> : null}
     </div>
+  );
+}
+
+function Diff({ text }: { text: string }) {
+  return (
+    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all py-1 font-mono text-[11px] leading-5">
+      {text.split("\n").map((line, index) => (
+        <div
+          key={index}
+          className={
+            line.startsWith("+")
+              ? "bg-completed/10 px-2 text-completed"
+              : line.startsWith("-")
+                ? "bg-failed/10 px-2 text-failed"
+                : line.startsWith("@@")
+                  ? "px-2 text-faint"
+                  : "px-2 text-text"
+          }
+        >
+          {line || " "}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+function Merge({ task, verified }: { task: Task; verified: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const git = task.git!;
+  return (
+    <section className="border border-line px-2 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[12px] text-text">Merge</span>
+        <span className={`font-mono text-[10px] uppercase ${git.merged ? "text-completed" : "text-faint"}`}>
+          {git.merged ? "merged" : "not merged"}
+        </span>
+      </div>
+      <p className="mt-1 text-[12px] leading-5 text-muted">
+        {git.merged
+          ? `Merged into ${git.merged.into} as ${git.merged.sha} at ${formatClock(git.merged.at)}.`
+          : verified
+            ? `Merges ${git.branch} into ${git.target} in the project folder.`
+            : `Once this task is verified, you can merge ${git.branch} into ${git.target}.`}
+      </p>
+      {error ? <p className="mt-1 text-[12px] leading-5 text-failed">{error}</p> : null}
+      {git.merged ? null : (
+        <Button
+          className="mt-2"
+          variant="primary"
+          disabled={!verified || busy || task.status === "running"}
+          onClick={async () => {
+            setBusy(true);
+            setError(await mergeTask(task.id));
+            setBusy(false);
+          }}
+        >
+          {busy ? "Merging…" : `Merge into ${git.target}`}
+        </Button>
+      )}
+    </section>
   );
 }
 

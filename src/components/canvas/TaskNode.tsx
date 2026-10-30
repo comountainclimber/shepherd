@@ -39,10 +39,10 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
           </div>
           <div className="mt-1 flex items-center gap-1 text-[11px] text-muted">
             <span className="truncate">{task.runner === "human" ? "You" : formatAgent(agentById(task.agentId))}</span>
-            {task.runner === "agent" && task.worktree ? (
+            {task.git ? (
               <>
                 <span className="text-faint">·</span>
-                <span className="truncate font-mono text-[10px]">{task.worktree}/</span>
+                <span className="truncate font-mono text-[10px]">{task.git.branch}</span>
               </>
             ) : null}
           </div>
@@ -68,7 +68,9 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
             <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-approval">Your turn</div>
           ) : null}
           {verified ? (
-            <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-completed">Verified</div>
+            <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-completed">
+              {task.git?.merged ? `Verified · merged into ${task.git.merged.into}` : "Verified"}
+            </div>
           ) : null}
           {task.status === "failed" || task.status === "blocked" ? (
             <div className={cx("mt-1.5 text-[10px] uppercase tracking-[0.08em]", statusText[task.status])}>

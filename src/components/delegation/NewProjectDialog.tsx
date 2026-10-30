@@ -14,21 +14,25 @@ export function NewProjectDialog() {
   const dispatch = useShepherd((store) => store.dispatch);
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
+  const [folder, setFolder] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setName("");
     setSummary("");
+    setFolder("");
   }, [open]);
 
   const close = () => setOpen(false);
-  const directory = projectDirectory(name, projects);
+  const suggested = projectDirectory(name, projects);
+  const directory = folder.trim().replace(/^\/+|\/+$/g, "") || suggested;
+  const badFolder = directory.split("/").some((part) => !part || part === "." || part === "..");
 
   return (
     <Dialog
       open={open}
       title="New project"
-      subtitle="A project is an empty canvas with its own folder. Agents run inside that folder."
+      subtitle="A project is a canvas backed by one git repository. Each agent task works on its own branch of it."
       onClose={close}
       footer={
         <>
@@ -37,7 +41,7 @@ export function NewProjectDialog() {
           </Button>
           <Button
             variant="primary"
-            disabled={!name.trim()}
+            disabled={!name.trim() || badFolder}
             onClick={() => {
               const id = `proj-${seq + 1}`;
               dispatch({
@@ -66,8 +70,16 @@ export function NewProjectDialog() {
         <Field label="Summary">
           <TextArea value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="What is this work?" />
         </Field>
-        <p className="font-mono text-[11px] text-faint">
-          Folder: {workspacePath() || ".agent-sandbox"}/{directory}
+        <Field label="Folder">
+          <TextInput value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={suggested} className="font-mono" />
+        </Field>
+        <p className="-mt-2 text-[11px] leading-5 text-faint">
+          {badFolder
+            ? "Use a folder inside the workspace, without . or .. in the path."
+            : "Name an existing repository's folder to work on it. Any other folder becomes a new repository on the first run."}
+        </p>
+        <p className="break-all font-mono text-[11px] text-faint">
+          {workspacePath() || ".agent-sandbox"}/{directory}
         </p>
       </div>
     </Dialog>

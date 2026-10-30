@@ -1,4 +1,4 @@
-import { isDemoState } from "./workspace";
+import { isDemoState, projectDirectory } from "./workspace";
 import type {
   Dependency,
   ExecutionEvent,
@@ -7,6 +7,7 @@ import type {
   OrchestrationState,
   Project,
   Task,
+  TaskGit,
   TaskStatus,
   VerificationCheck,
 } from "./types";
@@ -64,6 +65,21 @@ export function interruptChecks(state: OrchestrationState): OrchestrationState {
   };
 }
 
+function taskGit(value: unknown): TaskGit | null {
+  const raw = record(value);
+  if (!raw || typeof raw.branch !== "string" || typeof raw.folder !== "string") return null;
+  const merged = record(raw.merged);
+  return {
+    branch: raw.branch,
+    folder: raw.folder,
+    target: text(raw.target, "main"),
+    ...(typeof raw.head === "string" ? { head: raw.head } : {}),
+    ...(merged && typeof merged.sha === "string"
+      ? { merged: { into: text(merged.into), sha: merged.sha, at: Number(merged.at) || 0 } }
+      : {}),
+  };
+}
+
 function previews(raw: Raw): FilePreview[] {
   if (Array.isArray(raw.previews)) {
     return raw.previews.flatMap((item) => {
@@ -82,6 +98,7 @@ function task(raw: Raw): Task {
   const position = record(raw.position);
   const status = STATUSES.has(raw.status as TaskStatus) ? (raw.status as TaskStatus) : "queued";
   const checkCommand = text(raw.checkCommand);
+  const git = taskGit(raw.git);
   return {
     id,
     projectId: text(raw.projectId),
@@ -112,6 +129,7 @@ function task(raw: Raw): Task {
     previews: previews(raw),
     instructions: list(raw.instructions).filter((item): item is string => typeof item === "string"),
     ...(checkCommand ? { checkCommand } : {}),
+    ...(git ? { git } : {}),
   };
 }
 
@@ -121,6 +139,8 @@ export function loadState(saved: unknown): OrchestrationState | null {
   if (!raw || (raw.schema !== 1 && raw.schema !== 2) || isDemoState(raw)) return null;
   const projects = list(raw.projects).flatMap((item) => (record(item) ? [project(item as Raw)] : []));
   if (!projects.length) return null;
+  // The workspace folder holds every project, so it cannot be one project's repository.
+  for (const item of projects) item.directory ||= projectDirectory(item.name, projects);
   return {
     schema: 2,
     projects,

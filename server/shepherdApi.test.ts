@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentCommand, exitError, inside, overlaps, runCheckCommand } from "./shepherdApi";
+import { agentCommand, exitError, inside, runCheckCommand, withoutLogLines } from "./shepherdApi";
 
 describe("check commands", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "shepherd-check-"));
@@ -64,6 +64,14 @@ describe("run failures", () => {
     expect(exitError("starting\nmodel overloaded")).toBe("model overloaded");
     expect(exitError("")).toBeUndefined();
   });
+
+  it("keeps the CLI's own log lines out of activity and failure reasons", () => {
+    const log = "2026-10-30T13:55:25.630702Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed";
+    expect(withoutLogLines(`${log}\n${log}`)).toBe("");
+    expect(withoutLogLines(`${log}\nwarning: low disk`)).toBe("warning: low disk");
+    expect(exitError(`model overloaded\n${log}`)).toBe("model overloaded");
+    expect(exitError(log)).toBe(log);
+  });
 });
 
 describe("task folders", () => {
@@ -74,12 +82,5 @@ describe("task folders", () => {
     expect(inside(base, "")).toBe(base);
     expect(inside(base, "../elsewhere")).toBeNull();
     expect(inside(base, "/etc")).toBeNull();
-  });
-
-  it("treats nested folders as overlapping but siblings as separate", () => {
-    const project = path.join(base, "word-count");
-    expect(overlaps(project, path.join(project, "implement"))).toBe(true);
-    expect(overlaps(path.join(project, "implement"), path.join(project, "verify"))).toBe(false);
-    expect(overlaps(project, path.join(base, "word-count-2"))).toBe(false);
   });
 });

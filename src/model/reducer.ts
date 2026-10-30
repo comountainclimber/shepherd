@@ -91,6 +91,8 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return reassign(state, action.id, action.agentId);
     case "instruct":
       return instruct(state, action.id, action.text);
+    case "merged":
+      return merged(state, action.id, action.into, action.sha);
     case "approvePlan":
       return approvePlan(state, action.tasks, action.dependencies);
     case "deleteTask":
@@ -225,6 +227,10 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
   if (task.status === "running" && task.startedAt != null) next.elapsedMs = Math.max(0, state.now - task.startedAt);
   if (status === "running") {
     const rerun = task.status === "failed" || task.status === "completed";
+    if (next.git?.merged) {
+      const { merged: _landed, ...git } = next.git;
+      next.git = git;
+    }
     next = {
       ...next,
       blocker: null,
@@ -444,6 +450,16 @@ function instruct(state: OrchestrationState, id: string, text: string): Orchestr
   const log = createLog(state, state.now);
   const next = { ...task, instructions: [...task.instructions, trimmed] };
   log.event({ taskId: id, projectId: task.projectId, message: `Instruction sent to ${task.name}`, tone: "info" });
+  return log.finish({ tasks: replaceTask(state.tasks, next) });
+}
+
+function merged(state: OrchestrationState, id: string, into: string, sha: string): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task?.git) return state;
+  const log = createLog(state, state.now);
+  log.event({ taskId: id, projectId: task.projectId, message: `Merged ${task.name} into ${into}`, tone: "success" });
+  log.note({ message: `${task.name} is merged into ${into}.`, tone: "success", taskId: id });
+  const next: Task = { ...task, git: { ...task.git, merged: { into, sha, at: state.now } } };
   return log.finish({ tasks: replaceTask(state.tasks, next) });
 }
 

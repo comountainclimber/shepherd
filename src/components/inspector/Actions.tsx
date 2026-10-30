@@ -16,7 +16,9 @@ export function Actions() {
   const [note, setNote] = useState("");
   const waiting = task.status === "running" ? null : waitingOn(task, tasks, deps);
   const human = task.runner === "human";
-  const folder = [workspacePath() || ".agent-sandbox", project?.directory, task.worktree].filter(Boolean).join("/");
+  const where = task.git
+    ? `its worktree on ${task.git.branch}`
+    : `a new worktree of ${[workspacePath() || ".agent-sandbox", project?.directory].filter(Boolean).join("/")}`;
 
   return (
     <div className="space-y-4">
@@ -52,7 +54,7 @@ export function Actions() {
       <p className="text-[11px] leading-5 text-faint">
         {human
           ? "You do this one. When it is done, mark it complete. That opens anything waiting on it."
-          : `Runs the assigned agent in ${folder}. When it finishes, review its files on the Verification tab.`}
+          : `Runs the assigned agent in ${where}. When it finishes, review its diff on the Verification tab.`}
       </p>
       {human ? null : (
         <Field label="Agent">

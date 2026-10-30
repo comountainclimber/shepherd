@@ -213,7 +213,7 @@ describe("projects", () => {
       type: "createProject",
       project: { id: "proj-3", name: "Notes", summary: "" },
     });
-    expect(state.projects.map((project) => project.directory)).toEqual([undefined, "notes", "notes-2"]);
+    expect(state.projects.map((project) => project.directory)).toEqual(["workspace", "notes", "notes-2"]);
     expect(state.tasks).toEqual([]);
   });
 
@@ -221,6 +221,29 @@ describe("projects", () => {
     const state = reducer(chain("verified"), { type: "reset" });
     expect(state.projects.map((project) => project.id)).toEqual(["proj-local"]);
     expect(state.tasks).toEqual([]);
+  });
+});
+
+describe("merging", () => {
+  const GIT = { branch: "shepherd/a", folder: "/tmp/worktrees/a", target: "main", head: "1111111" };
+
+  it("records the merge and forgets it when the task runs again", () => {
+    let state = review(finishRun(chain("verified"), "a"), "a", "passed");
+    state = apply(
+      state,
+      { type: "updateTask", id: "a", patch: { git: GIT } },
+      { type: "merged", id: "a", into: "main", sha: "2222222" },
+    );
+    expect(task(state, "a").git?.merged).toEqual({ into: "main", sha: "2222222", at: state.now });
+    expect(state.events.some((event) => event.message === "Merged a into main")).toBe(true);
+
+    state = reducer(state, { type: "setStatus", id: "a", status: "running" });
+    expect(task(state, "a").git).toEqual(GIT);
+  });
+
+  it("ignores a merge for a task that has no branch", () => {
+    const state = finishRun(chain("verified"), "a");
+    expect(reducer(state, { type: "merged", id: "a", into: "main", sha: "2222222" })).toBe(state);
   });
 });
 

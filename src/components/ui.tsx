@@ -190,7 +190,9 @@ export function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <div className="text-[10px] uppercase tracking-[0.08em] text-faint">{label}</div>
-      <div className="truncate font-mono text-[12px] text-text">{value}</div>
+      <div className="truncate font-mono text-[12px] text-text" title={value}>
+        {value}
+      </div>
     </div>
   );
 }

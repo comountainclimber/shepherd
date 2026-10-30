@@ -84,7 +84,9 @@ export function Overview() {
         />
       </Field>
       <p className="-mt-3 text-[11px] leading-5 text-faint">
-        Runs in {project?.directory ? `${project.directory}/` : "the workspace folder"} when the work is done. Exit 0 passes.
+        Runs in{" "}
+        {task.git ? `the ${task.git.branch} worktree` : task.runner === "agent" ? "the task's worktree" : `${project?.directory ?? "the project"}/`}{" "}
+        when the work is done. Exit 0 passes.
       </p>
       {task.blocker ? <p className={`text-[12px] leading-5 ${statusText[task.status]}`}>{task.blocker}</p> : null}
       <section>

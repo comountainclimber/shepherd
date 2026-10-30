@@ -39,10 +39,8 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     : [];
   return [
     "You are executing one Shepherd task.",
-    "Work only in the current directory. Do not assume other repositories are checked out.",
-    task.worktree
-      ? `Write this task's files under ${task.worktree}/ (create it if needed). You may read anything in the current directory.`
-      : "",
+    "Work only in the current directory. It is this task's own git worktree, so other tasks cannot see or overwrite your changes.",
+    "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
     `Task: ${task.name}`,
     `Objective: ${task.objective}`,
@@ -50,7 +48,7 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     task.acceptance.length ? ["", "Done when:", ...task.acceptance.map((line) => `- ${line}`)].join("\n") : "",
     ...checkLines,
     "",
-    inputs.length ? "Upstream tasks this one depends on. Read their files when you need them:" : "",
+    inputs.length ? "Upstream tasks this one builds on. Work they committed is already in this worktree:" : "",
     ...inputs,
     earlier.length ? ["Earlier instructions:", ...earlier.map((line) => `- ${line}`)].join("\n") : "",
     followUp ? `\nNew instruction:\n${followUp}\n` : "",

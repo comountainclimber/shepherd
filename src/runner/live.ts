@@ -1,4 +1,5 @@
 import type { CheckRun, Task } from "../model/types";
+import { isFullyVerified } from "../model/verify";
 import { agentById } from "../model/workspace";
 import { useShepherd } from "../store";
 import { taskPrompt, type UpstreamContext } from "./prompt";
@@ -15,10 +16,17 @@ export function setWorkspacePath(path: string) {
   localStorage.setItem(WORKSPACE_KEY, path);
 }
 
-export async function agentStatus(): Promise<{ claude: boolean; codex: boolean; workspace: string }> {
+interface AgentStatus {
+  claude: boolean;
+  codex: boolean;
+  git: boolean;
+  workspace: string;
+}
+
+export async function agentStatus(): Promise<AgentStatus> {
   const response = await fetch("/api/agents");
-  if (!response.ok) return { claude: false, codex: false, workspace: "" };
-  return (await response.json()) as { claude: boolean; codex: boolean; workspace: string };
+  if (!response.ok) return { claude: false, codex: false, git: false, workspace: "" };
+  return (await response.json()) as AgentStatus;
 }
 
 export async function runTask(taskId: string, extra?: string) {
@@ -57,18 +65,21 @@ export async function instructTask(taskId: string, text: string) {
   await runTask(taskId, trimmed);
 }
 
-function upstreamContext(task: Task): UpstreamContext[] {
+function upstreamTasks(task: Task): Task[] {
   const { tasks, dependencies } = useShepherd.getState().state;
   return dependencies
     .filter((dep) => dep.target === task.id)
     .map((dep) => tasks.find((item) => item.id === dep.source))
-    .filter((item): item is Task => !!item)
-    .map((item) => ({
-      name: item.name,
-      objective: item.objective,
-      files: item.filesChanged,
-      summary: item.status === "completed" ? item.activity : undefined,
-    }));
+    .filter((item): item is Task => !!item);
+}
+
+function upstreamContext(task: Task): UpstreamContext[] {
+  return upstreamTasks(task).map((item) => ({
+    name: item.name,
+    objective: item.objective,
+    files: item.filesChanged,
+    summary: item.status === "completed" ? item.activity : undefined,
+  }));
 }
 
 async function streamRun(task: Task, extra?: string) {
@@ -84,9 +95,12 @@ async function streamRun(task: Task, extra?: string) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         taskId: task.id,
+        name: task.name,
         workspace,
         directory: project?.directory ?? "",
         worktree: task.worktree,
+        branch: task.git?.branch,
+        upstream: upstreamTasks(task).flatMap((item) => (item.git ? [item.git.branch] : [])),
         prompt: taskPrompt(task, extra, upstreamContext(task)),
         provider: providerFor(task),
         resumeId: task.sessionId ?? null,
@@ -154,7 +168,7 @@ export async function runCheck(taskId: string) {
     const response = await fetch("/api/checks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace: workspacePath(), directory: project?.directory ?? "", command }),
+      body: JSON.stringify({ workspace: workspacePath(), directory: project?.directory ?? "", branch: task.git?.branch, command }),
     });
     const body = (await response.json()) as Partial<CheckRun> & { error?: string };
     run = response.ok
@@ -177,6 +191,28 @@ export async function runCheck(taskId: string) {
   useShepherd.getState().dispatch({ type: "recordCheck", taskId, run });
 }
 
+/** Merges a verified task's branch into the project folder's branch. Returns an error to show, or null. */
+export async function mergeTask(taskId: string): Promise<string | null> {
+  const { tasks, projects } = useShepherd.getState().state;
+  const task = tasks.find((item) => item.id === taskId);
+  if (!task?.git) return "This task has no branch yet. Run it first.";
+  if (!isFullyVerified(task)) return "Verify the task before merging it.";
+  const project = projects.find((item) => item.id === task.projectId);
+  try {
+    const response = await fetch("/api/merge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspace: workspacePath(), directory: project?.directory ?? "", branch: task.git.branch, name: task.name }),
+    });
+    const body = (await response.json()) as { into?: string; sha?: string; error?: string };
+    if (!response.ok || !body.into || !body.sha) return body.error ?? `The merge failed with status ${response.status}.`;
+    useShepherd.getState().dispatch({ type: "merged", id: taskId, into: body.into, sha: body.sha });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : "Could not reach the Shepherd server.";
+  }
+}
+
 export async function markComplete(taskId: string) {
   const store = useShepherd.getState();
   store.dispatch({ type: "setStatus", id: taskId, status: "completed" });
@@ -195,10 +231,19 @@ interface LiveEvent {
   files?: string;
   changed?: string[];
   opened?: { path: string; text: string }[];
+  head?: string;
+  branch?: string;
+  folder?: string;
+  target?: string;
 }
 
 function applyEvent(taskId: string, event: LiveEvent) {
   const dispatch = useShepherd.getState().dispatch;
+  const task = () => useShepherd.getState().state.tasks.find((item) => item.id === taskId);
+  if (event.kind === "started" && event.branch && event.folder) {
+    const git = { ...task()?.git, branch: event.branch, folder: event.folder, target: event.target ?? "main" };
+    dispatch({ type: "updateTask", id: taskId, patch: { git } });
+  }
   if (event.kind === "chat" && event.id) {
     dispatch({ type: "updateTask", id: taskId, patch: { sessionId: event.id } });
   }
@@ -209,17 +254,12 @@ function applyEvent(taskId: string, event: LiveEvent) {
     if (event.ok === false) fail(taskId, event.summary || "The agent failed.");
     else finish(taskId, event.summary || "The agent finished");
   }
-  if (event.kind === "exit" && event.changed?.length) {
-    const task = useShepherd.getState().state.tasks.find((item) => item.id === taskId);
-    const changed = event.changed;
-    const opened = event.opened ?? [];
+  const git = task()?.git;
+  if (event.kind === "exit" && event.changed && git) {
     dispatch({
       type: "updateTask",
       id: taskId,
-      patch: {
-        filesChanged: [...changed, ...(task?.filesChanged ?? []).filter((path) => !changed.includes(path))],
-        previews: [...opened, ...(task?.previews ?? []).filter((item) => !opened.some((file) => file.path === item.path))],
-      },
+      patch: { filesChanged: event.changed, previews: event.opened ?? [], git: { ...git, head: event.head } },
     });
   }
   if (event.kind === "error") fail(taskId, event.error || "The agent failed to start.");

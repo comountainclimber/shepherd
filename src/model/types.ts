@@ -40,6 +40,16 @@ export interface FilePreview {
   text: string;
 }
 
+/** Where an agent task's work lives. Set by its first run. */
+export interface TaskGit {
+  branch: string;
+  folder: string;
+  /** The project folder's branch, which this task merges into. */
+  target: string;
+  head?: string;
+  merged?: { into: string; sha: string; at: number };
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -60,9 +70,11 @@ export interface Task {
   position: { x: number; y: number };
   verification: VerificationCheck[];
   filesChanged: string[];
+  /** For a task with a branch, each file's diff against where the task started. */
   previews: FilePreview[];
   instructions: string[];
   checkCommand?: string;
+  git?: TaskGit;
 }
 
 export interface Dependency {
@@ -154,6 +166,7 @@ export type Action =
   | { type: "recordCheck"; taskId: string; run: CheckRun }
   | { type: "reassign"; id: string; agentId: string | null }
   | { type: "instruct"; id: string; text: string }
+  | { type: "merged"; id: string; into: string; sha: string }
   | { type: "approvePlan"; tasks: Task[]; dependencies: Dependency[] }
   | { type: "deleteTask"; id: string }
   | { type: "reset" }

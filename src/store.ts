@@ -192,7 +192,7 @@ function fingerprint(state: OrchestrationState) {
   const tasks = state.tasks
     .map(
       (task) =>
-        `${task.id}:${task.status}:${task.activity}:${task.blocker}:${task.agentId}:${task.verification.map((check) => check.state).join(",")}:${task.filesChanged.join(",")}:${task.previews.map((item) => `${item.path}:${item.text.length}`).join(",")}`,
+        `${task.id}:${task.status}:${task.activity}:${task.blocker}:${task.agentId}:${task.verification.map((check) => check.state).join(",")}:${task.filesChanged.join(",")}:${task.previews.map((item) => `${item.path}:${item.text.length}`).join(",")}:${task.git?.branch}:${task.git?.head}:${task.git?.merged?.sha}`,
     )
     .join("|");
   const deps = state.dependencies.map((dep) => `${dep.id}:${dep.gate}`).join(",");
