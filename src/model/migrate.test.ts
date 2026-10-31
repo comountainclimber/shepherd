@@ -84,6 +84,19 @@ describe("loadState", () => {
     expect(loadState({ ...schemaOne, tasks: [{ ...schemaOneTask, git: { branch: "shepherd/x" } }] })!.tasks[0]).not.toHaveProperty("git");
   });
 
+  it("keeps a task's run-automatically and independent settings", () => {
+    const [on, off] = loadState({
+      ...schemaOne,
+      tasks: [
+        { ...schemaOneTask, autoRun: true, independent: true },
+        { ...schemaOneTask, id: "other", autoRun: "yes" },
+      ],
+    })!.tasks;
+    expect(on).toMatchObject({ autoRun: true, independent: true });
+    expect(off).not.toHaveProperty("autoRun");
+    expect(off).not.toHaveProperty("independent");
+  });
+
   it("keeps a schema 2 board as it is", () => {
     const state = workspace(1);
     expect(loadState(state)).toEqual(state);

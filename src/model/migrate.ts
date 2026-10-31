@@ -130,6 +130,8 @@ function task(raw: Raw): Task {
     instructions: list(raw.instructions).filter((item): item is string => typeof item === "string"),
     ...(checkCommand ? { checkCommand } : {}),
     ...(git ? { git } : {}),
+    ...(raw.autoRun === true ? { autoRun: true } : {}),
+    ...(raw.independent === true ? { independent: true } : {}),
   };
 }
 

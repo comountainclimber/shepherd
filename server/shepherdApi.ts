@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { loadState } from "../src/model/migrate";
@@ -82,7 +83,8 @@ export function shepherdApi(): Plugin {
             return;
           }
         }
-        if (url.pathname === "/api/tasks" && (req.method === "GET" || req.method === "POST")) {
+        const intake = url.pathname === "/api/tasks" || url.pathname === "/api/projects";
+        if (intake && (req.method === "POST" || (req.method === "GET" && url.pathname === "/api/tasks"))) {
           const board = savedBoard(stateFile);
           if ("error" in board) {
             sendJson(res, 409, { error: board.error });
@@ -93,7 +95,8 @@ export function shepherdApi(): Plugin {
             sendJson(res, 200, boardSummary(state, pending));
             return;
           }
-          const result = inbox.add(board.state, await readJson(req));
+          const body = await readJson(req);
+          const result = url.pathname === "/api/projects" ? inbox.addProject(board.state, body) : inbox.add(board.state, body);
           sendJson(res, "error" in result ? 400 : result.applied ? 201 : 202, result);
           return;
         }
@@ -205,7 +208,7 @@ async function startRun(res: import("node:http").ServerResponse, body: RunBody, 
   const command = agentCommand(provider, prompt, body.resumeId ?? null);
   const child = spawn(command.cmd, command.args, {
     cwd: tree.folder,
-    env: process.env,
+    env: agentEnv(provider, process.env),
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stdin?.end();
@@ -311,7 +314,7 @@ const CHECK_OUTPUT_LIMIT = 64_000;
 export function runCheckCommand(
   dir: string,
   command: string,
-  timeoutMs = 120_000,
+  timeoutMs = 300_000,
 ): Promise<{ exitCode: number | null; output: string; durationMs: number; timedOut: boolean }> {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -376,7 +379,8 @@ function resolveWorkspace(requested: string | undefined, sandbox: string): { pat
 
 export function agentCommand(provider: AgentCli, prompt: string, resumeId: string | null): { cmd: string; args: string[] } {
   if (provider === "codex") {
-    const shared = ["-m", CODEX_MODEL, "--json", "--skip-git-repo-check"];
+    // Without network the sandbox cannot install packages; agents install, build and test like a developer would.
+    const shared = ["-m", CODEX_MODEL, "--json", "--skip-git-repo-check", "-c", "sandbox_workspace_write.network_access=true"];
     if (resumeId) {
       // `codex exec resume` has no --sandbox flag; the config override is equivalent.
       return {
@@ -390,6 +394,13 @@ export function agentCommand(provider: AgentCli, prompt: string, resumeId: strin
   if (resumeId) args.push("--resume", resumeId);
   args.push(prompt);
   return { cmd: "claude", args };
+}
+
+/** Codex's sandbox can only write to the worktree and the temp folder, so npm's cache moves to the temp folder. */
+export function agentEnv(provider: AgentCli, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (provider !== "codex") return env;
+  const next = Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== "npm_config_cache"));
+  return { ...next, npm_config_cache: path.join(tmpdir(), "shepherd-npm-cache") };
 }
 
 function agentStatus(): Promise<{ claude: boolean; codex: boolean }> {

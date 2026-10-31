@@ -1,7 +1,7 @@
 import type { CheckRun, Task } from "../model/types";
-import { isFullyVerified } from "../model/verify";
+import { isFullyVerified, unmetDependencies } from "../model/verify";
 import { agentById } from "../model/workspace";
-import { useShepherd } from "../store";
+import { sharedStateLoaded, useShepherd } from "../store";
 import { taskPrompt, type UpstreamContext } from "./prompt";
 
 const WORKSPACE_KEY = "shepherd.workspace";
@@ -38,6 +38,18 @@ export async function runTask(taskId: string, extra?: string) {
   if (!current || current.status !== "running") return;
   store.dispatch({ type: "updateTask", id: taskId, patch: { activity: "Starting the agent…", blocker: null } });
   await streamRun(current, extra);
+}
+
+/** Starts tasks set to run automatically the first time all their gates are open. Retries stay manual. */
+export function startReadyTasks() {
+  if (!sharedStateLoaded()) return;
+  const { tasks, dependencies } = useShepherd.getState().state;
+  for (const task of tasks) {
+    const fresh = !task.git && !task.sessionId && !controllers.has(task.id);
+    if (!task.autoRun || task.runner !== "agent" || !task.agentId || task.status !== "queued" || !fresh) continue;
+    if (unmetDependencies(task.id, tasks, dependencies).length) continue;
+    void runTask(task.id);
+  }
 }
 
 export async function stopTask(taskId: string, status: "blocked" | "queued") {

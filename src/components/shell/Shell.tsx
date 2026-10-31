@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { startReadyTasks } from "../../runner/live";
 import { drainInbox, pullSharedState, useShepherd } from "../../store";
 import { AgentActivity } from "../agents/AgentActivity";
 import { OrchestrationCanvas } from "../canvas/OrchestrationCanvas";
@@ -24,7 +25,7 @@ export function Shell() {
   }, [selectedTaskId, tasks, selectTask]);
 
   useEffect(() => {
-    const sync = () => void pullSharedState().then(drainInbox);
+    const sync = () => void pullSharedState().then(drainInbox).then(startReadyTasks);
     sync();
     const id = window.setInterval(sync, 2000);
     return () => window.clearInterval(id);

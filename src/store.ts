@@ -192,7 +192,7 @@ function fingerprint(state: OrchestrationState) {
   const tasks = state.tasks
     .map(
       (task) =>
-        `${task.id}:${task.status}:${task.activity}:${task.blocker}:${task.agentId}:${task.verification.map((check) => check.state).join(",")}:${task.filesChanged.join(",")}:${task.previews.map((item) => `${item.path}:${item.text.length}`).join(",")}:${task.git?.branch}:${task.git?.head}:${task.git?.merged?.sha}`,
+        `${task.id}:${task.status}:${task.activity}:${task.blocker}:${task.agentId}:${task.verification.map((check) => check.state).join(",")}:${task.filesChanged.join(",")}:${task.previews.map((item) => `${item.path}:${item.text.length}`).join(",")}:${task.git?.branch}:${task.git?.head}:${task.git?.merged?.sha}:${task.autoRun}:${task.independent}`,
     )
     .join("|");
   const deps = state.dependencies.map((dep) => `${dep.id}:${dep.gate}`).join(",");
@@ -217,15 +217,20 @@ export async function pullSharedState() {
   }
 }
 
-/** Applies tasks that agents and scripts sent to POST /api/tasks. The server drops each batch once a save includes it. */
+/** True once this tab has the server's board, so it will not act on a stale local copy. */
+export function sharedStateLoaded(): boolean {
+  return loadedFromServer && useShepherd.persist.hasHydrated();
+}
+
+/** Applies projects and tasks that agents and scripts sent to the API. The server drops each batch once a save includes it. */
 export async function drainInbox() {
-  if (!loadedFromServer || !useShepherd.persist.hasHydrated()) return;
+  if (!sharedStateLoaded()) return;
   try {
     const response = await fetch("/api/inbox");
     if (!response.ok) return;
     const body = (await response.json()) as { batches?: { actions?: Action[] }[] };
     for (const action of (body.batches ?? []).flatMap((batch) => batch.actions ?? [])) {
-      if (action?.type === "createTask") useShepherd.getState().dispatch(action);
+      if (action?.type === "createProject" || action?.type === "createTask") useShepherd.getState().dispatch(action);
     }
   } catch {
     // The next poll tries again.

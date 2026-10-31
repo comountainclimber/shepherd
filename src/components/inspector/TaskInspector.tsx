@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { isFullyVerified } from "../../model/verify";
+import { awaiting, isFullyVerified } from "../../model/verify";
 import { useShepherd } from "../../store";
 import { Button, StatusDot, Tabs } from "../ui";
 import { Actions } from "./Actions";
@@ -31,7 +31,7 @@ export function TaskInspector() {
           <div className="flex items-center gap-2">
             <StatusDot status={task.status} labeled />
             {task.status === "completed" && !verified ? (
-              <span className="text-[10px] uppercase tracking-[0.08em] text-running">Needs your review</span>
+              <span className="text-[10px] uppercase tracking-[0.08em] text-running">{awaiting(task)}</span>
             ) : null}
             {verified ? <span className="text-[10px] uppercase tracking-[0.08em] text-completed">Verified</span> : null}
           </div>

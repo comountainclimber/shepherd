@@ -74,6 +74,16 @@ describe("task prompt", () => {
     ]);
     expect(prompt).toContain("- Write the contract: Define RELAY");
     expect(prompt).toContain("Files it wrote: contract/CONTRACT.md");
+    expect(prompt).toContain("Its summary: Defined it");
+  });
+
+  it("keeps upstream agents' summaries from an independent task", () => {
+    const prompt = taskPrompt({ ...task, independent: true }, undefined, [
+      { name: "Write the contract", objective: "Define RELAY", files: ["contract/CONTRACT.md"], summary: "Defined it, all good" },
+    ]);
+    expect(prompt).toContain("Files it wrote: contract/CONTRACT.md");
+    expect(prompt).not.toContain("all good");
+    expect(prompt).toContain("judge it from the files and the criteria above");
   });
 
   it("sends a new instruction once instead of repeating it as an earlier one", () => {

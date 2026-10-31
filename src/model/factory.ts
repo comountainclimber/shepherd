@@ -33,11 +33,15 @@ export function blankTask(args: {
   runner?: Runner;
   acceptance?: string[];
   checkCommand?: string;
+  /** False lets an agent task with a check command be verified by the check alone. */
+  review?: boolean;
+  autoRun?: boolean;
+  independent?: boolean;
 }): Task {
   const runner = args.runner ?? "agent";
   const command = args.checkCommand?.trim() ?? "";
-  const review =
-    runner === "human" ? [] : [check(args.id, "review", "pending", "Review the files this task wrote, then accept or reject.")];
+  const agent = runner === "agent";
+  const review = agent && (args.review !== false || !command) ? [reviewCheck(args.id)] : [];
   return {
     id: args.id,
     projectId: args.projectId,
@@ -59,7 +63,13 @@ export function blankTask(args: {
     previews: [],
     instructions: [],
     ...(command ? { checkCommand: command } : {}),
+    ...(agent && args.autoRun ? { autoRun: true } : {}),
+    ...(agent && args.independent ? { independent: true } : {}),
   };
+}
+
+export function reviewCheck(taskId: string): VerificationCheck {
+  return check(taskId, "review", "pending", "Review the files this task wrote, then accept or reject.");
 }
 
 export function nextPosition(

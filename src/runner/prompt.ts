@@ -14,7 +14,7 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     [
       `- ${item.name}: ${item.objective}`,
       item.files.length ? `  Files it wrote: ${item.files.join(", ")}` : "  It did not write any files.",
-      item.summary ? `  Its summary: ${item.summary}` : "",
+      item.summary && !task.independent ? `  Its summary: ${item.summary}` : "",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -50,6 +50,9 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     "",
     inputs.length ? "Upstream tasks this one builds on. Work they committed is already in this worktree:" : "",
     ...inputs,
+    inputs.length && task.independent
+      ? "You are an independent check on that work. Shepherd does not give you the upstream agents' own accounts of it, so judge it from the files and the criteria above."
+      : "",
     earlier.length ? ["Earlier instructions:", ...earlier.map((line) => `- ${line}`)].join("\n") : "",
     followUp ? `\nNew instruction:\n${followUp}\n` : "",
     "When you finish, summarize what changed and how to verify it.",

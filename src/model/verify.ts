@@ -8,6 +8,11 @@ export function isFullyVerified(task: Task): boolean {
   return checks.length > 0 && checks.every((check) => check.state === "passed");
 }
 
+/** What a finished but unverified task is waiting for. */
+export function awaiting(task: Task): string {
+  return task.verification.some((check) => check.kind === "review" && check.state === "pending") ? "Needs your review" : "Checking";
+}
+
 export function dependencySatisfied(dep: Dependency, source: Task | undefined): boolean {
   if (!source || source.status !== "completed") return false;
   return dep.gate === "verified" ? isFullyVerified(source) : true;

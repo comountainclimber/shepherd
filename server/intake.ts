@@ -4,7 +4,7 @@ import { blankTask, nextPosition, slugify } from "../src/model/factory";
 import { reducer } from "../src/model/reducer";
 import { GATE_LABEL, type Action, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
-import { AGENTS, agentById } from "../src/model/workspace";
+import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
 
 export const MAX_TASKS = 50;
 
@@ -50,6 +50,14 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const request = record(item) ?? fail(`${where} must be an object.`);
     const name = text(request.name, field("name")) || fail(`${where} needs a name.`);
     const runner = runnerFor(request.runner, field("runner"));
+    const checkCommand = text(request.checkCommand, field("checkCommand"));
+    const review = flag(request.review, field("review"), true);
+    const autoRun = flag(request.autoRun, field("autoRun"), false);
+    const independent = flag(request.independent, field("independent"), false);
+    if (runner === "human" && (autoRun || independent || !review)) {
+      fail(`${where} is done by a person, so autoRun, independent and review do not apply to it.`);
+    }
+    if (!review && !checkCommand) fail(`${where} skips review, so it needs a checkCommand to verify it.`);
     const dependsOn = dependencies(scratch, project.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
     const task = blankTask({
@@ -59,7 +67,10 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
       objective: text(request.objective, field("objective")) || name,
       description: text(request.description, field("description")),
       acceptance: lines(request.acceptance, field("acceptance")),
-      checkCommand: text(request.checkCommand, field("checkCommand")),
+      checkCommand,
+      review,
+      autoRun,
+      independent,
       runner,
       agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
       worktree: freeWorktree(scratch, project.id, name),
@@ -81,6 +92,31 @@ function text(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") fail(`${field} must be a string.`);
   return value.trim();
+}
+
+function flag(value: unknown, field: string, fallback: boolean): boolean {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "boolean") fail(`${field} must be true or false.`);
+  return value;
+}
+
+/** Turns an API request into the createProject action the New project dialog would dispatch. */
+export function planProject(state: OrchestrationState, body: unknown, id: string): { project: Project; action: Action } | { error: string } {
+  try {
+    const raw = record(body) ?? fail("Send a JSON object.");
+    const name = text(raw.name, "name") || fail("The project needs a name.");
+    const taken = state.projects.find((project) => project.name.toLowerCase() === name.toLowerCase());
+    if (taken) fail(`There is already a project named ${taken.name} (${taken.id}).`);
+    const directory = text(raw.directory, "directory") || projectDirectory(name, state.projects);
+    if (directory.split("/").some((part) => !part || part === "." || part === "..")) {
+      fail("directory must be a folder inside the workspace, without . or .. in the path.");
+    }
+    const project: Project = { id, name, summary: text(raw.summary, "summary"), directory };
+    return { project, action: { type: "createProject", project } };
+  } catch (error) {
+    if (error instanceof Invalid) return { error: error.message };
+    throw error;
+  }
 }
 
 function lines(value: unknown, field: string): string[] {
@@ -154,6 +190,8 @@ export interface Batch {
   projectId: string;
   taskIds: string[];
   actions: Action[];
+  /** The batch creates its project rather than adding tasks to one. */
+  createsProject?: boolean;
 }
 
 /**
@@ -197,22 +235,30 @@ export function createInbox(file: string, writeBoard: (state: OrchestrationState
       const ids = (list: unknown) => new Set(Array.isArray(list) ? list.map((item) => record(item)?.id) : []);
       const tasks = ids(state?.tasks);
       const projects = ids(state?.projects);
-      const left = batches.filter((batch) => projects.has(batch.projectId) && !batch.taskIds.every((id) => tasks.has(id)));
+      const coming = new Set(batches.filter((batch) => batch.createsProject).map((batch) => batch.projectId));
+      const left = batches.filter((batch) =>
+        batch.createsProject
+          ? !projects.has(batch.projectId)
+          : (projects.has(batch.projectId) || coming.has(batch.projectId)) && !batch.taskIds.every((id) => tasks.has(id)),
+      );
       if (left.length !== batches.length) write(left);
     },
-    /** The board including queued tasks. With no tab open, queued tasks are written to the board now. */
+    /** The board including queued work. With no tab open, queued work is written to the board now. */
     flushOrPreview(state: OrchestrationState): { state: OrchestrationState; pending: Set<string> } {
       const batches = read();
       if (!batches.length) return { state, pending: new Set() };
       const next = apply(state, batches);
-      if (tabLive()) return { state: next, pending: new Set(batches.flatMap((batch) => batch.taskIds)) };
+      if (tabLive()) {
+        const pending = batches.flatMap((batch) => (batch.createsProject ? [batch.projectId] : batch.taskIds));
+        return { state: next, pending: new Set(pending) };
+      }
       writeBoard(next);
       write([]);
       return { state: next, pending: new Set() };
     },
     add(state: OrchestrationState, body: unknown) {
       const batches = read();
-      const stamp = `${clock().toString(36)}${(counter++).toString(36)}`;
+      const stamp = nextStamp();
       const planned = planTasks(apply(state, batches), body, (index) => `task-api-${stamp}-${index + 1}`);
       if ("error" in planned) return planned;
       const batch: Batch = {
@@ -221,16 +267,37 @@ export function createInbox(file: string, writeBoard: (state: OrchestrationState
         taskIds: planned.tasks.map((task) => task.id),
         actions: planned.actions,
       };
-      const response = { project: planned.projectId, tasks: planned.tasks };
-      if (tabLive()) {
-        write([...batches, batch]);
-        return { ...response, applied: false, note: "Shepherd is open in a browser. That tab adds these tasks within a few seconds." };
-      }
-      writeBoard(apply(state, [...batches, batch]));
-      write([]);
-      return { ...response, applied: true, note: "Added to the board." };
+      return { project: planned.projectId, tasks: planned.tasks, ...deliver(state, batches, batch, "these tasks") };
+    },
+    addProject(state: OrchestrationState, body: unknown) {
+      const batches = read();
+      const stamp = nextStamp();
+      const planned = planProject(apply(state, batches), body, `proj-api-${stamp}`);
+      if ("error" in planned) return planned;
+      const batch: Batch = {
+        id: `batch-${stamp}`,
+        projectId: planned.project.id,
+        taskIds: [],
+        actions: [planned.action],
+        createsProject: true,
+      };
+      return { project: planned.project, ...deliver(state, batches, batch, "this project") };
     },
   };
+
+  function nextStamp() {
+    return `${clock().toString(36)}${(counter++).toString(36)}`;
+  }
+
+  function deliver(state: OrchestrationState, batches: Batch[], batch: Batch, what: string) {
+    if (tabLive()) {
+      write([...batches, batch]);
+      return { applied: false, note: `Shepherd is open in a browser. That tab adds ${what} within a few seconds.` };
+    }
+    writeBoard(apply(state, [...batches, batch]));
+    write([]);
+    return { applied: true, note: "Added to the board." };
+  }
 }
 
 /** What an outside agent needs to pick a project and name dependencies. */
@@ -240,6 +307,7 @@ export function boardSummary(state: OrchestrationState, pending: Set<string>) {
       id: project.id,
       name: project.name,
       directory: project.directory ?? null,
+      ...(pending.has(project.id) ? { pending: true } : {}),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)
         .map((task) => ({

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { reducer } from "../src/model/reducer";
 import type { OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
-import { TAB_LIVE_MS, boardSummary, createInbox, planTasks } from "./intake";
+import { TAB_LIVE_MS, boardSummary, createInbox, planProject, planTasks } from "./intake";
 
 function board(): OrchestrationState {
   return reducer(workspace(1), { type: "createProject", project: { id: "proj-2", name: "Greeter", summary: "", directory: "greeter" } });
@@ -69,6 +69,36 @@ describe("planTasks", () => {
       'A dependsOn gate must be "completed" or "verified".',
     );
     expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a task in this project/);
+    expect(error({ project: "Greeter", name: "X", review: false })).toBe("The task skips review, so it needs a checkCommand to verify it.");
+    expect(error({ project: "Greeter", name: "X", autoRun: "yes" })).toBe("autoRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", runner: "human", autoRun: true })).toMatch(/done by a person/);
+  });
+
+  it("sets up tasks that start on their own, judge independently, or are verified by their check alone", () => {
+    const state = apply(board(), {
+      project: "Greeter",
+      tasks: [
+        { name: "Build", checkCommand: "npm run build", review: false, autoRun: true },
+        { name: "Test", checkCommand: "npm test", independent: true, autoRun: true, dependsOn: ["Build"] },
+      ],
+    });
+    const [build, test] = state.tasks;
+    expect(build).toMatchObject({ autoRun: true });
+    expect(build!.independent).toBeUndefined();
+    expect(build!.verification.map((check) => check.kind)).toEqual(["command"]);
+    expect(test).toMatchObject({ autoRun: true, independent: true });
+    expect(test!.verification.map((check) => check.kind)).toEqual(["command", "review"]);
+  });
+});
+
+describe("planProject", () => {
+  it("creates a project with a free folder, or explains why not", () => {
+    const result = planProject(board(), { name: "Hello counter", summary: "Counter app" }, "proj-api-1");
+    expect(result).toMatchObject({ project: { id: "proj-api-1", name: "Hello counter", summary: "Counter app", directory: "hello-counter" } });
+    const error = (body: unknown) => (planProject(board(), body, "proj-api-1") as { error: string }).error;
+    expect(error({})).toBe("The project needs a name.");
+    expect(error({ name: "greeter" })).toBe("There is already a project named Greeter (proj-2).");
+    expect(error({ name: "Elsewhere", directory: "../outside" })).toMatch(/inside the workspace/);
   });
 });
 
@@ -139,6 +169,25 @@ describe("inbox", () => {
     inbox.poll();
     inbox.add(board(), { project: "Greeter", name: "A" });
     inbox.saved({ state: { state: workspace(1) }, version: 2 });
+    expect(queued()).toEqual([]);
+  });
+
+  it("queues a new project and its tasks for the tab, keeping them until a save includes them", () => {
+    const { inbox, queued } = setup();
+    inbox.poll();
+    const created = inbox.addProject(board(), { name: "Hello counter" });
+    expect(created).toMatchObject({ applied: false, project: { name: "Hello counter", directory: "hello-counter" } });
+    const project = (created as { project: { id: string } }).project.id;
+    expect(inbox.add(board(), { project: "Hello counter", name: "Architect" })).toMatchObject({ applied: false, project });
+
+    const preview = inbox.flushOrPreview(board());
+    expect(boardSummary(preview.state, preview.pending).projects[2]).toMatchObject({ id: project, pending: true, tasks: [{ name: "Architect" }] });
+
+    // A save from before the tab applied anything keeps both batches, even though the project is not on it yet.
+    inbox.saved({ state: { state: board() }, version: 2 });
+    expect(queued()).toHaveLength(2);
+    const applied = inbox.poll().flatMap((batch) => batch.actions).reduce(reducer, board());
+    inbox.saved({ state: { state: applied }, version: 2 });
     expect(queued()).toEqual([]);
   });
 });

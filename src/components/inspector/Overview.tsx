@@ -87,7 +87,38 @@ export function Overview() {
         Runs in{" "}
         {task.git ? `the ${task.git.branch} worktree` : task.runner === "agent" ? "the task's worktree" : `${project?.directory ?? "the project"}/`}{" "}
         when the work is done. Exit 0 passes.
+        {task.runner === "agent" && !task.verification.some((check) => check.kind === "review")
+          ? " Nobody reviews this task: the check alone verifies it."
+          : ""}
       </p>
+      {task.runner === "agent" ? (
+        <div className="space-y-1.5 text-[12px]">
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1 accent-[#c4a574]"
+              checked={!!task.autoRun}
+              onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { autoRun: event.target.checked } })}
+            />
+            <span>
+              Run automatically
+              <span className="block text-[11px] leading-5 text-faint">Starts the first time every gate into it opens, while Shepherd is open.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1 accent-[#c4a574]"
+              checked={!!task.independent}
+              onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { independent: event.target.checked } })}
+            />
+            <span>
+              Independent
+              <span className="block text-[11px] leading-5 text-faint">The agent sees upstream files, not the upstream agents' summaries.</span>
+            </span>
+          </label>
+        </div>
+      ) : null}
       {task.blocker ? <p className={`text-[12px] leading-5 ${statusText[task.status]}`}>{task.blocker}</p> : null}
       <section>
         <h3 className="mb-1.5 text-[11px] text-muted">Depends on</h3>

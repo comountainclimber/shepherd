@@ -75,6 +75,10 @@ export interface Task {
   instructions: string[];
   checkCommand?: string;
   git?: TaskGit;
+  /** Start the agent as soon as every gate into this task is open. */
+  autoRun?: boolean;
+  /** Leave the upstream agents' own summaries out of this task's prompt, so it judges their work from the files. */
+  independent?: boolean;
 }
 
 export interface Dependency {

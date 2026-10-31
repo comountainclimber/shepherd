@@ -1,4 +1,4 @@
-import { commandCheck } from "./factory";
+import { commandCheck, reviewCheck } from "./factory";
 import { agentById, projectDirectory, workspace } from "./workspace";
 import { CHECK_LABEL } from "./types";
 import type { Action, CheckRun, Dependency, ExecutionEvent, Gate, Notification, OrchestrationState, Project, Task, TaskStatus } from "./types";
@@ -268,7 +268,12 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
       tone: "success",
     });
     if (!human) {
-      log.note({ message: `${task.name} finished. Review it to verify.`, tone: "success", taskId: task.id });
+      const reviewed = task.verification.some((check) => check.kind === "review");
+      log.note({
+        message: reviewed ? `${task.name} finished. Review it to verify.` : `${task.name} finished. Its check decides whether it is verified.`,
+        tone: "success",
+        taskId: task.id,
+      });
     }
   } else if (status === "failed") {
     next = { ...next, blocker: task.blocker ?? "Marked failed" };
@@ -343,7 +348,9 @@ function setCheckCommand(state: OrchestrationState, id: string, command: string)
   const trimmed = command.trim();
   if (!task || (task.checkCommand ?? "") === trimmed) return state;
   const log = createLog(state, state.now);
-  const rest = task.verification.filter((check) => check.kind !== "command");
+  const others = task.verification.filter((check) => check.kind !== "command");
+  // An agent task verified by its check alone goes back to needing review when the check goes.
+  const rest = !trimmed && task.runner === "agent" && !others.length ? [reviewCheck(task.id)] : others;
   const next: Task = {
     ...task,
     checkCommand: trimmed || undefined,

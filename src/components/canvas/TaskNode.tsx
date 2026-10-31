@@ -2,7 +2,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { cx, formatAgent, formatDuration, statusLabel } from "../../model/format";
 import { waitingOn } from "../../model/selectors";
 import { CHECK_LABEL } from "../../model/types";
-import { isFullyVerified } from "../../model/verify";
+import { awaiting, isFullyVerified } from "../../model/verify";
 import { agentById } from "../../model/workspace";
 import { useShepherd } from "../../store";
 import { checkBg, statusBg, statusText } from "../ui";
@@ -62,7 +62,7 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
             </span>
           </div>
           {task.status === "completed" && !verified ? (
-            <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-running">Needs your review</div>
+            <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-running">{awaiting(task)}</div>
           ) : null}
           {yourTurn ? (
             <div className="mt-1.5 text-[10px] uppercase tracking-[0.08em] text-approval">Your turn</div>

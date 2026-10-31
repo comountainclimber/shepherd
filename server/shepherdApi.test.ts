@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentCommand, exitError, inside, runCheckCommand, withoutLogLines } from "./shepherdApi";
+import { agentCommand, agentEnv, exitError, inside, runCheckCommand, withoutLogLines } from "./shepherdApi";
 
 describe("check commands", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "shepherd-check-"));
@@ -35,7 +35,17 @@ describe("agent commands", () => {
     expect(cmd).toBe("codex");
     expect(args.slice(0, 1)).toEqual(["exec"]);
     expect(args).toContain("--sandbox");
+    expect(args).toContain("sandbox_workspace_write.network_access=true");
     expect(args.at(-1)).toBe("Do it");
+  });
+
+  it("gives Codex an npm cache its sandbox can write to, and leaves Claude's environment alone", () => {
+    const env = { PATH: "/bin", NPM_CONFIG_CACHE: "/home/me/.npm" };
+    const codex = agentEnv("codex", env);
+    expect(codex.NPM_CONFIG_CACHE).toBeUndefined();
+    expect(codex.npm_config_cache).toBe(path.join(tmpdir(), "shepherd-npm-cache"));
+    expect(codex.PATH).toBe("/bin");
+    expect(agentEnv("claude", env)).toBe(env);
   });
 
   it("resumes Codex without flags that resume rejects", () => {
@@ -43,6 +53,7 @@ describe("agent commands", () => {
     expect(args.slice(0, 3)).toEqual(["exec", "resume", "session-1"]);
     expect(args).not.toContain("--sandbox");
     expect(args).toContain('sandbox_mode="workspace-write"');
+    expect(args).toContain("sandbox_workspace_write.network_access=true");
     expect(args.at(-1)).toBe("Fix it");
   });
 

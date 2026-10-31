@@ -338,6 +338,23 @@ describe("check commands", () => {
     expect(task(state, "a").verification.map((check) => check.kind)).toEqual(["review"]);
     expect(isFullyVerified(task(state, "a"))).toBe(true);
   });
+
+  it("verifies a task without review by its check alone, and asks for review again if the check goes", () => {
+    let state = apply(
+      workspace(NOW),
+      { type: "createTask", task: make("a", { checkCommand: COMMAND, review: false }) },
+      { type: "createTask", task: make("b"), dependsOn: [{ source: "a", gate: "verified" }] },
+    );
+    state = finishRun(state, "a");
+    expect(isFullyVerified(task(state, "a"))).toBe(false);
+    expect(state.notifications.at(-1)!.message).toBe("a finished. Its check decides whether it is verified.");
+    state = runCheck(state, "a", 0);
+    expect(isFullyVerified(task(state, "a"))).toBe(true);
+    expect(waitingOn(task(state, "b"), state.tasks, state.dependencies)).toBeNull();
+
+    state = reducer(state, { type: "setCheckCommand", id: "a", command: "" });
+    expect(task(state, "a").verification.map((check) => [check.kind, check.state])).toEqual([["review", "pending"]]);
+  });
 });
 
 describe("delegation", () => {

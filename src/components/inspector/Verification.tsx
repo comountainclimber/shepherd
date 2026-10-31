@@ -17,11 +17,16 @@ const noteTone = {
 };
 
 function verificationNote(task: Task, verified: boolean): { tone: keyof typeof noteTone; text: string } {
+  const reviewed = task.verification.some((check) => check.kind === "review");
   if (verified) {
-    return { tone: "completed", text: task.runner === "human" ? "You signed this off." : "You accepted this task's output." };
+    if (task.runner === "human") return { tone: "completed", text: "You signed this off." };
+    return { tone: "completed", text: reviewed ? "You accepted this task's output." : "Shepherd's check passed. That is this task's verification." };
   }
   if (task.runner === "human") {
     return { tone: "approval", text: "This task is yours. Mark it complete in Actions when it is done. Your sign-off is the verification." };
+  }
+  if (task.status === "completed" && !reviewed) {
+    return { tone: "running", text: "The agent says it finished. That is not verification. Shepherd's check decides, and nobody reviews this task." };
   }
   if (task.status === "completed") {
     return {
