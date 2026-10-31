@@ -1,13 +1,62 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { blankTask } from "../src/model/factory";
-import type { Task } from "../src/model/types";
+import { blankTask, newStep } from "../src/model/factory";
+import { reducer } from "../src/model/reducer";
+import type { OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { WORKSPACE_PROJECT_ID, workspace } from "../src/model/workspace";
 import { createEngine, envelope } from "./engine";
 import { createRunner } from "./runner";
+
+/** Stands in for Codex: writes a file named after its step, then reports like Codex does. */
+const FAKE_AGENT = `
+import { appendFileSync, writeFileSync } from "node:fs";
+const [log, prompt] = process.argv.slice(2);
+const name = /Objective: Do (\\w+)/.exec(prompt)[1].toLowerCase();
+writeFileSync(name + ".txt", name + "\\n");
+appendFileSync(log, JSON.stringify({ name, prompt }) + "\\n");
+const say = (event) => console.log(JSON.stringify(event));
+say({ type: "thread.started", thread_id: "thread-" + name });
+say({ type: "item.completed", item: { type: "agent_message", text: "Report from " + name + ": wrote " + name + ".txt" } });
+say({ type: "turn.completed" });
+`;
+
+function planServer(board: OrchestrationState) {
+  const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
+  const sandbox = path.join(root, "sandbox");
+  mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
+  const agent = path.join(root, "agent.mjs");
+  const log = path.join(root, "prompts.jsonl");
+  writeFileSync(agent, FAKE_AGENT);
+  const file = path.join(root, "state.json");
+  writeFileSync(file, JSON.stringify(envelope(board)));
+  const engine = createEngine(file);
+  const runner = createRunner({
+    engine,
+    sandbox,
+    worktrees: path.join(root, "worktrees"),
+    evidence: path.join(root, "evidence"),
+    gate: path.join(root, "gate.mjs"),
+    loggedIn: async () => true,
+    command: (_provider, prompt) => ({ cmd: process.execPath, args: [agent, log, prompt] }),
+  });
+  const prompts = () =>
+    readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { name: string; prompt: string });
+  return { engine, runner, prompts };
+}
+
+function outlined(spec: string): OrchestrationState {
+  const steps = spec.split("\n").map((line) => {
+    const name = line.trim();
+    return { task: { ...newStep(WORKSPACE_PROJECT_ID, name, `Do ${name}`), id: `step-${name.toLowerCase()}` }, depth: (line.length - line.trimStart().length) / 2 };
+  });
+  return reducer(workspace(0), { type: "addSteps", projectId: WORKSPACE_PROJECT_ID, after: null, steps });
+}
 
 /** A server starting on a saved board, with no agent signed in so nothing but checks can run. */
 function restartWith(task: Task) {
@@ -80,5 +129,50 @@ describe("scheduler", () => {
     });
     await runner.idle();
     expect(engine.get().tasks[0]!.verification[0]).toMatchObject({ state: "passed", timestamp: 123 });
+  });
+});
+
+describe("plans", () => {
+  it("runs the outline in order, hands each step the work and reports before it, and stops when done", async () => {
+    const { engine, runner, prompts } = planServer(outlined("Plan\n  Front\n  Back\nShip"));
+    expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
+    expect(engine.get().projects[0]!.running).toBe(true);
+    await runner.idle();
+
+    const board = engine.get();
+    const step = (name: string) => board.tasks.find((task) => task.name === name)!;
+    expect(board.tasks.every(isFullyVerified)).toBe(true);
+    expect(board.projects[0]!.running).toBeUndefined();
+
+    const order = prompts().map((item) => item.name);
+    expect(order[0]).toBe("plan");
+    expect(order.slice(1, 3).sort()).toEqual(["back", "front"]);
+    expect(order[3]).toBe("ship");
+
+    const said = Object.fromEntries(prompts().map((item) => [item.name, item.prompt]));
+    expect(said.front).toContain("Report from plan: wrote plan.txt");
+    expect(said.ship).toContain("Report from front");
+    expect(said.ship).toContain("Report from back");
+    expect(said.ship).not.toContain("Report from plan");
+
+    expect(step("Plan").output).toBe("Report from plan: wrote plan.txt");
+    expect(step("Ship").git?.branch).toBe("shepherd/ship");
+    for (const file of ["plan.txt", "front.txt", "back.txt", "ship.txt"]) {
+      expect(existsSync(path.join(step("Ship").git!.folder, file))).toBe(true);
+    }
+
+    expect(await runner.handle({ command: "mergePlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
+    expect(engine.get().tasks.every((task) => task.git?.merged)).toBe(true);
+    runner.close();
+    engine.close();
+  }, 60_000);
+
+  it("refuses to run a plan with a step nobody can do", async () => {
+    const board = outlined("Plan");
+    const { runner, engine } = planServer({ ...board, tasks: board.tasks.map((task) => ({ ...task, agentId: null })) });
+    expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ error: "Pick who does Plan first." });
+    expect(engine.get().projects[0]!.running).toBeUndefined();
+    runner.close();
+    engine.close();
   });
 });

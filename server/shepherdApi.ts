@@ -5,8 +5,12 @@ import type { Plugin } from "vite";
 import type { Action } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
+import { draftSteps } from "./draft";
 import { boardSummary, planProject, planTasks } from "./intake";
-import { agentStatus, createRunner, inside, type Runner } from "./runner";
+import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
+
+/** The longest goal Shepherd sends to an agent to plan. */
+const GOAL_LIMIT = 4000;
 
 /** How often an open tab hears about changes while agents are busy. */
 const STREAM_THROTTLE_MS = 250;
@@ -142,6 +146,28 @@ async function route(
     }
     engine.dispatch(planned.action);
     sendJson(res, 201, { project: planned.project, note: "Added to the board." });
+    return true;
+  }
+  if (pathname === "/api/draft" && method === "POST") {
+    const body = (await readJson(req)) as { projectId?: unknown; goal?: unknown };
+    const board = engine.get();
+    const project = board.projects.find((item) => item.id === body.projectId);
+    const goal = typeof body.goal === "string" ? body.goal.trim() : "";
+    if (!project) throw new BadRequest("Say which project, as projectId.");
+    if (!goal) throw new BadRequest("Say what you want done, as goal.");
+    if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
+    const folder = projectFolder(board.workspace, project.directory, sandbox);
+    if ("error" in folder) {
+      sendJson(res, 409, { error: folder.error });
+      return true;
+    }
+    mkdirSync(folder.path, { recursive: true });
+    const abandon = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) abandon.abort();
+    });
+    const result = await draftSteps(goal, folder.path, abandon.signal);
+    if (!res.destroyed) sendJson(res, Array.isArray(result) ? 200 : 409, Array.isArray(result) ? { steps: result } : result);
     return true;
   }
   if (pathname === "/api/agents" && method === "GET") {

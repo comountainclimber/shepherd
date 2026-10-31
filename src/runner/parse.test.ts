@@ -12,7 +12,7 @@ describe("agent stream parsing", () => {
         message: { content: [{ type: "text", text: "Editing the page" }] },
       }),
     );
-    expect(text).toEqual({ chatId: "chat-1", activity: "Editing the page" });
+    expect(text).toEqual({ chatId: "chat-1", activity: "Editing the page", message: "Editing the page" });
     const done = parseAgentLine(JSON.stringify({ type: "result", session_id: "chat-1", result: "Shipped the form" }));
     expect(done?.done).toBe(true);
     expect(done?.ok).toBe(true);
@@ -26,6 +26,11 @@ describe("agent stream parsing", () => {
       JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Wrote hello.txt" } }),
     );
     expect(message?.activity).toBe("Wrote hello.txt");
+    expect(message?.message).toBe("Wrote hello.txt");
+    const long = "Line one.\n\n".repeat(40);
+    const report = parseAgentLine(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: long } }));
+    expect(report?.message).toBe(long.trim());
+    expect(report?.activity!.length).toBeLessThanOrEqual(240);
     const done = parseAgentLine(JSON.stringify({ type: "turn.completed" }));
     expect(done?.done).toBe(true);
     expect(done?.ok).toBe(true);
@@ -57,7 +62,7 @@ describe("task prompt", () => {
     expect(prompt).toContain("Task: Write the parser");
     expect(prompt).toContain("Objective: Parse RELAY lines");
     expect(prompt).toContain("Done when:\n- Handles empty lines");
-    expect(prompt).toContain("this task's own git worktree");
+    expect(prompt).toContain("this step's own git worktree");
     expect(prompt).toContain("Do not commit, push, or switch branches yourself.");
     expect(prompt).toContain("- Keep it small");
   });
@@ -74,7 +79,7 @@ describe("task prompt", () => {
     ]);
     expect(prompt).toContain("- Write the contract: Define RELAY");
     expect(prompt).toContain("Files it wrote: contract/CONTRACT.md");
-    expect(prompt).toContain("Its summary: Defined it");
+    expect(prompt).toContain("What it reported:\n    Defined it");
   });
 
   it("keeps upstream agents' summaries from an independent task", () => {

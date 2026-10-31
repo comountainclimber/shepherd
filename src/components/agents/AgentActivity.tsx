@@ -27,7 +27,7 @@ const MEMBERS: { kind: AssigneeKind; name: string; role: string }[] = [
   { kind: "person", name: "You", role: "Reviews, sign-offs, and anything only a person can do" },
 ];
 
-/** Who can take tasks, what each is doing in this project, and how much of it is verified. */
+/** Who can take steps, what each is doing in this project, and how much of it is done. */
 export function AgentActivity() {
   const state = useShepherd((store) => store.state);
   const projectId = useShepherd((store) => store.ui.projectId);
@@ -53,7 +53,7 @@ export function AgentActivity() {
         ))}
       </div>
       <p className="mx-auto mt-5 max-w-6xl text-center text-[12px] text-faint">
-        Every run is its own Claude Code or Codex process on its own branch, so one agent can work on several tasks at once.
+        Every run is its own Claude Code or Codex process on its own branch, so one agent can work on several steps at once.
       </p>
     </div>
   );
@@ -66,7 +66,7 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
     .map((task) => ({ task, stage: stageOf(task, state.tasks, state.dependencies) }))
     .sort((a, b) => ORDER[a.stage] - ORDER[b.stage]);
   const running = staged.filter((item) => item.stage === "running" || item.stage === "checking" || item.stage === "updating").length;
-  const verified = tasks.filter(isFullyVerified).length;
+  const done = tasks.filter(isFullyVerified).length;
   const failed = staged.filter((item) => item.stage === "failed").length;
 
   return (
@@ -91,13 +91,13 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
       </div>
       <div className="grid grid-cols-3 gap-2 px-4 pt-3">
         <Stat value={running} label="running" tone="text-running" />
-        <Stat value={verified} label="verified" tone="text-completed" />
+        <Stat value={done} label="done" tone="text-completed" />
         <Stat value={failed} label="failed" tone="text-failed" />
       </div>
       <div className="px-4 pt-3">
-        <ProgressBar percent={tasks.length ? (verified / tasks.length) * 100 : 0} />
+        <ProgressBar percent={tasks.length ? (done / tasks.length) * 100 : 0} />
         <div className="mt-1 text-right text-[11px] text-faint">
-          {tasks.length ? `${verified} of ${tasks.length} tasks in this project verified` : "No tasks in this project"}
+          {tasks.length ? `${done} of ${tasks.length} ${tasks.length === 1 ? "step" : "steps"} in this project done` : "No steps in this project"}
         </div>
       </div>
       <ul className="min-h-0 flex-1 space-y-0.5 px-2 pb-3 pt-2">

@@ -5,16 +5,13 @@ import { needsYou, progress } from "../../model/stage";
 import { tasksForProject } from "../../model/selectors";
 import { agentStatus, setWorkspacePath, workspacePath } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
-import { Button, ProgressBar } from "../ui";
 
 export function Hud() {
   const ui = useShepherd((store) => store.ui);
   const state = useShepherd((store) => store.state);
   const setView = useShepherd((store) => store.setView);
   const setFilters = useShepherd((store) => store.setFilters);
-  const setNewTaskOpen = useShepherd((store) => store.setNewTaskOpen);
   const tasks = tasksForProject(state, ui.projectId);
-  const score = progress(tasks);
   const running = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, state.tasks, state.dependencies)).length;
   const failed = tasks.filter((task) => task.status === "failed").length;
@@ -31,15 +28,6 @@ export function Hud() {
         <span className="text-[15px] font-semibold text-text">Shepherd</span>
       </div>
       <ProjectPicker />
-      <div className="hidden min-w-[180px] flex-col gap-1 md:flex">
-        <div className="flex items-center justify-between text-[12px]">
-          <span className="text-muted">Verified</span>
-          <span className="font-mono text-text">
-            {score.verified}/{score.total}
-          </span>
-        </div>
-        <ProgressBar percent={score.percent} />
-      </div>
       <div className="flex items-center gap-1">
         <Counter
           icon={<Zap size={13} />}
@@ -73,9 +61,6 @@ export function Hud() {
         </div>
         <Feed />
         <SettingsMenu />
-        <Button variant="primary" onClick={() => setNewTaskOpen(true)}>
-          <Plus size={15} /> New task
-        </Button>
       </div>
     </header>
   );
@@ -183,7 +168,7 @@ function ProjectPicker() {
               >
                 <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
                 <span className={cx("font-mono text-[11px]", score.complete ? "text-completed" : "text-faint")}>
-                  {score.total ? `${score.verified}/${score.total}` : "empty"}
+                  {score.total ? `${score.done}/${score.total}` : "empty"}
                 </span>
               </button>
             );
@@ -262,7 +247,7 @@ function Feed() {
 function SettingsMenu() {
   const { open, setOpen, ref } = usePopover();
   const saved = useShepherd((store) => store.state.workspace ?? "");
-  const setDecomposeOpen = useShepherd((store) => store.setDecomposeOpen);
+  const requestDraft = useShepherd((store) => store.requestDraft);
   const setPaletteOpen = useShepherd((store) => store.setPaletteOpen);
   const [folder, setFolder] = useState(saved);
   const [status, setStatus] = useState<{ claude: boolean; codex: boolean; git: boolean; workspace: string } | null>(null);
@@ -313,9 +298,9 @@ function SettingsMenu() {
           </label>
           <div className="flex flex-col border-t border-line pt-2">
             <MenuLink
-              label="Plan tasks from a goal"
+              label="Draft steps from a goal"
               onClick={() => {
-                setDecomposeOpen(true);
+                requestDraft();
                 setOpen(false);
               }}
             />

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { proposeDecomposition } from "./decompose";
 import { blankTask } from "./factory";
 import { reducer } from "./reducer";
 import { needsMe, waitingOn } from "./selectors";
@@ -17,6 +16,7 @@ function make(id: string, extra: Partial<Parameters<typeof blankTask>[0]> = {}) 
     objective: `Do ${id}`,
     agentId: "agent-codex",
     position: { x: 0, y: 0 },
+    review: true,
     ...extra,
   });
 }
@@ -102,7 +102,7 @@ describe("gates", () => {
 
     state = finishRun(state, "a");
     expect(task(state, "b").status).toBe("blocked");
-    expect(task(state, "b").blocker).toBe("a is not verified");
+    expect(task(state, "b").blocker).toBe("a is not done");
 
     state = review(state, "a", "passed");
     expect(task(state, "b").status).toBe("queued");
@@ -193,8 +193,38 @@ describe("tasks", () => {
     expect(human.verification).toEqual([]);
   });
 
-  it("gives an agent task one review check", () => {
+  it("gives an agent task a review only when asked", () => {
     expect(make("x").verification.map((check) => check.kind)).toEqual(["review"]);
+    expect(make("y", { review: false }).verification).toEqual([]);
+  });
+
+  it("counts an agent step with no checks as done when it finishes", () => {
+    let state = apply(workspace(NOW), { type: "createTask", task: make("a", { review: false }) }, {
+      type: "createTask",
+      task: make("b", { review: false }),
+      dependsOn: [{ source: "a", gate: "verified" }],
+    });
+    state = finishRun(state, "a");
+    expect(isFullyVerified(task(state, "a"))).toBe(true);
+    expect(waitingOn(task(state, "b"), state.tasks, state.dependencies)).toBeNull();
+  });
+
+  it("turns the review on and off", () => {
+    let state = apply(workspace(NOW), { type: "createTask", task: make("a", { review: false }) });
+    state = reducer(state, { type: "setReview", id: "a", on: true });
+    expect(task(state, "a").verification.map((check) => check.kind)).toEqual(["review"]);
+    state = reducer(state, { type: "setReview", id: "a", on: false });
+    expect(task(state, "a").verification).toEqual([]);
+  });
+
+  it("switches a step between an agent and you before it has run", () => {
+    let state = apply(workspace(NOW), { type: "createTask", task: make("a") });
+    state = reducer(state, { type: "reassign", id: "a", agentId: null, runner: "human" });
+    expect(task(state, "a").runner).toBe("human");
+    expect(task(state, "a").verification).toEqual([]);
+    state = reducer(state, { type: "reassign", id: "a", agentId: "agent-claude", runner: "agent" });
+    expect(task(state, "a").runner).toBe("agent");
+    expect(task(state, "a").agentId).toBe("agent-claude");
   });
 
   it("asks for you on a human task once its gates are open", () => {
@@ -271,7 +301,7 @@ describe("check commands", () => {
     expect(task(state, "a").verification.map((check) => check.kind)).toEqual(["command", "review"]);
     state = review(state, "a", "passed");
     expect(isFullyVerified(task(state, "a"))).toBe(false);
-    expect(waitingOn(task(state, "b"), state.tasks, state.dependencies)).toBe("a is not verified");
+    expect(waitingOn(task(state, "b"), state.tasks, state.dependencies)).toBe("a is not done");
 
     state = runCheck(state, "a", 0, "5\n");
     const check = task(state, "a").verification[0]!;
@@ -339,7 +369,7 @@ describe("check commands", () => {
     expect(isFullyVerified(task(state, "a"))).toBe(true);
   });
 
-  it("verifies a task without review by its check alone, and asks for review again if the check goes", () => {
+  it("verifies a task without review by its check alone, and by finishing once the check goes", () => {
     let state = apply(
       workspace(NOW),
       { type: "createTask", task: make("a", { checkCommand: COMMAND, review: false }) },
@@ -347,40 +377,13 @@ describe("check commands", () => {
     );
     state = finishRun(state, "a");
     expect(isFullyVerified(task(state, "a"))).toBe(false);
-    expect(state.notifications.at(-1)!.message).toBe("a finished. Its check decides whether it is verified.");
+    expect(state.notifications.at(-1)!.message).toBe("a finished. Its check decides whether it is done.");
     state = runCheck(state, "a", 0);
     expect(isFullyVerified(task(state, "a"))).toBe(true);
     expect(waitingOn(task(state, "b"), state.tasks, state.dependencies)).toBeNull();
 
     state = reducer(state, { type: "setCheckCommand", id: "a", command: "" });
-    expect(task(state, "a").verification.map((check) => [check.kind, check.state])).toEqual([["review", "pending"]]);
-  });
-});
-
-describe("delegation", () => {
-  it("proposes investigate, implement, and verify with a verified gate before verify", () => {
-    const proposal = proposeDecomposition("Refactor logging", {
-      projectId: "proj-local",
-      rootTaskId: null,
-      originX: 24,
-      nonce: 2,
-      agentIds: ["agent-codex"],
-    });
-    expect(proposal.tasks.map((item) => item.name)).toEqual([
-      "Investigate: Refactor logging",
-      "Implement: Refactor logging",
-      "Verify: Refactor logging",
-    ]);
-    expect(proposal.dependencies.map((dep) => dep.gate)).toEqual(["completed", "verified"]);
-    expect(new Set(proposal.tasks.map((item) => item.worktree)).size).toBe(3);
-    expect(proposal.tasks.every((item) => item.agentId === "agent-codex")).toBe(true);
-
-    const state = reducer(workspace(NOW), {
-      type: "approvePlan",
-      tasks: proposal.tasks,
-      dependencies: proposal.dependencies,
-    });
-    expect(state.tasks).toHaveLength(3);
-    expect(state.dependencies).toHaveLength(2);
+    expect(task(state, "a").verification).toEqual([]);
+    expect(isFullyVerified(task(state, "a"))).toBe(true);
   });
 });

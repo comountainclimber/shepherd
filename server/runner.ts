@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { slugify } from "../src/model/factory";
+import { dependencyOrder } from "../src/model/outline";
 import type { Action, CheckRun, GateStep, Task } from "../src/model/types";
 import { isFullyVerified, unmetDependencies } from "../src/model/verify";
 import { CODEX_MODEL, agentById } from "../src/model/workspace";
@@ -32,6 +34,8 @@ export const AUTHORS: Record<AgentCli, Author> = {
 
 /** Automatic reruns of a task set to run automatically, after its check fails. */
 export const MAX_RETRIES = 2;
+/** How much of an agent's final message Shepherd keeps as the step's report. */
+const REPORT_LIMIT = 12_000;
 /** Agents Shepherd starts on its own at once. Runs you start are not counted. */
 export const MAX_PARALLEL_RUNS = 4;
 
@@ -137,11 +141,16 @@ export function createRunner(options: RunnerOptions): Runner {
     const current = find(taskId);
     if (current?.status !== "running") return current?.blocker ?? "The task could not start.";
     dispatch({ type: "updateTask", id: taskId, patch: { activity: "Starting the agent…", blocker: null } });
+    if (!current.git) {
+      const worktree = branchName(current, state().tasks);
+      if (worktree !== current.worktree) dispatch({ type: "updateTask", id: taskId, patch: { worktree } });
+    }
+    const named = find(taskId) ?? current;
     const provider = providerFor(current);
     const author = AUTHORS[provider];
     const dir = folderFor(current);
     if ("error" in dir) return fail(taskId, dir.error);
-    if (!isTaskName(current.worktree)) return fail(taskId, `Not a usable task folder name: ${current.worktree}`);
+    if (!isTaskName(named.worktree)) return fail(taskId, `Not a usable task folder name: ${named.worktree}`);
     if (!(await loggedIn(provider))) return attempt.stopped ? null : fail(taskId, `${author.name} is not logged in.`);
     if (attempt.stopped) return null;
 
@@ -151,7 +160,7 @@ export function createRunner(options: RunnerOptions): Runner {
     try {
       [tree, merged] = await serialized(dir.path, async () => {
         const repo = await ensureRepo(dir.path);
-        const opened = await openWorktree(repo, worktrees, taskId, current.worktree, current.git?.branch);
+        const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch);
         return [opened, await prepareRun(opened, branches(upstreamTasks(state(), current)), author)] as const;
       });
     } catch (error) {
@@ -179,6 +188,7 @@ export function createRunner(options: RunnerOptions): Runner {
 
     let buffer = "";
     let lastActivity = "";
+    let report = "";
     let result: { ok: boolean; summary: string } | null = null;
     let sessionId = latest.sessionId ?? null;
     const consume = (chunk: Buffer) => {
@@ -192,6 +202,7 @@ export function createRunner(options: RunnerOptions): Runner {
           sessionId = parsed.chatId;
           dispatch({ type: "updateTask", id: taskId, patch: { sessionId } });
         }
+        if (parsed.message) report = parsed.message;
         if (parsed.activity && parsed.activity !== lastActivity) {
           lastActivity = parsed.activity;
           dispatch({ type: "updateTask", id: taskId, patch: { activity: parsed.activity } });
@@ -223,7 +234,7 @@ export function createRunner(options: RunnerOptions): Runner {
     let diff: Changes;
     try {
       diff = await serialized(dir.path, async () => {
-        await commitAll(tree.folder, [current.name.slice(0, 72), (outcome?.summary ?? "").slice(0, 2000)], author);
+        await commitAll(tree.folder, [(current.name || "Shepherd step").slice(0, 72), (outcome?.summary ?? "").slice(0, 2000)], author);
         return changes(tree.folder, tree.branch);
       });
     } catch (error) {
@@ -231,7 +242,16 @@ export function createRunner(options: RunnerOptions): Runner {
     }
     const git = find(taskId)?.git;
     if (!git || attempt.stopped) return null;
-    dispatch({ type: "updateTask", id: taskId, patch: { filesChanged: diff.files, previews: diff.diffs, git: { ...git, head: diff.head } } });
+    dispatch({
+      type: "updateTask",
+      id: taskId,
+      patch: {
+        filesChanged: diff.files,
+        previews: diff.diffs,
+        git: { ...git, head: diff.head },
+        ...(report ? { output: report.length > REPORT_LIMIT ? `${report.slice(0, REPORT_LIMIT)}…` : report } : {}),
+      },
+    });
     const files = diff.files.length
       ? `${diff.files.length} ${diff.files.length === 1 ? "file" : "files"} changed on ${tree.branch}`
       : "No files changed";
@@ -356,7 +376,8 @@ export function createRunner(options: RunnerOptions): Runner {
     }
     const after = find(taskId);
     const failed = after?.verification.some((item) => item.kind === "command" && item.state === "failed");
-    if (after && failed && after.autoRun && after.runner === "agent" && after.status === "failed" && (after.retries ?? 0) < MAX_RETRIES) {
+    const automatic = after && (after.autoRun || planRunning(after.projectId));
+    if (after && failed && automatic && after.runner === "agent" && after.status === "failed" && (after.retries ?? 0) < MAX_RETRIES) {
       const attempt = (after.retries ?? 0) + 1;
       dispatch({ type: "updateTask", id: taskId, patch: { retries: attempt } });
       track(run(taskId, `Shepherd's check failed, so this is automatic retry ${attempt} of ${MAX_RETRIES}. Fix the cause.`, false));
@@ -434,12 +455,19 @@ export function createRunner(options: RunnerOptions): Runner {
     }, 0);
   }
 
+  function planRunning(projectId: string): boolean {
+    return !!state().projects.find((project) => project.id === projectId)?.running;
+  }
+
   /**
    * Checks finished work whose check never ran to the end, such as one a restart cut short,
-   * refreshes out-of-date tasks, and starts automatic ones once their gates open.
+   * refreshes out-of-date tasks, and starts steps once the steps before them are done: every
+   * waiting step of a running plan, and fresh steps set to start by themselves. A plan stops
+   * running once every step in it is done.
    */
   function startReady() {
-    const { tasks, dependencies } = state();
+    const { tasks, dependencies, projects } = state();
+    const planned = new Set(projects.filter((project) => project.running).map((project) => project.id));
     let started = [...runs.values()].filter((attempt) => attempt.scheduled).length;
     for (const task of tasks) {
       if (runs.has(task.id) || checks.has(task.id) || refreshing.has(task.id)) continue;
@@ -453,18 +481,88 @@ export function createRunner(options: RunnerOptions): Runner {
         continue;
       }
       const fresh = !task.git && !task.sessionId;
-      if (!task.autoRun || !task.agentId || !fresh || started >= MAX_PARALLEL_RUNS) continue;
+      const wanted = planned.has(task.projectId) || (task.autoRun && fresh);
+      if (!wanted || !task.agentId || started >= MAX_PARALLEL_RUNS) continue;
       started += 1;
       track(run(task.id, undefined, false));
     }
+    for (const projectId of planned) {
+      const steps = tasks.filter((task) => task.projectId === projectId);
+      if (steps.length && !steps.every(isFullyVerified)) continue;
+      dispatch({ type: "setPlanRunning", projectId, running: false });
+    }
+  }
+
+  /** Runs every step of a project that is not done yet, each as soon as the steps before it are done. */
+  function runPlan(projectId: string): string | null {
+    const steps = state().tasks.filter((task) => task.projectId === projectId);
+    if (!steps.length) return "Add a step first.";
+    const todo = steps.filter((task) => !isFullyVerified(task));
+    if (!todo.length) return "Every step is already done.";
+    const nobody = todo.find((task) => task.runner === "agent" && !task.agentId);
+    if (nobody) return `Pick who does ${nobody.name || "the unnamed step"} first.`;
+    const unnamed = todo.find((task) => !task.name.trim() && !task.objective.trim());
+    if (unnamed) return "One step has no name or prompt yet. Give it one or delete it.";
+    dispatch({ type: "setPlanRunning", projectId, running: true });
+    const { tasks, dependencies } = state();
+    for (const task of todo) {
+      if (task.runner !== "agent" || runs.has(task.id) || unmetDependencies(task.id, tasks, dependencies).length) continue;
+      const paused = task.status === "blocked" && task.blocker === "Paused by you";
+      if (task.status === "failed" || paused) track(run(task.id, undefined, true));
+    }
+    schedule();
+    return null;
+  }
+
+  /** Stops a running plan: its agents are paused where they are, and nothing new starts. */
+  function stopPlan(projectId: string) {
+    dispatch({ type: "setPlanRunning", projectId, running: false });
+    for (const task of state().tasks) {
+      if (task.projectId !== projectId || !runs.has(task.id)) continue;
+      kill(task.id);
+      dispatch({ type: "setStatus", id: task.id, status: "blocked" });
+    }
+  }
+
+  /**
+   * Merges every finished step's branch into the project folder's branch. The last steps go first:
+   * their branches already hold the work of the steps before them, so those need no merge of their own.
+   */
+  async function mergePlan(projectId: string): Promise<string | null> {
+    const { tasks, dependencies } = state();
+    const steps = tasks.filter((task) => task.projectId === projectId);
+    const waiting = steps.filter((task) => !isFullyVerified(task));
+    if (waiting.length) return `${waiting[0]!.name || "A step"} is not done yet.`;
+    const open = dependencyOrder(steps, dependencies)
+      .filter((task) => task.git && !task.git.merged)
+      .reverse();
+    if (!open.length) return "There is nothing left to merge.";
+    for (const task of open) {
+      const error = await merge(task.id);
+      if (error) return `${task.name}: ${error}`;
+    }
+    return null;
   }
 
   async function handle(body: unknown): Promise<{ ok: true } | { error: string }> {
     const raw = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+    const outcome = (error: string | null) => (error ? { error } : ({ ok: true } as const));
+    if (raw.command === "runPlan" || raw.command === "stopPlan" || raw.command === "mergePlan") {
+      const projectId = typeof raw.projectId === "string" ? raw.projectId : "";
+      if (!state().projects.some((project) => project.id === projectId)) {
+        return { error: projectId ? `There is no project ${projectId}.` : "Say which project, as projectId." };
+      }
+      if (closed()) return { error: "Shepherd is restarting. Try again in a moment." };
+      if (raw.command === "runPlan") return outcome(runPlan(projectId));
+      if (raw.command === "stopPlan") {
+        stopPlan(projectId);
+        return { ok: true };
+      }
+      return outcome(await mergePlan(projectId));
+    }
     const taskId = typeof raw.taskId === "string" ? raw.taskId : "";
     const task = find(taskId);
     if (!task) return { error: taskId ? `There is no task ${taskId}.` : "Say which task, as taskId." };
-    const outcome = (error: string | null) => (error ? { error } : ({ ok: true } as const));
     switch (raw.command) {
       case "run": {
         if (task.runner === "human") return { error: "A person does this task. Mark it complete when it is done." };
@@ -506,7 +604,7 @@ export function createRunner(options: RunnerOptions): Runner {
       case "forward":
         return outcome(await forward(taskId, typeof raw.to === "string" ? raw.to : ""));
       default:
-        return { error: "command must be run, stop, instruct, check, complete, merge or forward." };
+        return { error: "command must be run, stop, instruct, check, complete, merge, forward, runPlan, stopPlan or mergePlan." };
     }
   }
 
@@ -534,6 +632,15 @@ export function createRunner(options: RunnerOptions): Runner {
       }
     },
   };
+}
+
+/** A folder and branch name made from the step's name, unique among its project's steps. */
+export function branchName(task: Task, tasks: Task[]): string {
+  const taken = new Set(tasks.filter((item) => item.projectId === task.projectId && item.id !== task.id).map((item) => item.worktree));
+  const base = slugify(task.name, "step");
+  let candidate = base;
+  for (let n = 2; taken.has(candidate); n += 1) candidate = `${base}-${n}`;
+  return candidate;
 }
 
 function branches(tasks: Task[]): string[] {

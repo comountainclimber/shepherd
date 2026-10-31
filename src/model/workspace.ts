@@ -29,8 +29,9 @@ export function workspace(now = Date.now()): OrchestrationState {
       {
         id: WORKSPACE_PROJECT_ID,
         name: "Workspace",
-        summary: "Tasks you add here run with Claude Code or Codex, each on its own branch of this project's repository.",
+        summary: "Steps you add here run with Claude Code or Codex, each on its own branch of this project's repository.",
         directory: "workspace",
+        outline: [],
       },
     ],
     tasks: [],

@@ -3,12 +3,10 @@ import { connectToServer, useShepherd } from "../../store";
 import { AgentActivity } from "../agents/AgentActivity";
 import { OrchestrationCanvas } from "../canvas/OrchestrationCanvas";
 import { CommandPalette } from "../delegation/CommandPalette";
-import { DecomposeDialog } from "../delegation/DecomposeDialog";
 import { NewProjectDialog } from "../delegation/NewProjectDialog";
-import { NewTaskDialog } from "../delegation/NewTaskDialog";
 import { TaskInspector } from "../inspector/TaskInspector";
+import { Outline } from "../outline/Outline";
 import { Hud, Sheep } from "./Hud";
-import { NeedsYou } from "./NeedsYou";
 import { ServerNotice } from "./ServerNotice";
 import { Toasts, useTaskToasts } from "./Toasts";
 
@@ -40,17 +38,12 @@ export function Shell() {
       if (event.key === "Escape") {
         if (store.ui.paletteOpen) store.setPaletteOpen(false);
         else if (store.ui.newProjectOpen) store.setNewProjectOpen(false);
-        else if (store.ui.newTaskOpen) store.setNewTaskOpen(false);
-        else if (store.ui.decomposeOpen) store.setDecomposeOpen(false);
         else if (store.ui.contextMenu) store.setContextMenu(null);
-        else if (store.ui.inspectorOpen) store.setInspectorOpen(false);
+        else if (store.ui.inspectorOpen && !typing) store.setInspectorOpen(false);
         return;
       }
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key === "n") {
-        event.preventDefault();
-        store.setNewTaskOpen(true);
-      } else if (event.key === "1") store.setView("canvas");
+      if (event.key === "1") store.setView("canvas");
       else if (event.key === "2") store.setView("agents");
       else if (event.key === "f") store.requestFit();
     };
@@ -64,16 +57,16 @@ export function Shell() {
     <div className="flex h-screen flex-col overflow-hidden bg-bg text-text">
       <Hud />
       <ServerNotice />
-      <div className="relative min-h-0 flex-1">
-        <main className="h-full">{!loaded ? <Loading /> : view === "canvas" ? <OrchestrationCanvas /> : <AgentActivity />}</main>
-        {loaded && view === "canvas" ? <NeedsYou /> : null}
-        {loaded && showInspector ? <TaskInspector /> : null}
+      <div className="flex min-h-0 flex-1">
+        {loaded ? <Outline /> : null}
+        <div className="relative min-w-0 flex-1">
+          <main className="h-full">{!loaded ? <Loading /> : view === "canvas" ? <OrchestrationCanvas /> : <AgentActivity />}</main>
+          {loaded && showInspector ? <TaskInspector /> : null}
+        </div>
       </div>
       <Toasts />
       <CommandPalette />
       <NewProjectDialog />
-      <NewTaskDialog />
-      <DecomposeDialog />
     </div>
   );
 }

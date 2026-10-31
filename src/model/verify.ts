@@ -1,12 +1,9 @@
 import type { Dependency, Task } from "./types";
 
+/** Finished, and every check it has passed. A step with no checks is done when its agent finishes. */
 export function isFullyVerified(task: Task): boolean {
-  const checks = task.verification;
-  if (task.outdated) return false;
-  if (task.runner === "human") {
-    return task.status === "completed" && checks.every((check) => check.state === "passed");
-  }
-  return checks.length > 0 && checks.every((check) => check.state === "passed");
+  if (task.outdated || task.status !== "completed") return false;
+  return task.verification.every((check) => check.state === "passed");
 }
 
 /** What a finished but unverified task is waiting for. */
@@ -20,9 +17,9 @@ export function dependencySatisfied(dep: Dependency, source: Task | undefined): 
 }
 
 export function unmetReason(dep: Dependency, source: Task | undefined): string {
-  const name = source?.name ?? "A removed task";
+  const name = source?.name || "A removed step";
   if (!source || source.status !== "completed") return `${name} has not finished`;
-  return `${name} is not verified`;
+  return `${name} is not done`;
 }
 
 export function unmetDependencies(taskId: string, tasks: Task[], deps: Dependency[]): string[] {

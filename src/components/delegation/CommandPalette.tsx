@@ -1,17 +1,19 @@
 import { Search, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { cx } from "../../model/format";
+import { runPlan, stopPlan } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
+import { appendStep } from "../outline/appendStep";
 
 export function CommandPalette() {
   const open = useShepherd((store) => store.ui.paletteOpen);
+  const projectId = useShepherd((store) => store.ui.projectId);
+  const running = useShepherd((store) => !!store.state.projects.find((project) => project.id === projectId)?.running);
   const setOpen = useShepherd((store) => store.setPaletteOpen);
   const setView = useShepherd((store) => store.setView);
   const setFilters = useShepherd((store) => store.setFilters);
-  const setNewTaskOpen = useShepherd((store) => store.setNewTaskOpen);
   const setNewProjectOpen = useShepherd((store) => store.setNewProjectOpen);
-  const setDecomposeOpen = useShepherd((store) => store.setDecomposeOpen);
-  const setDecomposeSeed = useShepherd((store) => store.setDecomposeSeed);
+  const requestDraft = useShepherd((store) => store.requestDraft);
   const requestFit = useShepherd((store) => store.requestFit);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -28,33 +30,33 @@ export function CommandPalette() {
       setFilters({ ...initialFilters, ...filters });
     };
     return [
-      { id: "new", label: "New task", hint: "N", run: () => setNewTaskOpen(true) },
-      { id: "decompose", label: "Plan tasks from a goal", run: () => setDecomposeOpen(true) },
+      { id: "add", label: "Add a step", hint: "N", run: () => appendStep(projectId) },
+      { id: "draft", label: "Draft steps from a goal", run: () => requestDraft() },
+      running
+        ? { id: "stop", label: "Stop the plan", run: () => void stopPlan(projectId) }
+        : { id: "run", label: "Run the plan", run: () => void runPlan(projectId) },
       { id: "new-project", label: "New project", run: () => setNewProjectOpen(true) },
-      { id: "canvas", label: "Go to the board", hint: "1", run: () => setView("canvas") },
+      { id: "canvas", label: "Go to the map", hint: "1", run: () => setView("canvas") },
       { id: "agents", label: "Go to agents", hint: "2", run: () => setView("agents") },
       { id: "needs", label: "Show only what needs me", run: () => show({ savedView: "needs-me" }) },
       { id: "running", label: "Show only what is working", run: () => show({ savedView: "running" }) },
       { id: "failed", label: "Show only failures", run: () => show({ status: "failed" }) },
-      { id: "unverified", label: "Show done but not yet proven", run: () => show({ savedView: "unverified" }) },
       { id: "all", label: "Show everything", run: () => show({}) },
       { id: "fit", label: "Fit the map to the screen", hint: "F", run: () => requestFit() },
       { id: "reset", label: "Clear the whole board", run: clearWorkspace },
     ];
-  }, [requestFit, setDecomposeOpen, setFilters, setNewProjectOpen, setNewTaskOpen, setView]);
+  }, [projectId, requestDraft, requestFit, running, setFilters, setNewProjectOpen, setView]);
 
   const filtered = commands.filter((command) => command.label.toLowerCase().includes(query.trim().toLowerCase()));
-  const decomposeRow = query.trim() && filtered.length === 0;
-  const count = decomposeRow ? 1 : filtered.length;
+  const draftRow = query.trim() && filtered.length === 0;
+  const count = draftRow ? 1 : filtered.length;
   const active = Math.min(index, Math.max(count - 1, 0));
 
   if (!open) return null;
 
   const runActive = () => {
-    if (decomposeRow) {
-      setDecomposeSeed(query.trim());
-      setDecomposeOpen(true);
-      setOpen(false);
+    if (draftRow) {
+      requestDraft(query.trim());
       return;
     }
     filtered[active]?.run();
@@ -88,15 +90,15 @@ export function CommandPalette() {
                 runActive();
               }
             }}
-            placeholder="A command, or a goal to plan"
+            placeholder="A command, or a goal to break into steps"
             className="h-12 w-full bg-transparent text-[15px] outline-none placeholder:text-faint"
           />
         </div>
         <ul className="max-h-80 overflow-auto p-1.5">
-          {decomposeRow ? (
+          {draftRow ? (
             <li>
               <button type="button" className="flex w-full items-center gap-2 rounded-lg bg-surface-3 px-3 py-2.5 text-left text-[14px] font-medium" onClick={runActive}>
-                <Sparkles size={15} className="text-brass" /> Plan tasks for “{query.trim()}”
+                <Sparkles size={15} className="text-brass" /> Draft steps for “{query.trim()}”
               </button>
             </li>
           ) : (

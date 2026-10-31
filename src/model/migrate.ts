@@ -30,7 +30,20 @@ function text(value: unknown, fallback = ""): string {
 
 function project(raw: Raw): Project {
   const directory = text(raw.directory);
-  return { id: text(raw.id), name: text(raw.name), summary: text(raw.summary), ...(directory ? { directory } : {}) };
+  const outline = Array.isArray(raw.outline)
+    ? raw.outline.flatMap((item) => {
+        const step = record(item);
+        return step && typeof step.id === "string" ? [{ id: step.id, depth: Number.isInteger(step.depth) ? (step.depth as number) : 0 }] : [];
+      })
+    : null;
+  return {
+    id: text(raw.id),
+    name: text(raw.name),
+    summary: text(raw.summary),
+    ...(directory ? { directory } : {}),
+    ...(outline ? { outline } : {}),
+    ...(raw.running === true ? { running: true } : {}),
+  };
 }
 
 function check(raw: Raw): VerificationCheck | null {
@@ -150,6 +163,8 @@ function task(raw: Raw): Task {
     ...(raw.independent === true ? { independent: true } : {}),
     ...(typeof raw.outdated === "string" && raw.outdated ? { outdated: raw.outdated } : {}),
     ...(typeof raw.retries === "number" && raw.retries > 0 ? { retries: raw.retries } : {}),
+    ...(typeof raw.output === "string" && raw.output ? { output: raw.output } : {}),
+    ...(raw.wired === true ? { wired: true } : {}),
   };
 }
 

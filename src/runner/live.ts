@@ -78,6 +78,44 @@ export function forwardFailure(taskId: string, to: string): Promise<string | nul
   return command({ command: "forward", taskId, to });
 }
 
+/** Runs every step that is not done, each as soon as the steps before it are done. */
+export function runPlan(projectId: string) {
+  return command({ command: "runPlan", projectId });
+}
+
+export function stopPlan(projectId: string) {
+  return command({ command: "stopPlan", projectId });
+}
+
+/** Merges the finished plan's branches into the project folder's branch. */
+export function mergePlan(projectId: string) {
+  return command({ command: "mergePlan", projectId });
+}
+
+export interface DraftStep {
+  name: string;
+  prompt: string;
+  depth: number;
+}
+
+/** Asks Codex to break a goal into steps. It can read the project folder but changes nothing. */
+export async function draftSteps(projectId: string, goal: string, signal?: AbortSignal): Promise<DraftStep[] | { error: string }> {
+  try {
+    const response = await fetch("/api/draft", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId, goal }),
+      signal,
+    });
+    const body = (await response.json()) as { steps?: DraftStep[]; error?: string };
+    if (response.ok && Array.isArray(body.steps)) return body.steps;
+    return { error: body.error ?? `The server refused (${response.status}).` };
+  } catch (error) {
+    if (signal?.aborted) return { error: "Stopped." };
+    return { error: error instanceof Error ? error.message : "Could not reach the Shepherd server." };
+  }
+}
+
 export function runLabel(task: Task): string {
   const verb = task.status === "failed" ? "Retry" : task.status === "completed" ? "Run again" : "Run";
   return `${verb} with ${providerFor(task) === "codex" ? "Codex" : "Claude"}`;

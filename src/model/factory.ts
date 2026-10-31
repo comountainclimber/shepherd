@@ -33,7 +33,7 @@ export function blankTask(args: {
   runner?: Runner;
   acceptance?: string[];
   checkCommand?: string;
-  /** False lets an agent task with a check command be verified by the check alone. */
+  /** You look at the agent's work before the steps after it start. */
   review?: boolean;
   autoRun?: boolean;
   independent?: boolean;
@@ -41,7 +41,7 @@ export function blankTask(args: {
   const runner = args.runner ?? "agent";
   const command = args.checkCommand?.trim() ?? "";
   const agent = runner === "agent";
-  const review = agent && (args.review !== false || !command) ? [reviewCheck(args.id)] : [];
+  const review = agent && args.review ? [reviewCheck(args.id)] : [];
   return {
     id: args.id,
     projectId: args.projectId,
@@ -66,6 +66,14 @@ export function blankTask(args: {
     ...(agent && args.autoRun ? { autoRun: true } : {}),
     ...(agent && args.independent ? { independent: true } : {}),
   };
+}
+
+export const DEFAULT_AGENT_ID = "agent-codex";
+
+/** A new outline step: just a name, done by Codex unless you pick otherwise. An empty prompt means its name is the prompt. */
+export function newStep(projectId: string, name = "", prompt = "", agentId: string | null = DEFAULT_AGENT_ID): Task {
+  const id = `step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  return blankTask({ id, projectId, name, objective: prompt, agentId, worktree: id, position: { x: 0, y: 0 } });
 }
 
 export function reviewCheck(taskId: string): VerificationCheck {

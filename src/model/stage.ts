@@ -12,7 +12,7 @@ export const STAGE_LABEL: Record<Stage, string> = {
   checking: "Checking",
   updating: "Updating",
   "needs-you": "Needs you",
-  verified: "Verified",
+  verified: "Done",
   failed: "Failed",
   paused: "Paused",
 };
@@ -57,7 +57,7 @@ export function stageHint(task: Task, stage: Stage, tasks: Task[], deps: Depende
       return names.length ? `Waiting on ${names[0]}${names.length > 1 ? ` and ${names.length - 1} more` : ""}` : "Waiting";
     }
     case "ready":
-      if (!task.agentId) return "Assign an agent to start";
+      if (!task.agentId) return "Pick who does it";
       return task.autoRun && !task.git ? "Starts automatically" : "Ready to start";
     case "running":
       return task.activity || "Running…";
@@ -68,7 +68,9 @@ export function stageHint(task: Task, stage: Stage, tasks: Task[], deps: Depende
     case "needs-you":
       return reviewPending(task) && task.status === "completed" ? "Ready for your review" : "Your task";
     case "verified":
-      return task.git?.merged ? `Merged into ${task.git.merged.into}` : "All checks passed";
+      if (task.git?.merged) return `Merged into ${task.git.merged.into}`;
+      if (task.runner === "human") return "Marked done by you";
+      return task.verification.length ? "Checks passed" : firstLine(task.output) || "Finished";
     case "failed":
       return failedCheck(task) ? "Its check failed" : (task.blocker ?? "The run failed");
     case "paused":
@@ -90,23 +92,29 @@ export function assigneeFor(task: Task): Assignee {
   return { kind: agent.provider === "codex" ? "codex" : "claude", name: agent.name };
 }
 
+/** The first line of an agent's report, without Markdown decoration. */
+export function firstLine(text: string | undefined): string {
+  const line = (text ?? "").split("\n").find((item) => item.trim()) ?? "";
+  return line.replace(/^[#>*\-\s]+/, "").replace(/\*\*|__|`/g, "").trim();
+}
+
 export interface Progress {
-  verified: number;
+  done: number;
   total: number;
   percent: number;
   complete: boolean;
 }
 
 export function progress(tasks: Task[]): Progress {
-  const verified = tasks.filter(isFullyVerified).length;
+  const done = tasks.filter(isFullyVerified).length;
   const total = tasks.length;
-  return { verified, total, percent: total ? Math.round((verified / total) * 100) : 0, complete: total > 0 && verified === total };
+  return { done, total, percent: total ? Math.round((done / total) * 100) : 0, complete: total > 0 && done === total };
 }
 
-/** Nothing happens to this task until you act: review it, retry it, resume it, do it, or start it. */
+/** Nothing happens to this step until you act: review it, retry it, resume it, do it, or pick who does it. */
 export function needsYou(task: Task, tasks: Task[], deps: Dependency[]): boolean {
   const stage = stageOf(task, tasks, deps);
-  if (stage === "ready") return !!task.agentId && (!task.autoRun || !!task.git || !!task.sessionId);
+  if (stage === "ready") return task.runner === "agent" && !task.agentId;
   return stage === "needs-you" || stage === "failed" || stage === "paused";
 }
 

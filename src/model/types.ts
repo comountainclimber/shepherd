@@ -12,7 +12,7 @@ export type Tone = "info" | "success" | "warning" | "failure";
 
 export type ViewId = "canvas" | "agents";
 
-export type PanelTab = "overview" | "proof" | "log" | "edit";
+export type PanelTab = "step" | "output" | "checks" | "log";
 
 export type Runner = "agent" | "human";
 
@@ -97,6 +97,10 @@ export interface Task {
   outdated?: string;
   /** Automatic retries since its check last passed. */
   retries?: number;
+  /** What the agent said when its last run finished. Later steps get it in their prompts. */
+  output?: string;
+  /** Its inputs were set by hand on the map, so the outline no longer decides what it waits for. */
+  wired?: boolean;
 }
 
 export interface Dependency {
@@ -104,6 +108,14 @@ export interface Dependency {
   source: string;
   target: string;
   gate: Gate;
+  /** Made from the outline's order. Shepherd redraws these whenever the outline changes. */
+  outline?: boolean;
+}
+
+/** A step's place in a project's outline. Indented steps run side by side after the step above them. */
+export interface OutlineItem {
+  id: string;
+  depth: number;
 }
 
 export interface Agent {
@@ -136,6 +148,10 @@ export interface Project {
   name: string;
   summary: string;
   directory?: string;
+  /** The steps in order. Unset for older projects, whose arrows were all drawn by hand. */
+  outline?: OutlineItem[];
+  /** Shepherd starts each step as soon as the steps before it are done. */
+  running?: boolean;
 }
 
 export interface OrchestrationState {
@@ -169,12 +185,13 @@ export interface UiState {
   panelTab: PanelTab;
   filters: Filters;
   paletteOpen: boolean;
-  newTaskOpen: boolean;
   newProjectOpen: boolean;
-  decomposeOpen: boolean;
-  decomposeSeed: string;
   contextMenu: { x: number; y: number; taskId: string } | null;
   fitToken: number;
+  /** Bumped to put the cursor in the outline's goal box. */
+  draftToken: number;
+  /** A goal to start that box with. */
+  draftSeed: string;
 }
 
 export type Action =
@@ -189,7 +206,13 @@ export type Action =
   | { type: "setCheckCommand"; id: string; command: string }
   | { type: "startCheck"; taskId: string }
   | { type: "recordCheck"; taskId: string; run: CheckRun }
-  | { type: "reassign"; id: string; agentId: string | null }
+  | { type: "reassign"; id: string; agentId: string | null; runner?: Runner }
+  /** Inserts steps into the outline after the step `after`, or at the top when it is null. */
+  | { type: "addSteps"; projectId: string; after: string | null; steps: { task: Task; depth: number }[] }
+  | { type: "setOutline"; projectId: string; items: OutlineItem[] }
+  | { type: "followOutline"; id: string }
+  | { type: "setReview"; id: string; on: boolean }
+  | { type: "setPlanRunning"; projectId: string; running: boolean }
   | { type: "instruct"; id: string; text: string }
   | { type: "merged"; id: string; into: string; sha: string }
   | { type: "setWorkspace"; path: string }
@@ -225,8 +248,8 @@ export const CHECK_LABEL: Record<VerificationKind, string> = {
 };
 
 export const GATE_LABEL: Record<Gate, string> = {
-  completed: "once finished",
-  verified: "once verified",
+  completed: "when it finishes",
+  verified: "when its checks pass",
 };
 
 export const SAVED_VIEWS: { id: Filters["savedView"]; label: string }[] = [

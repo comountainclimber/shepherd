@@ -1,13 +1,13 @@
-import { Check, Clock, GitMerge, LoaderCircle, Pause, Play, RefreshCw, Square, Undo2, X } from "lucide-react";
+import { Check, Clock, LoaderCircle, Play, RefreshCw, Square, Undo2, X } from "lucide-react";
 import { cx } from "../../model/format";
 import { assigneeFor, failedCheck, reviewPending, stageHint, stageOf, waitingFor, type Stage } from "../../model/stage";
 import type { PanelTab, Task } from "../../model/types";
-import { markComplete, mergeTask, runTask, stopTask } from "../../runner/live";
+import { markComplete, runTask, stopTask } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, Button, StageBadge, Tabs, stageBg, stageBorder } from "../ui";
-import { Edit } from "./Edit";
 import { Log } from "./Log";
-import { Overview } from "./Overview";
+import { Output } from "./Output";
+import { Step } from "./Step";
 import { Verification } from "./Verification";
 
 export function TaskInspector() {
@@ -16,17 +16,19 @@ export function TaskInspector() {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
   const tab = useShepherd((store) => store.ui.panelTab);
+  const dispatch = useShepherd((store) => store.dispatch);
   const setPanelTab = useShepherd((store) => store.setPanelTab);
   const setInspectorOpen = useShepherd((store) => store.setInspectorOpen);
   if (!task) return null;
   const stage = stageOf(task, tasks, deps);
   const assignee = assigneeFor(task);
-  const proofNeedsYou = (task.status === "completed" && !!reviewPending(task)) || !!failedCheck(task);
+  const checksNeedYou = (task.status === "completed" && !!reviewPending(task)) || !!failedCheck(task);
+  const hasOutput = !!task.output || task.filesChanged.length > 0;
   const tabs: { id: PanelTab; label: string; alert?: boolean }[] = [
-    { id: "overview", label: "Overview" },
-    { id: "proof", label: "Proof", alert: proofNeedsYou && tab !== "proof" },
+    { id: "step", label: "Step" },
+    { id: "output", label: "Output", alert: hasOutput && stage === "needs-you" && tab !== "output" },
+    { id: "checks", label: task.verification.length ? `Checks (${task.verification.length})` : "Checks", alert: checksNeedYou && tab !== "checks" },
     { id: "log", label: "Log" },
-    { id: "edit", label: "Edit" },
   ];
 
   return (
@@ -41,7 +43,14 @@ export function TaskInspector() {
         <div className="flex items-start gap-3">
           <Avatar kind={assignee.kind} size={36} />
           <div className="min-w-0 flex-1">
-            <h2 className="text-[16px] font-semibold leading-tight text-text">{task.name}</h2>
+            <input
+              value={task.name}
+              placeholder="Name this step"
+              aria-label="Step name"
+              onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { name: event.target.value } })}
+              onKeyDown={(event) => (event.key === "Enter" || event.key === "Escape") && event.currentTarget.blur()}
+              className="w-full bg-transparent text-[16px] font-semibold leading-tight text-text outline-none placeholder:text-faint"
+            />
             <div className="mt-1 flex items-center gap-2">
               <StageBadge stage={stage} />
               <span className="truncate text-[12px] text-muted">{assignee.name}</span>
@@ -62,10 +71,10 @@ export function TaskInspector() {
         <Tabs tabs={tabs} value={tab} onChange={(id) => setPanelTab(id as PanelTab)} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-        {tab === "overview" ? <Overview /> : null}
-        {tab === "proof" ? <Verification /> : null}
+        {tab === "step" ? <Step /> : null}
+        {tab === "output" ? <Output /> : null}
+        {tab === "checks" ? <Verification /> : null}
         {tab === "log" ? <Log /> : null}
-        {tab === "edit" ? <Edit /> : null}
       </div>
     </aside>
   );
@@ -75,6 +84,7 @@ export function TaskInspector() {
 function NextStep({ task, stage }: { task: Task; stage: Stage }) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
+  const planRunning = useShepherd((store) => !!store.state.projects.find((project) => project.id === task.projectId)?.running);
   const dispatch = useShepherd((store) => store.dispatch);
   const tab = useShepherd((store) => store.ui.panelTab);
   const setPanelTab = useShepherd((store) => store.setPanelTab);
@@ -83,28 +93,30 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
 
   switch (stage) {
     case "ready":
+      if (planRunning && task.agentId) {
+        return (
+          <p className="flex items-center gap-2 text-[13px] text-muted">
+            <LoaderCircle size={15} className="animate-spin" /> Starting as part of the plan…
+          </p>
+        );
+      }
       return (
         <div className="flex items-center gap-3">
-          <Button size="lg" variant="primary" disabled={!task.agentId} onClick={() => void runTask(task.id)}>
-            <Play size={15} /> Start
+          <Button size="lg" variant="ghost" disabled={!task.agentId || !task.name.trim()} onClick={() => void runTask(task.id)}>
+            <Play size={15} /> Run just this step
           </Button>
           <p className="text-[12px] leading-5 text-muted">
-            {task.agentId ? `${assigneeFor(task).name} works on its own branch.` : "Assign an agent on the Edit tab first."}
+            {!task.agentId ? "Pick who does it below first." : !task.name.trim() ? "Name it first." : "Or press Run under the steps to run them all."}
           </p>
         </div>
       );
     case "running":
       return (
         <div className="space-y-2">
-          <p className="line-clamp-2 text-[13px] leading-5 text-running">{task.activity || "Running…"}</p>
-          <div className="flex gap-2">
-            <Button onClick={() => void stopTask(task.id, "blocked")}>
-              <Pause size={14} /> Pause
-            </Button>
-            <Button variant="quiet" onClick={() => void stopTask(task.id, "queued")}>
-              <Square size={12} /> Stop
-            </Button>
-          </div>
+          <p className="line-clamp-2 text-[13px] leading-5 text-running [overflow-wrap:anywhere]">{task.activity || "Running…"}</p>
+          <Button onClick={() => void stopTask(task.id, "blocked")}>
+            <Square size={12} /> Stop
+          </Button>
         </div>
       );
     case "checking":
@@ -126,20 +138,23 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
                 <Undo2 size={16} /> Send back
               </Button>
             </div>
-            {tab !== "proof" ? (
-              <button type="button" className="text-[12px] text-approval hover:underline" onClick={() => setPanelTab("proof")}>
-                Look at the proof before you decide
+            {tab !== "output" ? (
+              <button type="button" className="text-[12px] text-approval hover:underline" onClick={() => setPanelTab("output")}>
+                Read what it did before you decide
               </button>
             ) : (
-              <p className="text-[12px] text-muted">Accepting verifies it. Sending it back fails it, and you can retry with an instruction.</p>
+              <p className="text-[12px] text-muted">Accepting lets the next steps start. Sending it back fails it, and you can retry with an instruction.</p>
             )}
           </div>
         );
       }
       return (
-        <Button size="lg" variant="primary" onClick={() => void markComplete(task.id)}>
-          <Check size={16} /> Mark done
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button size="lg" variant="primary" onClick={() => void markComplete(task.id)}>
+            <Check size={16} /> Mark done
+          </Button>
+          <p className="text-[12px] leading-5 text-muted">The steps after it start once you do.</p>
+        </div>
       );
     case "failed":
       return (
@@ -151,8 +166,8 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
                 <RefreshCw size={15} /> Retry
               </Button>
             ) : null}
-            {failedCheck(task) && tab !== "proof" ? (
-              <Button size="lg" onClick={() => setPanelTab("proof")}>
+            {failedCheck(task) && tab !== "checks" ? (
+              <Button size="lg" onClick={() => setPanelTab("checks")}>
                 See why
               </Button>
             ) : null}
@@ -161,14 +176,9 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
       );
     case "paused":
       return (
-        <div className="flex gap-2">
-          <Button size="lg" variant="primary" onClick={() => void runTask(task.id)}>
-            <Play size={15} /> Resume
-          </Button>
-          <Button variant="quiet" onClick={() => void stopTask(task.id, "queued")}>
-            Stop
-          </Button>
-        </div>
+        <Button size="lg" variant="primary" onClick={() => void runTask(task.id)}>
+          <Play size={15} /> Resume
+        </Button>
       );
     case "waiting": {
       const blockers = waitingFor(task, tasks, deps);
@@ -176,8 +186,8 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
         <p className="flex items-start gap-2 text-[13px] text-muted">
           <Clock size={15} className="mt-0.5 shrink-0" />
           <span>
-            Waiting on <span className="font-medium text-text">{blockers.map((item) => item.name).join(", ") || "its upstream tasks"}</span>.
-            {task.runner === "agent" && task.autoRun ? " It starts automatically after that." : ""}
+            Starts after <span className="font-medium text-text">{blockers.map((item) => item.name || "Untitled step").join(", ") || "the steps before it"}</span>.
+            {planRunning ? "" : " Press Run under the steps to start the plan."}
           </span>
         </p>
       );
@@ -185,15 +195,9 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
     case "verified":
       return (
         <div className="flex flex-wrap items-center gap-2">
-          {task.git && !task.git.merged ? (
-            <Button size="lg" variant="primary" onClick={() => void mergeTask(task.id)}>
-              <GitMerge size={15} /> Merge into {task.git.target}
-            </Button>
-          ) : (
-            <p className="flex items-center gap-2 text-[13px] text-completed">
-              <Check size={15} /> {task.git?.merged ? `Verified and merged into ${task.git.merged.into}` : "Verified"}
-            </p>
-          )}
+          <p className="flex items-center gap-2 text-[13px] text-completed">
+            <Check size={15} /> {task.git?.merged ? `Done and merged into ${task.git.merged.into}` : "Done"}
+          </p>
           {task.runner === "agent" ? (
             <Button variant="quiet" onClick={() => void runTask(task.id)}>
               Run again

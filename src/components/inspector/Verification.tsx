@@ -1,33 +1,33 @@
-import { Check, ExternalLink, FileText, GitMerge, Image as ImageIcon, LoaderCircle, Send, Undo2, X } from "lucide-react";
+import { Check, ExternalLink, FileText, Image as ImageIcon, LoaderCircle, Send, Undo2, X } from "lucide-react";
 import { useState } from "react";
 import { cx, formatClock, formatDuration } from "../../model/format";
 import { failedCheck } from "../../model/stage";
 import type { Task, VerificationCheck } from "../../model/types";
 import { isFullyVerified } from "../../model/verify";
-import { evidenceUrl, forwardFailure, mergeTask, runCheck } from "../../runner/live";
+import { evidenceUrl, forwardFailure, runCheck } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Button, Card, Select } from "../ui";
 import { useSelectedTask } from "./useSelectedTask";
 
 const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 
-function verdict(task: Task, verified: boolean): { tone: string; text: string } {
+function verdict(task: Task, done: boolean): { tone: string; text: string } {
   const reviewed = task.verification.some((check) => check.kind === "review");
-  if (verified) {
-    if (task.runner === "human") return { tone: "completed", text: "You signed this off." };
-    return { tone: "completed", text: reviewed ? "Its check passed and you accepted it." : "Its check passed. That is what verifies it." };
+  const checked = task.verification.some((check) => check.kind === "command");
+  if (done) {
+    if (reviewed && checked) return { tone: "completed", text: "Its check passed and you accepted it." };
+    return { tone: "completed", text: reviewed ? "You accepted it." : "Its check passed." };
   }
-  if (task.runner === "human") return { tone: "approval", text: "This one is yours. Mark it done when it is. Your sign-off is the proof." };
-  if (task.status === "running") return { tone: "running", text: "The agent is working. Its proof shows up here when it finishes." };
+  if (task.status === "running") return { tone: "running", text: "The agent is working. Its checks run when it finishes." };
   if (failedCheck(task)) return { tone: "failed", text: "Shepherd's check failed. Here is exactly what it found." };
-  if (task.status === "failed") return { tone: "failed", text: "This run failed or you sent it back. Try again from the top, with an instruction on the Log tab if it needs one." };
+  if (task.status === "failed") return { tone: "failed", text: "This run failed or you sent it back. Retry it, with an instruction on the Log tab if it needs one." };
   if (task.status === "completed") {
     return {
       tone: "approval",
-      text: reviewed ? "The agent says it is done. That doesn't count until the proof says so. Read it, then decide." : "The agent says it is done. Its check decides.",
+      text: reviewed ? "The agent says it is done. Look at the Output tab, then accept it or send it back." : "The agent says it is done. Its check decides.",
     };
   }
-  return { tone: "queued", text: "No proof yet. It appears after the task runs." };
+  return { tone: "queued", text: "These run after the step does." };
 }
 
 const VERDICT_TONE: Record<string, string> = {
@@ -38,10 +38,27 @@ const VERDICT_TONE: Record<string, string> = {
   queued: "border-line bg-black/20 text-muted",
 };
 
+/** The optional checks on a step: a command Shepherd runs, and your review. */
 export function Verification() {
   const task = useSelectedTask();
-  const verified = isFullyVerified(task);
-  const note = verdict(task, verified);
+  const setPanelTab = useShepherd((store) => store.setPanelTab);
+  if (!task.verification.length) {
+    return (
+      <div className="space-y-2 text-[13px] leading-5 text-muted">
+        <p>This step has no checks. It counts as done when {task.runner === "human" ? "you mark it done" : "its agent finishes"}.</p>
+        {task.runner === "agent" ? (
+          <p>
+            To hold the next steps until the work is proven, add a check command or ask to review it under More options on the{" "}
+            <button type="button" className="text-brass hover:underline" onClick={() => setPanelTab("step")}>
+              Step tab
+            </button>
+            .
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  const note = verdict(task, isFullyVerified(task));
 
   return (
     <div className="space-y-3">
@@ -54,8 +71,6 @@ export function Verification() {
         ),
       )}
       {failedCheck(task) ? <SendFailure task={task} /> : null}
-      <Changes task={task} />
-      {task.git && task.runner === "agent" ? <Merge key={task.id} task={task} verified={verified} /> : null}
     </div>
   );
 }
@@ -213,7 +228,7 @@ function ReviewCard({ check, task }: { check: VerificationCheck; task: Task }) {
   return (
     <Card title="Your review" right={<StateChip check={check} />}>
       <p className="text-[13px] leading-5 text-muted">
-        {check.state === "pending" && reviewable ? "Look at what it changed below. Accept it if it does the job." : check.evidence}
+        {check.state === "pending" && reviewable ? "Read its report and changes on the Output tab. Accept it if it does the job." : check.evidence}
       </p>
       {reviewable ? (
         <div className="mt-2.5 flex gap-2">
@@ -237,7 +252,7 @@ function ReviewCard({ check, task }: { check: VerificationCheck; task: Task }) {
   );
 }
 
-/** Every agent task upstream of this one, nearest first: the tasks whose fix would reach it. */
+/** Every agent step upstream of this one, nearest first: the steps whose fix would reach it. */
 function upstreamAgents(task: Task, tasks: Task[], deps: { source: string; target: string }[]): Task[] {
   const seen = new Set<string>();
   const order: Task[] = [];
@@ -263,9 +278,9 @@ function SendFailure({ task }: { task: Task }) {
   if (!options.length) return null;
   const chosen = options.find((item) => item.id === target) ?? options[0]!;
   return (
-    <Card title="Not this task's fault?">
+    <Card title="Not this step's fault?">
       <p className="text-[13px] leading-5 text-muted">
-        Send the failure to the earlier task that owns the problem. It fixes it there, then Shepherd brings the fix forward and checks
+        Send the failure to the earlier step that owns the problem. It fixes it there, then Shepherd brings the fix forward and checks
         everything after it again.
       </p>
       <div className="mt-2.5 flex gap-2">
@@ -291,100 +306,3 @@ function SendFailure({ task }: { task: Task }) {
   );
 }
 
-function Changes({ task }: { task: Task }) {
-  if (!task.previews.length && !task.filesChanged.length) return null;
-  const unshown = task.filesChanged.filter((path) => !task.previews.some((preview) => preview.path === path));
-  return (
-    <Card
-      title="What it changed"
-      right={task.git ? <span className="truncate font-mono text-[11px] text-faint">{task.git.branch}</span> : null}
-    >
-      <ul className="space-y-1.5">
-        {task.previews.map((preview, index) => {
-          const added = preview.text.split("\n").filter((line) => line.startsWith("+")).length;
-          const removed = preview.text.split("\n").filter((line) => line.startsWith("-")).length;
-          return (
-            <li key={preview.path}>
-              <details open={index < 2} className="overflow-hidden rounded-lg border border-line bg-black/25">
-                <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 font-mono text-[11px] text-text">
-                  <span className="min-w-0 flex-1 truncate">{preview.path}</span>
-                  {task.git ? (
-                    <span className="shrink-0">
-                      <span className="text-completed">+{added}</span> <span className="text-failed">−{removed}</span>
-                    </span>
-                  ) : null}
-                </summary>
-                {task.git ? (
-                  <Diff text={preview.text} />
-                ) : (
-                  <pre className="max-h-52 overflow-auto whitespace-pre-wrap px-2 py-2 font-mono text-[11px] leading-5 text-text">{preview.text}</pre>
-                )}
-              </details>
-            </li>
-          );
-        })}
-      </ul>
-      {unshown.length ? (
-        <div className="mt-2 text-[12px] text-muted">
-          Also changed: <span className="font-mono text-[11px] text-text">{unshown.join(", ")}</span>
-        </div>
-      ) : null}
-      <p className="mt-2 text-[11px] text-faint">Only this task's own changes. Work merged in from earlier tasks is left out.</p>
-    </Card>
-  );
-}
-
-function Diff({ text }: { text: string }) {
-  return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all border-t border-line py-1 font-mono text-[11px] leading-5">
-      {text.split("\n").map((line, index) => (
-        <div
-          key={index}
-          className={
-            line.startsWith("+")
-              ? "bg-completed/10 px-2 text-completed"
-              : line.startsWith("-")
-                ? "bg-failed/10 px-2 text-failed"
-                : line.startsWith("@@")
-                  ? "px-2 text-faint"
-                  : "px-2 text-text"
-          }
-        >
-          {line || " "}
-        </div>
-      ))}
-    </pre>
-  );
-}
-
-function Merge({ task, verified }: { task: Task; verified: boolean }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const git = task.git!;
-  return (
-    <Card title="Merge" right={git.merged ? <span className="text-[11px] font-medium uppercase text-completed">Merged</span> : null}>
-      <p className="text-[13px] leading-5 text-muted">
-        {git.merged
-          ? `Merged into ${git.merged.into} as ${git.merged.sha} at ${formatClock(git.merged.at)}.`
-          : verified
-            ? `Brings ${git.branch} into ${git.target} in the project folder.`
-            : `Once it clears, you can merge ${git.branch} into ${git.target}.`}
-      </p>
-      {error ? <p className="mt-1 text-[12px] leading-5 text-failed">{error}</p> : null}
-      {git.merged ? null : (
-        <Button
-          className="mt-2.5"
-          variant="primary"
-          disabled={!verified || busy || task.status === "running"}
-          onClick={async () => {
-            setBusy(true);
-            setError(await mergeTask(task.id));
-            setBusy(false);
-          }}
-        >
-          <GitMerge size={15} /> {busy ? "Merging…" : `Merge into ${git.target}`}
-        </Button>
-      )}
-    </Card>
-  );
-}

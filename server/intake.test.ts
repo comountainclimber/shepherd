@@ -21,7 +21,7 @@ function apply(state: OrchestrationState, body: unknown) {
 }
 
 describe("planTasks", () => {
-  it("adds tasks the way the New task dialog does", () => {
+  it("adds tasks the way the outline does, with no review unless asked", () => {
     const state = apply(board(), {
       project: "greeter",
       tasks: [
@@ -33,7 +33,8 @@ describe("planTasks", () => {
     const [greet, shout, review] = state.tasks;
     expect(greet).toMatchObject({ id: "api-1", projectId: "proj-2", worktree: "greet-module", agentId: "agent-codex", checkCommand: "node check.mjs" });
     expect(greet!.acceptance).toEqual(["Exports greet"]);
-    expect(greet!.verification.map((check) => check.kind)).toEqual(["command", "review"]);
+    expect(greet!.verification.map((check) => check.kind)).toEqual(["command"]);
+    expect(shout!.verification).toEqual([]);
     expect(shout).toMatchObject({ objective: "Shout CLI", agentId: "agent-claude" });
     expect(review).toMatchObject({ runner: "human", agentId: null });
     expect(state.dependencies.map((dep) => [dep.source, dep.target, dep.gate])).toEqual([
@@ -66,17 +67,17 @@ describe("planTasks", () => {
       'A dependsOn gate must be "completed" or "verified".',
     );
     expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a task in this project/);
-    expect(error({ project: "Greeter", name: "X", review: false })).toBe("The task skips review, so it needs a checkCommand to verify it.");
     expect(error({ project: "Greeter", name: "X", autoRun: "yes" })).toBe("autoRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", runner: "human", review: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", autoRun: true })).toMatch(/done by a person/);
   });
 
-  it("sets up tasks that start on their own, judge independently, or are verified by their check alone", () => {
+  it("sets up tasks that start on their own, judge independently, or wait for your review", () => {
     const state = apply(board(), {
       project: "Greeter",
       tasks: [
-        { name: "Build", checkCommand: "npm run build", review: false, autoRun: true },
-        { name: "Test", checkCommand: "npm test", independent: true, autoRun: true, dependsOn: ["Build"] },
+        { name: "Build", checkCommand: "npm run build", autoRun: true },
+        { name: "Test", checkCommand: "npm test", independent: true, review: true, autoRun: true, dependsOn: ["Build"] },
       ],
     });
     const [build, test] = state.tasks;

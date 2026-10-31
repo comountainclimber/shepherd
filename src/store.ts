@@ -33,15 +33,14 @@ export const initialUi: UiState = {
   selectedAgentId: null,
   selectedEdgeId: null,
   inspectorOpen: false,
-  panelTab: "overview",
+  panelTab: "step",
   filters: initialFilters,
   paletteOpen: false,
-  newTaskOpen: false,
   newProjectOpen: false,
-  decomposeOpen: false,
-  decomposeSeed: "",
   contextMenu: null,
   fitToken: 0,
+  draftToken: 0,
+  draftSeed: "",
 };
 
 export type Connection = "connecting" | "open" | "lost";
@@ -59,6 +58,8 @@ interface ShepherdStore {
   setView: (view: ViewId) => void;
   setProject: (projectId: string) => void;
   selectTask: (id: string | null) => void;
+  /** Selects a step without opening its panel; an open panel follows it. */
+  focusTask: (id: string) => void;
   /** Selects a task and opens its panel on a tab. */
   openTask: (id: string, tab: PanelTab) => void;
   setPanelTab: (tab: PanelTab) => void;
@@ -67,12 +68,11 @@ interface ShepherdStore {
   setInspectorOpen: (open: boolean) => void;
   setFilters: (patch: Partial<Filters>) => void;
   setPaletteOpen: (open: boolean) => void;
-  setNewTaskOpen: (open: boolean) => void;
   setNewProjectOpen: (open: boolean) => void;
-  setDecomposeOpen: (open: boolean) => void;
-  setDecomposeSeed: (seedText: string) => void;
   setContextMenu: (menu: UiState["contextMenu"]) => void;
   requestFit: () => void;
+  /** Puts the cursor in the outline's goal box, with a goal in it if given. */
+  requestDraft: (seed?: string) => void;
 }
 
 if (typeof localStorage !== "undefined") {
@@ -157,10 +157,14 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
         selectedEdgeId: null,
         contextMenu: null,
         inspectorOpen: id ? true : store.ui.inspectorOpen,
-        panelTab: id === store.ui.selectedTaskId ? store.ui.panelTab : "overview",
+        panelTab: id === store.ui.selectedTaskId ? store.ui.panelTab : "step",
         view: id ? "canvas" : store.ui.view,
       },
     })),
+  focusTask: (id) =>
+    set((store) =>
+      store.ui.selectedTaskId === id ? store : { ui: { ...store.ui, selectedTaskId: id, selectedEdgeId: null, contextMenu: null } },
+    ),
   openTask: (id, tab) =>
     set((store) => ({
       ui: { ...store.ui, selectedTaskId: id, selectedEdgeId: null, contextMenu: null, inspectorOpen: true, panelTab: tab, view: "canvas" },
@@ -171,12 +175,11 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
   setInspectorOpen: (open) => set((store) => ({ ui: { ...store.ui, inspectorOpen: open } })),
   setFilters: (patch) => set((store) => ({ ui: { ...store.ui, filters: { ...store.ui.filters, ...patch } } })),
   setPaletteOpen: (open) => set((store) => ({ ui: { ...store.ui, paletteOpen: open } })),
-  setNewTaskOpen: (open) => set((store) => ({ ui: { ...store.ui, newTaskOpen: open, paletteOpen: false } })),
   setNewProjectOpen: (open) => set((store) => ({ ui: { ...store.ui, newProjectOpen: open, paletteOpen: false } })),
-  setDecomposeOpen: (open) => set((store) => ({ ui: { ...store.ui, decomposeOpen: open, paletteOpen: false } })),
-  setDecomposeSeed: (seedText) => set((store) => ({ ui: { ...store.ui, decomposeSeed: seedText } })),
   setContextMenu: (menu) => set((store) => ({ ui: { ...store.ui, contextMenu: menu } })),
   requestFit: () => set((store) => ({ ui: { ...store.ui, fitToken: store.ui.fitToken + 1, view: "canvas" } })),
+  requestDraft: (seed = "") =>
+    set((store) => ({ ui: { ...store.ui, draftToken: store.ui.draftToken + 1, draftSeed: seed, view: "canvas", paletteOpen: false } })),
 }));
 
 function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
@@ -189,10 +192,10 @@ function receive(revision: number, state: OrchestrationState) {
   confirmed = state;
   confirmedRevision = revision;
   pending = pending.filter((entry) => entry.revision === undefined || entry.revision > revision);
+  rebase();
   if (!useShepherd.getState().loaded) {
     useShepherd.setState((store) => ({ loaded: true, ui: reconcileUi(store.ui, state) }));
   }
-  rebase();
 }
 
 /** Follows the server's board for as long as the tab is open. EventSource reconnects by itself. */

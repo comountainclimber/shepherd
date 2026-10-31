@@ -4,6 +4,8 @@ export interface ParsedAgentLine {
   done?: boolean;
   ok?: boolean;
   summary?: string;
+  /** The whole of something the agent said, untrimmed. The last one is its report. */
+  message?: string;
 }
 
 export function parseAgentLine(line: string): ParsedAgentLine | null {
@@ -22,17 +24,20 @@ export function parseAgentLine(line: string): ParsedAgentLine | null {
   if (type === "error") {
     return { chatId, done: true, ok: false, summary: stringField(data, ["message", "error"]) || "Agent failed" };
   }
+  const said = codexMessage(data);
+  if (said) return { chatId, activity: said.replace(/\s+/g, " ").slice(0, 240), message: said };
   const itemActivity = codexItem(data);
   if (itemActivity) return { chatId, activity: itemActivity };
   if (type === "result" || type === "done") {
     const failed = data.is_error === true || data.subtype === "error" || data.status === "error";
-    const summary = stringField(data, ["result", "text", "message"]) || (failed ? "Cursor agent failed" : "Cursor agent finished");
-    return { chatId, done: true, ok: !failed, summary };
+    const result = stringField(data, ["result", "text", "message"]);
+    const summary = result || (failed ? "Cursor agent failed" : "Cursor agent finished");
+    return { chatId, done: true, ok: !failed, summary, ...(result ? { message: result } : {}) };
   }
   const tool = toolName(data);
   if (tool) return { chatId, activity: tool };
   const text = assistantText(data);
-  if (text) return { chatId, activity: text.replace(/\s+/g, " ").slice(0, 240) };
+  if (text) return { chatId, activity: text.replace(/\s+/g, " ").slice(0, 240), message: text };
   if (chatId) return { chatId };
   return null;
 }
@@ -61,6 +66,12 @@ function assistantText(data: Record<string, unknown>): string | undefined {
     })
     .filter(Boolean);
   return parts.join(" ") || undefined;
+}
+
+function codexMessage(data: Record<string, unknown>): string | undefined {
+  if (data.type !== "item.completed") return undefined;
+  const item = data.item as { type?: string; text?: string } | undefined;
+  return item?.type === "agent_message" && item.text?.trim() ? item.text.trim() : undefined;
 }
 
 function codexItem(data: Record<string, unknown>): string | undefined {

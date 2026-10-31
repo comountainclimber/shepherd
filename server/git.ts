@@ -281,6 +281,7 @@ export async function mergeBranch(repo: string, branch: string, message: string)
   }
   const into = await currentBranch(repo);
   if (!into) throw new GitError(`${repo} is not on a branch, so there is nothing to merge into.`);
+  if (await contains(repo, branch, "HEAD")) return { into, sha: await must(repo, ["rev-parse", "--short", "HEAD"]) };
   if (await must(repo, ["status", "--porcelain", "--untracked-files=no"])) {
     throw new GitError(`${repo} has uncommitted changes on ${into}. Commit or stash them, then merge again.`);
   }

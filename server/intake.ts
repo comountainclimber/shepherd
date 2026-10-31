@@ -49,13 +49,12 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const name = text(request.name, field("name")) || fail(`${where} needs a name.`);
     const runner = runnerFor(request.runner, field("runner"));
     const checkCommand = text(request.checkCommand, field("checkCommand"));
-    const review = flag(request.review, field("review"), true);
+    const review = flag(request.review, field("review"), false);
     const autoRun = flag(request.autoRun, field("autoRun"), false);
     const independent = flag(request.independent, field("independent"), false);
-    if (runner === "human" && (autoRun || independent || !review)) {
+    if (runner === "human" && (autoRun || independent || review)) {
       fail(`${where} is done by a person, so autoRun, independent and review do not apply to it.`);
     }
-    if (!review && !checkCommand) fail(`${where} skips review, so it needs a checkCommand to verify it.`);
     const dependsOn = dependencies(scratch, project.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
     const task = blankTask({

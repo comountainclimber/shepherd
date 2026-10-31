@@ -14,7 +14,6 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hasCycle, isTaskDimmed, taskMatches, tasksForProject, waitingOn } from "../../model/selectors";
-import { Plus, Sparkles } from "lucide-react";
 import { dependencySatisfied } from "../../model/verify";
 import { AGENTS } from "../../model/workspace";
 import { initialFilters, useShepherd } from "../../store";
@@ -44,7 +43,6 @@ function CanvasInner() {
   const selectEdge = useShepherd((store) => store.selectEdge);
   const setContextMenu = useShepherd((store) => store.setContextMenu);
   const setFilters = useShepherd((store) => store.setFilters);
-  const setNewTaskOpen = useShepherd((store) => store.setNewTaskOpen);
   const [dragging, setDragging] = useState<Record<string, { x: number; y: number }>>({});
 
   const projectTasks = useMemo(
@@ -141,11 +139,15 @@ function CanvasInner() {
   nodesRef.current = nodes;
   const fitViewRef = useRef(fitView);
   fitViewRef.current = fitView;
+  const shape = state.projects
+    .find((project) => project.id === ui.projectId)
+    ?.outline?.map((item) => `${item.id}:${item.depth}`)
+    .join("|");
 
   useEffect(() => {
     const id = window.setTimeout(() => fitViewRef.current({ padding: 0.2, duration: 200 }), 80);
     return () => window.clearTimeout(id);
-  }, [ui.projectId, ui.fitToken]);
+  }, [ui.projectId, ui.fitToken, shape]);
 
   useEffect(() => {
     const search = ui.filters.search.trim();
@@ -251,16 +253,10 @@ function CanvasInner() {
           <div className="flex justify-center">
             <Sheep size={48} />
           </div>
-          <div className="mt-3 text-[16px] font-semibold text-text">No tasks yet</div>
-          <p className="mx-auto mt-1 max-w-xs text-[14px] leading-5 text-muted">Add a task for an agent, or describe a goal and let Shepherd plan the tasks.</p>
-          <div className="mt-4 flex justify-center gap-2">
-            <Button variant="primary" onClick={() => setNewTaskOpen(true)}>
-              <Plus size={15} /> New task
-            </Button>
-            <Button variant="ghost" onClick={() => useShepherd.getState().setDecomposeOpen(true)}>
-              <Sparkles size={15} /> Plan from a goal
-            </Button>
-          </div>
+          <div className="mt-3 text-[16px] font-semibold text-text">The map of your steps shows up here</div>
+          <p className="mx-auto mt-1 max-w-xs text-[14px] leading-5 text-muted">
+            Write the steps on the left, or describe what you want done and let Codex draft them.
+          </p>
         </Overlay>
       ) : null}
       {projectTasks.length > 0 && visibleCount === 0 ? (

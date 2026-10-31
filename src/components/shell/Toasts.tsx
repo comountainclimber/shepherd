@@ -2,7 +2,7 @@ import { CircleCheck, CircleX, UserRound, X } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { cx } from "../../model/format";
-import { stageOf, type Stage } from "../../model/stage";
+import { firstLine, progress, stageOf, type Stage } from "../../model/stage";
 import { useShepherd } from "../../store";
 
 type Tone = "verified" | "failed" | "needs-you";
@@ -35,28 +35,39 @@ const useToasts = create<ToastStore>()((set, get) => ({
 }));
 
 /**
- * Tells you when a task is verified, fails, or starts waiting on you. The first board a tab
- * receives is the baseline, so loading the page is quiet.
+ * Tells you when a step is done, fails, or starts waiting on you, and when a whole plan finishes.
+ * The first board a tab receives is the baseline, so loading the page is quiet.
  */
 export function useTaskToasts() {
   useEffect(() => {
     let seen: Map<string, Stage> | null = null;
+    let finished: Map<string, boolean> | null = null;
     const watch = (store: ReturnType<typeof useShepherd.getState>) => {
       if (!store.loaded) return;
-      const { tasks, dependencies } = store.state;
+      const { tasks, dependencies, projects } = store.state;
       const now = new Map(tasks.map((task) => [task.id, stageOf(task, tasks, dependencies)]));
-      if (seen) {
+      const complete = new Map(projects.map((project) => [project.id, progress(tasks.filter((task) => task.projectId === project.id)).complete]));
+      if (seen && finished) {
         const { push } = useToasts.getState();
         for (const task of tasks) {
           const before = seen.get(task.id);
           const after = now.get(task.id)!;
           if (!before || before === after) continue;
-          if (after === "verified") push({ tone: "verified", title: `${task.name} is verified`, detail: "All its checks passed.", taskId: task.id });
-          else if (after === "failed") push({ tone: "failed", title: `${task.name} failed`, detail: task.blocker ?? "Open it to see why.", taskId: task.id });
-          else if (after === "needs-you") push({ tone: "needs-you", title: `${task.name} needs you`, detail: "Open it to review or finish it.", taskId: task.id });
+          const name = task.name || "A step";
+          if (after === "verified") {
+            const detail = task.verification.length ? "Its checks passed." : firstLine(task.output) || "It finished.";
+            push({ tone: "verified", title: `${name} is done`, detail, taskId: task.id });
+          } else if (after === "failed") push({ tone: "failed", title: `${name} failed`, detail: task.blocker ?? "Open it to see why.", taskId: task.id });
+          else if (after === "needs-you") push({ tone: "needs-you", title: `${name} needs you`, detail: "Open it to review or finish it.", taskId: task.id });
+        }
+        for (const project of projects) {
+          if (!complete.get(project.id) || finished.get(project.id) !== false) continue;
+          const last = tasks.filter((task) => task.projectId === project.id).at(-1);
+          if (last) push({ tone: "verified", title: `Every step in ${project.name} is done`, detail: "Merge the result from the bottom of the step list.", taskId: last.id });
         }
       }
       seen = now;
+      finished = complete;
     };
     watch(useShepherd.getState());
     return useShepherd.subscribe(watch);

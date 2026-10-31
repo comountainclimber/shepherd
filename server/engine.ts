@@ -23,6 +23,10 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "readNotifications",
   "setWorkspace",
   "instruct",
+  "addSteps",
+  "setOutline",
+  "followOutline",
+  "setReview",
 ]);
 
 /** Fields of a task a tab may edit directly. The rest change only through runs, checks and merges. */
@@ -104,7 +108,14 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
     const check = state.tasks.find((task) => task.id === action.taskId)?.verification.find((item) => item.id === action.checkId);
     if (check && check.kind !== "review") return { error: "Only reviews are accepted or rejected by hand. Checks pass by running." };
   }
-  const created = action.type === "createTask" ? [action.task] : action.type === "approvePlan" ? action.tasks : [];
+  const created =
+    action.type === "createTask"
+      ? [action.task]
+      : action.type === "approvePlan"
+        ? action.tasks
+        : action.type === "addSteps"
+          ? (action.steps ?? []).map((step) => step.task)
+          : [];
   if (created.some((task) => task.git || task.status === "running" || task.verification.some((check) => check.state !== "pending"))) {
     return { error: "A new task starts unverified, with no branch." };
   }
