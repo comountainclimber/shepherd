@@ -1,196 +1,115 @@
-import { useEffect, useState } from "react";
+import { Check, Clock, Eye, ShieldCheck, Zap } from "lucide-react";
+import type { ReactNode } from "react";
+import { cx } from "../../model/format";
+import { stageOf } from "../../model/stage";
+import { incoming, outgoing } from "../../model/selectors";
 import { GATE_LABEL } from "../../model/types";
-import { hasCycle, incoming, outgoing } from "../../model/selectors";
 import { dependencySatisfied } from "../../model/verify";
 import { useShepherd } from "../../store";
-import { Button, Field, GateSelect, Select, TextArea, TextInput, statusText } from "../ui";
+import { Card, StageBadge } from "../ui";
 import { useSelectedTask } from "./useSelectedTask";
-
-function lines(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
 
 export function Overview() {
   const task = useSelectedTask();
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
-  const dispatch = useShepherd((store) => store.dispatch);
   const selectTask = useShepherd((store) => store.selectTask);
-  const project = useShepherd((store) => store.state.projects.find((item) => item.id === task.projectId));
-  const savedAcceptance = task.acceptance.join("\n");
-  const [objective, setObjective] = useState(task.objective);
-  const [description, setDescription] = useState(task.description);
-  const [acceptance, setAcceptance] = useState(savedAcceptance);
-  const [checkCommand, setCheckCommand] = useState(task.checkCommand ?? "");
-  const [dependency, setDependency] = useState("");
-
-  useEffect(() => {
-    setObjective(task.objective);
-    setDescription(task.description);
-    setAcceptance(savedAcceptance);
-    setCheckCommand(task.checkCommand ?? "");
-  }, [task.id, task.objective, task.description, savedAcceptance, task.checkCommand]);
-
-  const projectTasks = tasks.filter((item) => item.projectId === task.projectId && item.id !== task.id);
   const upstream = incoming(task.id, deps);
   const downstream = outgoing(task.id, deps);
+  const reviewed = task.verification.some((check) => check.kind === "review");
 
   return (
-    <div className="space-y-4">
-      <Field label="Objective">
-        <TextArea
-          value={objective}
-          onChange={(event) => setObjective(event.target.value)}
-          onBlur={() => {
-            if (objective !== task.objective) dispatch({ type: "updateTask", id: task.id, patch: { objective } });
-          }}
-        />
-      </Field>
-      <Field label="Context">
-        <TextArea
-          value={description}
-          placeholder="Anything else the agent should know"
-          onChange={(event) => setDescription(event.target.value)}
-          onBlur={() => {
-            if (description !== task.description) dispatch({ type: "updateTask", id: task.id, patch: { description } });
-          }}
-        />
-      </Field>
-      <Field label="Done when (one per line)">
-        <TextArea
-          value={acceptance}
-          placeholder="The page loads without errors"
-          onChange={(event) => setAcceptance(event.target.value)}
-          onBlur={() => {
-            const next = lines(acceptance);
-            if (next.join("\n") !== savedAcceptance) dispatch({ type: "updateTask", id: task.id, patch: { acceptance: next } });
-          }}
-        />
-      </Field>
-      <p className="-mt-3 text-[11px] leading-5 text-faint">The agent gets these with the objective. Shepherd does not check them; the check command does.</p>
-      <Field label="Check command">
-        <TextInput
-          className="font-mono"
-          value={checkCommand}
-          placeholder="npm test"
-          onChange={(event) => setCheckCommand(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-          onBlur={() => dispatch({ type: "setCheckCommand", id: task.id, command: checkCommand })}
-        />
-      </Field>
-      <p className="-mt-3 text-[11px] leading-5 text-faint">
-        Runs in{" "}
-        {task.git ? `the ${task.git.branch} worktree` : task.runner === "agent" ? "the task's worktree" : `${project?.directory ?? "the project"}/`}{" "}
-        when the work is done. Exit 0 passes.
-        {task.runner === "agent" && !task.verification.some((check) => check.kind === "review")
-          ? " Nobody reviews this task: the check alone verifies it."
-          : ""}
-      </p>
+    <div className="space-y-3">
+      <Card title="Goal">
+        <p className="text-[14px] leading-6 text-text [overflow-wrap:anywhere]">{task.objective || "No goal written yet. Add one on the Edit tab."}</p>
+        {task.description && task.description !== task.objective ? (
+          <p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-muted [overflow-wrap:anywhere]">{task.description}</p>
+        ) : null}
+      </Card>
+      {task.acceptance.length ? (
+        <Card title="Done when">
+          <ul className="space-y-1.5">
+            {task.acceptance.map((line, index) => (
+              <li key={index} className="flex gap-2.5 text-[13px] leading-5 text-text">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-faint" />
+                <span className="min-w-0 [overflow-wrap:anywhere]">{line}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      ) : null}
       {task.runner === "agent" ? (
-        <div className="space-y-1.5 text-[12px]">
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-1 accent-[#c4a574]"
-              checked={!!task.autoRun}
-              onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { autoRun: event.target.checked } })}
-            />
-            <span>
-              Run automatically
-              <span className="block text-[11px] leading-5 text-faint">Starts the first time every gate into it opens, while Shepherd is open.</span>
-            </span>
-          </label>
-          <label className="flex items-start gap-2">
-            <input
-              type="checkbox"
-              className="mt-1 accent-[#c4a574]"
-              checked={!!task.independent}
-              onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { independent: event.target.checked } })}
-            />
-            <span>
-              Independent
-              <span className="block text-[11px] leading-5 text-faint">The agent sees upstream files, not the upstream agents' summaries.</span>
-            </span>
-          </label>
+        <div className="flex flex-wrap gap-1.5">
+          {task.autoRun ? <Chip icon={<Zap size={12} />}>Starts automatically</Chip> : null}
+          {task.independent ? <Chip icon={<Eye size={12} />}>Reviews independently</Chip> : null}
+          {task.checkCommand ? <Chip icon={<ShieldCheck size={12} />}>{reviewed ? "Checked, then you review" : "Its check alone verifies it"}</Chip> : null}
         </div>
       ) : null}
-      {task.blocker ? <p className={`text-[12px] leading-5 ${statusText[task.status]}`}>{task.blocker}</p> : null}
-      <section>
-        <h3 className="mb-1.5 text-[11px] text-muted">Depends on</h3>
-        <ul className="space-y-1">
-          {upstream.map((dep) => {
-            const source = tasks.find((item) => item.id === dep.source);
-            const open = dependencySatisfied(dep, source);
-            return (
-              <li key={dep.id} className="flex items-center gap-2 text-[12px]">
-                <button type="button" className="min-w-0 flex-1 truncate text-left hover:text-brass" onClick={() => selectTask(dep.source)}>
-                  {source?.name ?? dep.source}
-                </button>
-                <GateSelect
-                  value={dep.gate}
-                  onChange={(gate) => dispatch({ type: "connect", source: dep.source, target: task.id, gate })}
+      {upstream.length ? (
+        <Card title="Needs">
+          <ul className="space-y-1">
+            {upstream.map((dep) => {
+              const source = tasks.find((item) => item.id === dep.source);
+              const open = dependencySatisfied(dep, source);
+              return (
+                <Link
+                  key={dep.id}
+                  open={open}
+                  onClick={() => selectTask(dep.source)}
+                  name={source?.name ?? dep.source}
+                  note={source ? <StageBadge stage={stageOf(source, tasks, deps)} /> : null}
+                  detail={GATE_LABEL[dep.gate]}
                 />
-                <span className={`font-mono text-[10px] ${open ? "text-completed" : "text-blocked"}`}>{open ? "open" : "closed"}</span>
-                <button
-                  type="button"
-                  className="text-[11px] text-muted hover:text-failed"
-                  onClick={() => dispatch({ type: "disconnect", id: dep.id })}
-                >
-                  Remove
-                </button>
-              </li>
-            );
-          })}
-          {!upstream.length ? <li className="text-[12px] text-faint">No upstream tasks.</li> : null}
-        </ul>
-        <div className="mt-2 flex gap-2">
-          <Select value={dependency} onChange={(event) => setDependency(event.target.value)}>
-            <option value="">Add a dependency</option>
-            {projectTasks
-              .filter((item) => !upstream.some((dep) => dep.source === item.id))
-              .filter((item) => !hasCycle([...deps, { source: item.id, target: task.id }]))
-              .map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
-                </option>
-              ))}
-          </Select>
-          <Button
-            variant="ghost"
-            disabled={!dependency}
-            onClick={() => {
-              dispatch({ type: "connect", source: dependency, target: task.id, gate: "verified" });
-              setDependency("");
-            }}
-          >
-            Add
-          </Button>
-        </div>
-      </section>
-      <section>
-        <h3 className="mb-1.5 text-[11px] text-muted">Downstream</h3>
-        <ul className="space-y-1">
-          {downstream.map((dep) => {
-            const target = tasks.find((item) => item.id === dep.target);
-            const open = dependencySatisfied(dep, task);
-            return (
-              <li key={dep.id} className="flex items-center gap-2 text-[12px]">
-                <button type="button" className="min-w-0 flex-1 truncate text-left hover:text-brass" onClick={() => selectTask(dep.target)}>
-                  {target?.name ?? dep.target}
-                </button>
-                <span className="font-mono text-[10px] text-faint">{GATE_LABEL[dep.gate]}</span>
-                <span className={`font-mono text-[10px] ${open ? "text-completed" : "text-blocked"}`}>{open ? "open" : "closed"}</span>
-              </li>
-            );
-          })}
-          {!downstream.length ? <li className="text-[12px] text-faint">Nothing is waiting on this.</li> : null}
-        </ul>
-      </section>
+              );
+            })}
+          </ul>
+        </Card>
+      ) : null}
+      {downstream.length ? (
+        <Card title="Unlocks">
+          <ul className="space-y-1">
+            {downstream.map((dep) => {
+              const target = tasks.find((item) => item.id === dep.target);
+              return (
+                <Link
+                  key={dep.id}
+                  open={dependencySatisfied(dep, task)}
+                  onClick={() => selectTask(dep.target)}
+                  name={target?.name ?? dep.target}
+                  note={target ? <StageBadge stage={stageOf(target, tasks, deps)} /> : null}
+                  detail={GATE_LABEL[dep.gate]}
+                />
+              );
+            })}
+          </ul>
+        </Card>
+      ) : null}
     </div>
+  );
+}
+
+function Chip({ icon, children }: { icon: ReactNode; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md bg-white/5 px-2 py-0.5 text-[12px] text-muted">
+      {icon}
+      {children}
+    </span>
+  );
+}
+
+function Link({ open, onClick, name, note, detail }: { open: boolean; onClick: () => void; name: string; note: ReactNode; detail: string }) {
+  return (
+    <li>
+      <button type="button" onClick={onClick} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-black/25">
+        <span className={cx("flex h-5 w-5 shrink-0 items-center justify-center rounded-full", open ? "bg-completed/20 text-completed" : "bg-white/5 text-queued")}>
+          {open ? <Check size={12} strokeWidth={3} /> : <Clock size={11} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium text-text">{name}</span>
+          <span className="block text-[11px] text-faint">{detail}</span>
+        </span>
+        {note}
+      </button>
+    </li>
   );
 }

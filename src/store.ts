@@ -1,8 +1,7 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
-import { interruptChecks, loadState } from "./model/migrate";
+import { loadState } from "./model/migrate";
 import { reducer } from "./model/reducer";
-import type { Action, Filters, OrchestrationState, UiState, ViewId } from "./model/types";
+import type { Action, Filters, OrchestrationState, PanelTab, UiState, ViewId } from "./model/types";
 import { WORKSPACE_PROJECT_ID, workspace } from "./model/workspace";
 
 export const initialFilters: Filters = {
@@ -28,12 +27,13 @@ function savedUi(): Partial<SavedUi> {
 const restored = savedUi();
 
 export const initialUi: UiState = {
-  view: restored.view ?? "canvas",
+  view: restored.view === "agents" ? "agents" : "canvas",
   projectId: restored.projectId ?? WORKSPACE_PROJECT_ID,
   selectedTaskId: restored.selectedTaskId ?? null,
   selectedAgentId: null,
   selectedEdgeId: null,
   inspectorOpen: false,
+  panelTab: "overview",
   filters: initialFilters,
   paletteOpen: false,
   newTaskOpen: false,
@@ -44,13 +44,24 @@ export const initialUi: UiState = {
   fitToken: 0,
 };
 
+export type Connection = "connecting" | "open" | "lost";
+
 interface ShepherdStore {
   state: OrchestrationState;
   ui: UiState;
+  /** The board has arrived from the server at least once. */
+  loaded: boolean;
+  connection: Connection;
+  /** The last change or command the server refused. */
+  problem: string | null;
   dispatch: (action: Action) => void;
+  setProblem: (problem: string | null) => void;
   setView: (view: ViewId) => void;
   setProject: (projectId: string) => void;
   selectTask: (id: string | null) => void;
+  /** Selects a task and opens its panel on a tab. */
+  openTask: (id: string, tab: PanelTab) => void;
+  setPanelTab: (tab: PanelTab) => void;
   selectAgent: (id: string | null) => void;
   selectEdge: (id: string | null) => void;
   setInspectorOpen: (open: boolean) => void;
@@ -64,113 +75,145 @@ interface ShepherdStore {
   requestFit: () => void;
 }
 
-let applyingRemote = false;
-let localWriteAt = 0;
-// zustand's persist writes on every set, even before hydration. Writing before the server
-// copy has loaded would overwrite the shared board with the empty default.
-let loadedFromServer = false;
-
 if (typeof localStorage !== "undefined") {
   localStorage.removeItem("shepherd.v1");
+  localStorage.removeItem("shepherd.v2");
+  localStorage.removeItem("shepherd.workspace");
+  localStorage.removeItem("shepherd.sound");
 }
 
-const sharedStorage = {
-  getItem: async () => {
-    try {
-      const response = await fetch("/api/state");
-      if (!response.ok) return null;
-      const body = (await response.json()) as { state?: { state?: unknown } };
-      loadedFromServer = true;
-      const saved = loadState(body.state?.state);
-      if (!saved) return null;
-      return JSON.stringify({ state: { state: interruptChecks(saved) }, version: 2 });
-    } catch {
-      return null;
-    }
-  },
-  setItem: async (_name: string, value: string) => {
-    if (applyingRemote || !loadedFromServer || !useShepherd.persist.hasHydrated()) return;
-    localWriteAt = Date.now();
-    await fetch("/api/state", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: value,
-    });
-  },
-  removeItem: async () => {
-    await fetch("/api/state", { method: "DELETE" });
-  },
-};
+/**
+ * The server owns the board. A tab shows the server's latest board with its own unconfirmed edits
+ * applied on top, so typing and dragging feel instant; each edit drops out once the server's board
+ * includes it.
+ */
+interface Pending {
+  action: Action;
+  /** The server revision that includes this edit, once the server has answered. */
+  revision?: number;
+}
 
-export const useShepherd = create<ShepherdStore>()(
-  persist(
-    (set) => ({
-      state: workspace(),
-      ui: initialUi,
-      dispatch: (action) => set((store) => ({ state: reducer({ ...store.state, now: Date.now() }, action) })),
-      setView: (view) => set((store) => ({ ui: { ...store.ui, view, contextMenu: null } })),
-      setProject: (projectId) =>
-        set((store) => {
-          const tasks = store.state.tasks.filter((item) => item.projectId === projectId);
-          const selected = tasks.some((item) => item.id === store.ui.selectedTaskId)
-            ? store.ui.selectedTaskId
-            : (tasks[0]?.id ?? null);
-          return {
-            ui: {
-              ...store.ui,
-              projectId,
-              selectedTaskId: selected,
-              selectedEdgeId: null,
-              contextMenu: null,
-              filters: { ...store.ui.filters, agentId: "all", search: "" },
-            },
-          };
-        }),
-      selectTask: (id) =>
-        set((store) => ({
-          ui: {
-            ...store.ui,
-            selectedTaskId: id,
-            selectedEdgeId: null,
-            contextMenu: null,
-            inspectorOpen: id ? true : store.ui.inspectorOpen,
-            view: id ? "canvas" : store.ui.view,
-          },
-        })),
-      selectAgent: (id) => set((store) => ({ ui: { ...store.ui, selectedAgentId: id } })),
-      selectEdge: (id) => set((store) => ({ ui: { ...store.ui, selectedEdgeId: id, contextMenu: null } })),
-      setInspectorOpen: (open) => set((store) => ({ ui: { ...store.ui, inspectorOpen: open } })),
-      setFilters: (patch) =>
-        set((store) => ({ ui: { ...store.ui, filters: { ...store.ui.filters, ...patch } } })),
-      setPaletteOpen: (open) => set((store) => ({ ui: { ...store.ui, paletteOpen: open } })),
-      setNewTaskOpen: (open) => set((store) => ({ ui: { ...store.ui, newTaskOpen: open, paletteOpen: false } })),
-      setNewProjectOpen: (open) => set((store) => ({ ui: { ...store.ui, newProjectOpen: open, paletteOpen: false } })),
-      setDecomposeOpen: (open) =>
-        set((store) => ({ ui: { ...store.ui, decomposeOpen: open, paletteOpen: false } })),
-      setDecomposeSeed: (seedText) => set((store) => ({ ui: { ...store.ui, decomposeSeed: seedText } })),
-      setContextMenu: (menu) => set((store) => ({ ui: { ...store.ui, contextMenu: menu } })),
-      requestFit: () => set((store) => ({ ui: { ...store.ui, fitToken: store.ui.fitToken + 1, view: "canvas" } })),
+let confirmed: OrchestrationState = workspace();
+let confirmedRevision = 0;
+let pending: Pending[] = [];
+
+function rebase() {
+  const state = pending.reduce((board, entry) => reducer({ ...board, now: Date.now() }, entry.action), confirmed);
+  useShepherd.setState({ state });
+}
+
+async function send(entry: Pending) {
+  try {
+    const response = await fetch("/api/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: entry.action }),
+    });
+    const body = (await response.json()) as { revision?: number; error?: string };
+    if (!response.ok) throw new Error(body.error ?? `The server refused the change (${response.status}).`);
+    entry.revision = body.revision ?? 0;
+    if (entry.revision > confirmedRevision) return;
+  } catch (error) {
+    useShepherd.setState({ problem: error instanceof Error ? error.message : "Could not reach the Shepherd server." });
+  }
+  pending = pending.filter((item) => item !== entry);
+  rebase();
+}
+
+export const useShepherd = create<ShepherdStore>()((set) => ({
+  state: confirmed,
+  ui: initialUi,
+  loaded: false,
+  connection: "connecting",
+  problem: null,
+  dispatch: (action) => {
+    const entry: Pending = { action };
+    pending.push(entry);
+    set((store) => ({ state: reducer({ ...store.state, now: Date.now() }, action) }));
+    void send(entry);
+  },
+  setProblem: (problem) => set({ problem }),
+  setView: (view) => set((store) => ({ ui: { ...store.ui, view, contextMenu: null } })),
+  setProject: (projectId) =>
+    set((store) => {
+      const tasks = store.state.tasks.filter((item) => item.projectId === projectId);
+      const selected = tasks.some((item) => item.id === store.ui.selectedTaskId) ? store.ui.selectedTaskId : (tasks[0]?.id ?? null);
+      return {
+        ui: {
+          ...store.ui,
+          projectId,
+          selectedTaskId: selected,
+          selectedEdgeId: null,
+          contextMenu: null,
+          filters: { ...store.ui.filters, agentId: "all", search: "" },
+        },
+      };
     }),
-    {
-      name: "shepherd.v2",
-      version: 2,
-      storage: createJSONStorage(() => sharedStorage),
-      partialize: (store) => ({ state: store.state }),
-      merge: (persisted, current) => {
-        const saved = (persisted as { state?: OrchestrationState } | undefined)?.state;
-        if (!saved) return { ...current, ui: reconcileUi(current.ui, current.state) };
-        return { ...current, state: saved, ui: reconcileUi(current.ui, saved) };
+  selectTask: (id) =>
+    set((store) => ({
+      ui: {
+        ...store.ui,
+        selectedTaskId: id,
+        selectedEdgeId: null,
+        contextMenu: null,
+        inspectorOpen: id ? true : store.ui.inspectorOpen,
+        panelTab: id === store.ui.selectedTaskId ? store.ui.panelTab : "overview",
+        view: id ? "canvas" : store.ui.view,
       },
-    },
-  ),
-);
+    })),
+  openTask: (id, tab) =>
+    set((store) => ({
+      ui: { ...store.ui, selectedTaskId: id, selectedEdgeId: null, contextMenu: null, inspectorOpen: true, panelTab: tab, view: "canvas" },
+    })),
+  setPanelTab: (tab) => set((store) => ({ ui: { ...store.ui, panelTab: tab } })),
+  selectAgent: (id) => set((store) => ({ ui: { ...store.ui, selectedAgentId: id } })),
+  selectEdge: (id) => set((store) => ({ ui: { ...store.ui, selectedEdgeId: id, contextMenu: null } })),
+  setInspectorOpen: (open) => set((store) => ({ ui: { ...store.ui, inspectorOpen: open } })),
+  setFilters: (patch) => set((store) => ({ ui: { ...store.ui, filters: { ...store.ui.filters, ...patch } } })),
+  setPaletteOpen: (open) => set((store) => ({ ui: { ...store.ui, paletteOpen: open } })),
+  setNewTaskOpen: (open) => set((store) => ({ ui: { ...store.ui, newTaskOpen: open, paletteOpen: false } })),
+  setNewProjectOpen: (open) => set((store) => ({ ui: { ...store.ui, newProjectOpen: open, paletteOpen: false } })),
+  setDecomposeOpen: (open) => set((store) => ({ ui: { ...store.ui, decomposeOpen: open, paletteOpen: false } })),
+  setDecomposeSeed: (seedText) => set((store) => ({ ui: { ...store.ui, decomposeSeed: seedText } })),
+  setContextMenu: (menu) => set((store) => ({ ui: { ...store.ui, contextMenu: menu } })),
+  requestFit: () => set((store) => ({ ui: { ...store.ui, fitToken: store.ui.fitToken + 1, view: "canvas" } })),
+}));
 
 function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
-  const projectId = state.projects.some((project) => project.id === ui.projectId)
-    ? ui.projectId
-    : (state.projects[0]?.id ?? WORKSPACE_PROJECT_ID);
+  const projectId = state.projects.some((project) => project.id === ui.projectId) ? ui.projectId : (state.projects[0]?.id ?? WORKSPACE_PROJECT_ID);
   const task = state.tasks.find((item) => item.id === ui.selectedTaskId && item.projectId === projectId);
   return { ...ui, projectId, selectedTaskId: task?.id ?? null, inspectorOpen: !!task };
+}
+
+function receive(revision: number, state: OrchestrationState) {
+  confirmed = state;
+  confirmedRevision = revision;
+  pending = pending.filter((entry) => entry.revision === undefined || entry.revision > revision);
+  if (!useShepherd.getState().loaded) {
+    useShepherd.setState((store) => ({ loaded: true, ui: reconcileUi(store.ui, state) }));
+  }
+  rebase();
+}
+
+/** Follows the server's board for as long as the tab is open. EventSource reconnects by itself. */
+export function connectToServer(): () => void {
+  const source = new EventSource("/api/stream");
+  source.onopen = () => {
+    // A restarted server counts revisions from 1 again; edits it already answered are in its saved board.
+    pending = pending.filter((entry) => entry.revision === undefined);
+    useShepherd.setState({ connection: "open" });
+  };
+  source.onerror = () => useShepherd.setState({ connection: "lost" });
+  source.onmessage = (event: MessageEvent<string>) => {
+    try {
+      const body = JSON.parse(event.data) as { revision?: number; state?: unknown };
+      const state = loadState(body.state);
+      if (state && typeof body.revision === "number") receive(body.revision, state);
+    } catch {
+      // A malformed message is skipped; the next one carries the whole board again.
+    }
+  };
+  return () => source.close();
 }
 
 if (typeof localStorage !== "undefined") {
@@ -185,54 +228,4 @@ if (typeof localStorage !== "undefined") {
 export function clearWorkspace() {
   if (!window.confirm("Remove every project and task from Shepherd? Files on disk stay where they are.")) return;
   useShepherd.getState().dispatch({ type: "reset" });
-}
-
-function fingerprint(state: OrchestrationState) {
-  const projects = state.projects.map((project) => project.id).join(",");
-  const tasks = state.tasks
-    .map(
-      (task) =>
-        `${task.id}:${task.status}:${task.activity}:${task.blocker}:${task.agentId}:${task.verification.map((check) => check.state).join(",")}:${task.filesChanged.join(",")}:${task.previews.map((item) => `${item.path}:${item.text.length}`).join(",")}:${task.git?.branch}:${task.git?.head}:${task.git?.merged?.sha}:${task.autoRun}:${task.independent}`,
-    )
-    .join("|");
-  const deps = state.dependencies.map((dep) => `${dep.id}:${dep.gate}`).join(",");
-  return `${projects}#${tasks}#${deps}`;
-}
-
-export async function pullSharedState() {
-  if (!useShepherd.persist.hasHydrated() || Date.now() - localWriteAt < 1500) return;
-  try {
-    const response = await fetch("/api/state");
-    if (!response.ok) return;
-    const body = (await response.json()) as { state?: { state?: unknown } };
-    loadedFromServer = true;
-    const saved = loadState(body.state?.state);
-    if (!saved) return;
-    if (fingerprint(saved) === fingerprint(useShepherd.getState().state)) return;
-    applyingRemote = true;
-    useShepherd.setState({ state: saved });
-    applyingRemote = false;
-  } catch {
-    applyingRemote = false;
-  }
-}
-
-/** True once this tab has the server's board, so it will not act on a stale local copy. */
-export function sharedStateLoaded(): boolean {
-  return loadedFromServer && useShepherd.persist.hasHydrated();
-}
-
-/** Applies projects and tasks that agents and scripts sent to the API. The server drops each batch once a save includes it. */
-export async function drainInbox() {
-  if (!sharedStateLoaded()) return;
-  try {
-    const response = await fetch("/api/inbox");
-    if (!response.ok) return;
-    const body = (await response.json()) as { batches?: { actions?: Action[] }[] };
-    for (const action of (body.batches ?? []).flatMap((batch) => batch.actions ?? [])) {
-      if (action?.type === "createProject" || action?.type === "createTask") useShepherd.getState().dispatch(action);
-    }
-  } catch {
-    // The next poll tries again.
-  }
 }

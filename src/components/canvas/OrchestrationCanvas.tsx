@@ -4,7 +4,6 @@ import {
   ConnectionLineType,
   Controls,
   MarkerType,
-  MiniMap,
   Panel,
   ReactFlow,
   ReactFlowProvider,
@@ -15,27 +14,20 @@ import {
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hasCycle, isTaskDimmed, taskMatches, tasksForProject, waitingOn } from "../../model/selectors";
-import { GATE_LABEL, STATUSES, STATUS_LABEL, type TaskStatus } from "../../model/types";
+import { Plus, Sparkles } from "lucide-react";
 import { dependencySatisfied } from "../../model/verify";
 import { AGENTS } from "../../model/workspace";
 import { initialFilters, useShepherd } from "../../store";
 import { markComplete, runLabel, runTask, stopTask } from "../../runner/live";
-import { Button, GateSelect, statusBg } from "../ui";
-import { TaskNodeView, type TaskFlowNode } from "./TaskNode";
+import { Sheep } from "../shell/Hud";
+import { Button, GateSelect } from "../ui";
+import { NODE_HEIGHT, NODE_WIDTH, TaskNodeView, type TaskFlowNode } from "./TaskNode";
 
 const nodeTypes = { task: TaskNodeView };
 
-const statusHex: Record<TaskStatus, string> = {
-  queued: "#8b909a",
-  running: "#d4a054",
-  completed: "#8eae88",
-  blocked: "#d09255",
-  failed: "#d17b6a",
-};
-
 export function OrchestrationCanvas() {
   return (
-    <div className="h-full w-full">
+    <div className="h-full w-full bg-bg">
       <ReactFlowProvider>
         <CanvasInner />
       </ReactFlowProvider>
@@ -75,8 +67,8 @@ function CanvasInner() {
         type: "task" as const,
         position: dragging[task.id] ?? task.position,
         selected: task.id === ui.selectedTaskId,
-        initialWidth: 248,
-        initialHeight: 112,
+        initialWidth: NODE_WIDTH,
+        initialHeight: NODE_HEIGHT,
         data: {
           taskId: task.id,
           dimmed: isTaskDimmed(task, ui.filters, state.tasks, state.dependencies, ui.selectedTaskId),
@@ -97,21 +89,21 @@ function CanvasInner() {
         const targetDim = target ? isTaskDimmed(target, ui.filters, state.tasks, state.dependencies, ui.selectedTaskId) : false;
         const dim = sourceDim || targetDim;
         const selected = dep.id === ui.selectedEdgeId;
-        const live = source?.status === "running" && (target?.status === "queued" || target?.status === "blocked");
-        const stroke = selected ? "#c4a574" : dim ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.32)";
+        const open = dependencySatisfied(dep, source);
+        const flowing = source?.status === "running" || (open && target?.status === "running");
+        const stroke = selected ? "#f2b544" : dim ? "rgba(255,255,255,0.07)" : open ? "rgba(76,199,127,0.85)" : "rgba(255,255,255,0.28)";
         return {
           id: dep.id,
           source: dep.source,
           target: dep.target,
-          type: "smoothstep",
-          animated: live,
+          type: "default",
+          animated: flowing,
           selected,
-          label: GATE_LABEL[dep.gate],
-          labelStyle: { fill: dep.gate === "verified" ? "#c4a574" : "#908d86", fontSize: 10 },
-          labelBgStyle: { fill: "#0e0f12" },
-          labelBgPadding: [4, 2] as [number, number],
-          labelBgBorderRadius: 2,
-          style: { stroke, strokeWidth: selected ? 1.6 : 1 },
+          style: {
+            stroke,
+            strokeWidth: selected ? 3 : 2,
+            strokeDasharray: open || flowing ? undefined : "4 6",
+          },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: stroke },
         };
       });
@@ -212,7 +204,7 @@ function CanvasInner() {
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
         colorMode="dark"
-        connectionLineType={ConnectionLineType.SmoothStep}
+        connectionLineType={ConnectionLineType.Bezier}
         nodesConnectable
         nodesDraggable
         elementsSelectable
@@ -221,37 +213,27 @@ function CanvasInner() {
         zoomOnDoubleClick={false}
         deleteKeyCode={null}
       >
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} color="rgba(255,255,255,0.16)" />
-        <Controls showInteractive={false} position="bottom-left" />
-        <MiniMap
-          position="bottom-right"
-          pannable
-          zoomable
-          bgColor="#14161b"
-          maskColor="rgba(8,9,12,0.72)"
-          nodeColor={(node) => {
-            const task = state.tasks.find((item) => item.id === node.id);
-            return task ? statusHex[task.status] : "#8b909a";
-          }}
-        />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255,255,255,0.07)" />
+        <Controls showInteractive={false} position="bottom-right" />
         {selectedEdge ? (
           <Panel position="top-center">
-            <div className="flex items-center gap-2 border border-line bg-bg/95 px-2.5 py-1.5 text-[12px] text-muted backdrop-blur-sm">
-              <span className="max-w-48 truncate text-text">{selectedEdge.target}</span>
-              <span>starts</span>
+            <div className="enter flex items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-[13px] text-muted shadow-xl">
+              <span className="max-w-48 truncate font-medium text-text">{selectedEdge.target}</span>
+              <span>opens</span>
               <GateSelect
                 value={selectedEdge.dep.gate}
                 onChange={(gate) =>
                   dispatch({ type: "connect", source: selectedEdge.dep.source, target: selectedEdge.dep.target, gate })
                 }
               />
-              <span>after</span>
-              <span className="max-w-48 truncate text-text">{selectedEdge.source}</span>
-              <span className={selectedEdge.open ? "text-completed" : "text-blocked"}>
+              <span>of</span>
+              <span className="max-w-48 truncate font-medium text-text">{selectedEdge.source}</span>
+              <span className={selectedEdge.open ? "font-medium text-completed" : "font-medium text-queued"}>
                 {selectedEdge.open ? "Open" : "Closed"}
               </span>
               <Button
                 variant="quiet"
+                size="sm"
                 onClick={() => {
                   dispatch({ type: "disconnect", id: selectedEdge.dep.id });
                   selectEdge(null);
@@ -262,32 +244,30 @@ function CanvasInner() {
             </div>
           </Panel>
         ) : null}
-        <Panel position="bottom-center">
-          <div className="flex items-center gap-2 border border-line bg-bg/90 px-2 py-1 text-[10px] text-muted backdrop-blur-sm">
-            {STATUSES.map((status) => (
-              <span key={status} className="inline-flex items-center gap-1">
-                <span className={`h-1.5 w-1.5 rounded-full ${statusBg[status]}`} />
-                {STATUS_LABEL[status]}
-              </span>
-            ))}
-          </div>
-        </Panel>
       </ReactFlow>
       {ui.contextMenu ? <TaskMenu /> : null}
       {projectTasks.length === 0 ? (
         <Overlay>
-          <div className="text-[13px] text-text">No tasks on this canvas.</div>
-          <p className="mt-1 max-w-sm text-[12px] leading-5 text-muted">Create a task or decompose an objective. The graph is the workspace.</p>
-          <Button className="mt-3" variant="primary" onClick={() => setNewTaskOpen(true)}>
-            New task
-          </Button>
+          <div className="flex justify-center">
+            <Sheep size={48} />
+          </div>
+          <div className="mt-3 text-[16px] font-semibold text-text">No tasks yet</div>
+          <p className="mx-auto mt-1 max-w-xs text-[14px] leading-5 text-muted">Add a task for an agent, or describe a goal and let Shepherd plan the tasks.</p>
+          <div className="mt-4 flex justify-center gap-2">
+            <Button variant="primary" onClick={() => setNewTaskOpen(true)}>
+              <Plus size={15} /> New task
+            </Button>
+            <Button variant="ghost" onClick={() => useShepherd.getState().setDecomposeOpen(true)}>
+              <Sparkles size={15} /> Plan from a goal
+            </Button>
+          </div>
         </Overlay>
       ) : null}
       {projectTasks.length > 0 && visibleCount === 0 ? (
         <Overlay>
-          <div className="text-[13px] text-text">Nothing matches these filters.</div>
+          <div className="text-[16px] font-semibold text-text">Nothing to show here right now.</div>
           <Button className="mt-3" variant="ghost" onClick={() => setFilters(initialFilters)}>
-            Clear filters
+            Show every task
           </Button>
         </Overlay>
       ) : null}
@@ -298,7 +278,7 @@ function CanvasInner() {
 function Overlay({ children }: { children: ReactNode }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-      <div className="pointer-events-auto border border-line bg-surface px-4 py-3">{children}</div>
+      <div className="enter pointer-events-auto rounded-xl border border-line-strong bg-surface px-8 py-6 text-center shadow-xl">{children}</div>
     </div>
   );
 }
@@ -320,8 +300,11 @@ function TaskMenu() {
   const waiting = task.status === "running" ? null : waitingOn(task, tasks, deps);
 
   return (
-    <div className="fixed z-30 w-56 border border-line bg-surface py-1 text-[12px] shadow-none" style={{ left, top }}>
-      {waiting ? <div className="px-2.5 py-1.5 text-[11px] leading-4 text-blocked">{waiting}</div> : null}
+    <div
+      className="enter fixed z-30 w-56 overflow-hidden rounded-lg border border-line-strong bg-surface p-1 text-[13px] shadow-xl"
+      style={{ left, top }}
+    >
+      {waiting ? <div className="px-3 py-1.5 text-[12px] leading-4 text-queued">{waiting}</div> : null}
       {task.runner === "human" ? (
         waiting || task.status === "completed" ? null : <MenuItem label="Mark complete" onClick={() => { void markComplete(task.id); close(); }} />
       ) : (
@@ -338,7 +321,7 @@ function TaskMenu() {
       )}
       {task.runner === "agent" ? <MenuItem label="Reassign" onClick={() => setReassigning((value) => !value)} /> : null}
       {reassigning ? (
-        <div className="max-h-36 overflow-auto border-y border-line py-1">
+        <div className="max-h-36 overflow-auto rounded-md bg-black/20 py-1">
           {AGENTS.map((agent) => (
             <MenuItem
               key={agent.id}
@@ -387,7 +370,7 @@ function MenuItem({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center justify-between px-2.5 py-1.5 text-left hover:bg-surface-2 ${danger ? "text-failed" : "text-text"}`}
+      className={`flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left hover:bg-surface-2 ${danger ? "text-failed" : "text-text"}`}
     >
       <span>{label}</span>
       {hint ? <span className="font-mono text-[10px] text-faint">{hint}</span> : null}

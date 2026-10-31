@@ -1,5 +1,3 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { blankTask, nextPosition, slugify } from "../src/model/factory";
 import { reducer } from "../src/model/reducer";
 import { GATE_LABEL, type Action, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
@@ -185,129 +183,13 @@ function freeWorktree(state: OrchestrationState, projectId: string, name: string
   return candidate;
 }
 
-export interface Batch {
-  id: string;
-  projectId: string;
-  taskIds: string[];
-  actions: Action[];
-  /** The batch creates its project rather than adding tasks to one. */
-  createsProject?: boolean;
-}
-
-/**
- * An open tab saves the whole board on every change, so a server write could be overwritten by it.
- * While a tab has polled this recently, new tasks wait here for the tab to apply. Background tabs
- * poll as rarely as once a minute.
- */
-export const TAB_LIVE_MS = 90_000;
-
-export function createInbox(file: string, writeBoard: (state: OrchestrationState) => void, clock = () => Date.now()) {
-  let tabSeenAt = Number.NEGATIVE_INFINITY;
-  let counter = 0;
-  const read = (): Batch[] => {
-    try {
-      const raw = JSON.parse(readFileSync(file, "utf8")) as { batches?: unknown };
-      return Array.isArray(raw.batches) ? (raw.batches as Batch[]) : [];
-    } catch {
-      return [];
-    }
-  };
-  const write = (batches: Batch[]) => {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify({ batches }));
-  };
-  const apply = (state: OrchestrationState, batches: Batch[]) =>
-    batches.flatMap((batch) => batch.actions).reduce(reducer, { ...state, now: clock() });
-  const tabLive = () => clock() - tabSeenAt < TAB_LIVE_MS;
-
-  return {
-    /** The open tab asks for queued tasks. */
-    poll(): Batch[] {
-      tabSeenAt = clock();
-      return read();
-    },
-    /** A tab saved the board: drop batches it has applied, or whose project is gone. */
-    saved(body: unknown) {
-      tabSeenAt = clock();
-      const batches = read();
-      if (!batches.length) return;
-      const state = record(record(record(body)?.state)?.state);
-      const ids = (list: unknown) => new Set(Array.isArray(list) ? list.map((item) => record(item)?.id) : []);
-      const tasks = ids(state?.tasks);
-      const projects = ids(state?.projects);
-      const coming = new Set(batches.filter((batch) => batch.createsProject).map((batch) => batch.projectId));
-      const left = batches.filter((batch) =>
-        batch.createsProject
-          ? !projects.has(batch.projectId)
-          : (projects.has(batch.projectId) || coming.has(batch.projectId)) && !batch.taskIds.every((id) => tasks.has(id)),
-      );
-      if (left.length !== batches.length) write(left);
-    },
-    /** The board including queued work. With no tab open, queued work is written to the board now. */
-    flushOrPreview(state: OrchestrationState): { state: OrchestrationState; pending: Set<string> } {
-      const batches = read();
-      if (!batches.length) return { state, pending: new Set() };
-      const next = apply(state, batches);
-      if (tabLive()) {
-        const pending = batches.flatMap((batch) => (batch.createsProject ? [batch.projectId] : batch.taskIds));
-        return { state: next, pending: new Set(pending) };
-      }
-      writeBoard(next);
-      write([]);
-      return { state: next, pending: new Set() };
-    },
-    add(state: OrchestrationState, body: unknown) {
-      const batches = read();
-      const stamp = nextStamp();
-      const planned = planTasks(apply(state, batches), body, (index) => `task-api-${stamp}-${index + 1}`);
-      if ("error" in planned) return planned;
-      const batch: Batch = {
-        id: `batch-${stamp}`,
-        projectId: planned.projectId,
-        taskIds: planned.tasks.map((task) => task.id),
-        actions: planned.actions,
-      };
-      return { project: planned.projectId, tasks: planned.tasks, ...deliver(state, batches, batch, "these tasks") };
-    },
-    addProject(state: OrchestrationState, body: unknown) {
-      const batches = read();
-      const stamp = nextStamp();
-      const planned = planProject(apply(state, batches), body, `proj-api-${stamp}`);
-      if ("error" in planned) return planned;
-      const batch: Batch = {
-        id: `batch-${stamp}`,
-        projectId: planned.project.id,
-        taskIds: [],
-        actions: [planned.action],
-        createsProject: true,
-      };
-      return { project: planned.project, ...deliver(state, batches, batch, "this project") };
-    },
-  };
-
-  function nextStamp() {
-    return `${clock().toString(36)}${(counter++).toString(36)}`;
-  }
-
-  function deliver(state: OrchestrationState, batches: Batch[], batch: Batch, what: string) {
-    if (tabLive()) {
-      write([...batches, batch]);
-      return { applied: false, note: `Shepherd is open in a browser. That tab adds ${what} within a few seconds.` };
-    }
-    writeBoard(apply(state, [...batches, batch]));
-    write([]);
-    return { applied: true, note: "Added to the board." };
-  }
-}
-
 /** What an outside agent needs to pick a project and name dependencies. */
-export function boardSummary(state: OrchestrationState, pending: Set<string>) {
+export function boardSummary(state: OrchestrationState) {
   return {
     projects: state.projects.map((project) => ({
       id: project.id,
       name: project.name,
       directory: project.directory ?? null,
-      ...(pending.has(project.id) ? { pending: true } : {}),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)
         .map((task) => ({
@@ -319,7 +201,6 @@ export function boardSummary(state: OrchestrationState, pending: Set<string>) {
           verified: isFullyVerified(task),
           branch: task.git?.branch ?? null,
           dependsOn: state.dependencies.filter((dep) => dep.target === task.id).map((dep) => ({ task: dep.source, gate: dep.gate })),
-          ...(pending.has(task.id) ? { pending: true } : {}),
         })),
     })),
   };

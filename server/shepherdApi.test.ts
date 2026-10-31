@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentCommand, agentEnv, exitError, inside, runCheckCommand, withoutLogLines } from "./shepherdApi";
+import { agentCommand, agentEnv, exitError, inside, runCheckCommand, withoutLogLines } from "./runner";
 
 describe("check commands", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "shepherd-check-"));

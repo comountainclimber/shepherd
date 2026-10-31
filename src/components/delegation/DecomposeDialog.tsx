@@ -157,7 +157,7 @@ export function DecomposeDialog() {
             {columns.map(([index, column]) => (
               <div key={index} className="w-48 shrink-0 space-y-2">
                 {column.map((draft) => (
-                  <div key={draft.task.id} className="border border-line bg-surface-2 px-2 py-1.5">
+                  <div key={draft.task.id} className="rounded-lg border border-line bg-surface-2 px-2.5 py-1.5">
                     <div className="truncate text-[12px] text-text">{draft.task.name}</div>
                     <div className="truncate font-mono text-[10px] text-faint">
                       {AGENTS.find((agent) => agent.id === draft.task.agentId)?.name ?? "Unassigned"}
@@ -169,7 +169,7 @@ export function DecomposeDialog() {
           </div>
           <div className="space-y-3">
             {drafts.map((draft) => (
-              <div key={draft.task.id} className="border border-line px-2 py-2">
+              <div key={draft.task.id} className="rounded-lg border border-line bg-black/15 px-3 py-2.5">
                 <div className="grid grid-cols-2 gap-2">
                   <Field label="Name">
                     <TextInput
@@ -253,7 +253,7 @@ export function DecomposeDialog() {
                           <label className="flex items-center gap-1.5">
                             <input
                               type="checkbox"
-                              className="accent-[#c4a574]"
+                              className="accent-[#ffc93c]"
                               checked={!!gate}
                               onChange={() => setGate(gate ? null : "verified")}
                             />

@@ -136,7 +136,7 @@ export function NewTaskDialog() {
                   <label className="flex min-w-0 flex-1 items-center gap-2">
                     <input
                       type="checkbox"
-                      className="accent-[#c4a574]"
+                      className="accent-[#ffc93c]"
                       checked={!!gate}
                       onChange={() =>
                         setGates((current) => {

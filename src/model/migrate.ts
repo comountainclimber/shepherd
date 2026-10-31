@@ -48,20 +48,36 @@ function check(raw: Raw): VerificationCheck | null {
   if (typeof raw.output === "string") out.output = raw.output;
   if (typeof raw.durationMs === "number") out.durationMs = raw.durationMs;
   if (raw.running === true) out.running = true;
+  const steps = list(raw.steps).flatMap((item) => {
+    const step = record(item);
+    return step && typeof step.name === "string" && typeof step.ok === "boolean"
+      ? [{ name: step.name, ok: step.ok, ...(typeof step.detail === "string" && step.detail ? { detail: step.detail } : {}) }]
+      : [];
+  });
+  if (steps.length) out.steps = steps;
+  const artifacts = list(raw.artifacts).filter((item): item is string => typeof item === "string");
+  if (artifacts.length) out.artifacts = artifacts;
   return out;
 }
 
-/** After a page load no request is left to record a running check, so it would stay "running" forever. */
-export function interruptChecks(state: OrchestrationState): OrchestrationState {
-  if (!state.tasks.some((task) => task.verification.some((check) => check.running))) return state;
+/**
+ * When the server starts, no process is left from before: runs and checks that were going are over.
+ * Their worktrees keep whatever the agent had written, and the next run commits it.
+ */
+export function interruptWork(state: OrchestrationState): OrchestrationState {
+  const busy = (task: Task) => task.status === "running" || task.verification.some((check) => check.running);
+  if (!state.tasks.some(busy)) return state;
   return {
     ...state,
-    tasks: state.tasks.map((task) => ({
-      ...task,
-      verification: task.verification.map((check) =>
-        check.running ? { ...check, running: false, evidence: "Interrupted by a reload. Run it again." } : check,
-      ),
-    })),
+    tasks: state.tasks.map((task) => {
+      if (!busy(task)) return task;
+      const verification = task.verification.map((check) =>
+        check.running ? { ...check, running: false, evidence: "Interrupted when Shepherd restarted. Run it again." } : check,
+      );
+      if (task.status !== "running") return { ...task, verification };
+      const blocker = "Shepherd restarted while this was running. Retry it.";
+      return { ...task, verification, status: "failed" as const, blocker, activity: blocker };
+    }),
   };
 }
 
@@ -132,6 +148,8 @@ function task(raw: Raw): Task {
     ...(git ? { git } : {}),
     ...(raw.autoRun === true ? { autoRun: true } : {}),
     ...(raw.independent === true ? { independent: true } : {}),
+    ...(typeof raw.outdated === "string" && raw.outdated ? { outdated: raw.outdated } : {}),
+    ...(typeof raw.retries === "number" && raw.retries > 0 ? { retries: raw.retries } : {}),
   };
 }
 
@@ -152,5 +170,6 @@ export function loadState(saved: unknown): OrchestrationState | null {
     notifications: list(raw.notifications) as Notification[],
     now: typeof raw.now === "number" ? raw.now : Date.now(),
     seq: typeof raw.seq === "number" ? raw.seq : 1,
+    ...(typeof raw.workspace === "string" && raw.workspace.trim() ? { workspace: raw.workspace.trim() } : {}),
   };
 }

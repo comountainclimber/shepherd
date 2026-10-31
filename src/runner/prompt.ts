@@ -1,10 +1,26 @@
-import type { Task } from "../model/types";
+import type { OrchestrationState, Task } from "../model/types";
 
 export interface UpstreamContext {
   name: string;
   objective: string;
   files: string[];
   summary?: string;
+}
+
+export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
+  return state.dependencies
+    .filter((dep) => dep.target === task.id)
+    .map((dep) => state.tasks.find((item) => item.id === dep.source))
+    .filter((item): item is Task => !!item);
+}
+
+export function upstreamContext(state: OrchestrationState, task: Task): UpstreamContext[] {
+  return upstreamTasks(state, task).map((item) => ({
+    name: item.name,
+    objective: item.objective,
+    files: item.filesChanged,
+    summary: item.status === "completed" ? item.activity : undefined,
+  }));
 }
 
 export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext[] = []): string {
@@ -26,6 +42,9 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
         "",
         `When you finish, Shepherd runs this command in the current directory: ${task.checkCommand}`,
         "The task only passes if it exits 0. Run it yourself before you finish.",
+        task.checkCommand.includes("SHEPHERD_GATE")
+          ? "SHEPHERD_GATE is Shepherd's gate script and is set in your environment too. Your own runs of it are practice; only Shepherd's run counts."
+          : "",
         failed
           ? [
               `It failed last time (${failed.evidence}). Its output:`,

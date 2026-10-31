@@ -1,19 +1,14 @@
-import type { CheckRun, Task } from "../model/types";
-import { isFullyVerified, unmetDependencies } from "../model/verify";
+import type { Task } from "../model/types";
 import { agentById } from "../model/workspace";
-import { sharedStateLoaded, useShepherd } from "../store";
-import { taskPrompt, type UpstreamContext } from "./prompt";
+import { useShepherd } from "../store";
 
-const WORKSPACE_KEY = "shepherd.workspace";
-const controllers = new Map<string, AbortController>();
-
+/** The folder that holds every project. Empty means the server's default. */
 export function workspacePath(): string {
-  if (typeof localStorage === "undefined") return "";
-  return localStorage.getItem(WORKSPACE_KEY) ?? "";
+  return useShepherd.getState().state.workspace ?? "";
 }
 
 export function setWorkspacePath(path: string) {
-  localStorage.setItem(WORKSPACE_KEY, path);
+  useShepherd.getState().dispatch({ type: "setWorkspace", path });
 }
 
 interface AgentStatus {
@@ -29,258 +24,58 @@ export async function agentStatus(): Promise<AgentStatus> {
   return (await response.json()) as AgentStatus;
 }
 
-export async function runTask(taskId: string, extra?: string) {
-  const store = useShepherd.getState();
-  const task = store.state.tasks.find((item) => item.id === taskId);
-  if (!task || task.runner === "human") return;
-  store.dispatch({ type: "setStatus", id: taskId, status: "running" });
-  const current = useShepherd.getState().state.tasks.find((item) => item.id === taskId);
-  if (!current || current.status !== "running") return;
-  store.dispatch({ type: "updateTask", id: taskId, patch: { activity: "Starting the agent…", blocker: null } });
-  await streamRun(current, extra);
-}
-
-/** Starts tasks set to run automatically the first time all their gates are open. Retries stay manual. */
-export function startReadyTasks() {
-  if (!sharedStateLoaded()) return;
-  const { tasks, dependencies } = useShepherd.getState().state;
-  for (const task of tasks) {
-    const fresh = !task.git && !task.sessionId && !controllers.has(task.id);
-    if (!task.autoRun || task.runner !== "agent" || !task.agentId || task.status !== "queued" || !fresh) continue;
-    if (unmetDependencies(task.id, tasks, dependencies).length) continue;
-    void runTask(task.id);
+/**
+ * Runs, checks and merges happen on the server, so they keep going with no tab open. Returns the
+ * server's reason when it refuses, and also shows it.
+ */
+async function command(body: Record<string, unknown>): Promise<string | null> {
+  try {
+    const response = await fetch("/api/commands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = (await response.json()) as { error?: string };
+    if (response.ok) return null;
+    const problem = result.error ?? `The server refused (${response.status}).`;
+    useShepherd.getState().setProblem(problem);
+    return problem;
+  } catch {
+    const problem = "Could not reach the Shepherd server.";
+    useShepherd.getState().setProblem(problem);
+    return problem;
   }
 }
 
-export async function stopTask(taskId: string, status: "blocked" | "queued") {
-  controllers.get(taskId)?.abort();
-  controllers.delete(taskId);
-  await fetch("/api/runs/cancel", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ taskId }),
-  }).catch(() => undefined);
-  useShepherd.getState().dispatch({ type: "setStatus", id: taskId, status });
+export function runTask(taskId: string, extra?: string) {
+  return command({ command: "run", taskId, extra });
 }
 
-export async function instructTask(taskId: string, text: string) {
+export function stopTask(taskId: string, status: "blocked" | "queued") {
+  return command({ command: "stop", taskId, status });
+}
+
+export function instructTask(taskId: string, text: string) {
   const trimmed = text.trim();
-  if (!trimmed) return;
-  const store = useShepherd.getState();
-  store.dispatch({ type: "instruct", id: taskId, text: trimmed });
-  const task = useShepherd.getState().state.tasks.find((item) => item.id === taskId);
-  if (!task || task.runner === "human" || !task.sessionId) return;
-  if (task.status === "running") {
-    store.dispatch({ type: "updateTask", id: taskId, patch: { activity: "Instruction saved for the next run" } });
-    return;
-  }
-  await runTask(taskId, trimmed);
+  return trimmed ? command({ command: "instruct", taskId, text: trimmed }) : Promise.resolve(null);
 }
 
-function upstreamTasks(task: Task): Task[] {
-  const { tasks, dependencies } = useShepherd.getState().state;
-  return dependencies
-    .filter((dep) => dep.target === task.id)
-    .map((dep) => tasks.find((item) => item.id === dep.source))
-    .filter((item): item is Task => !!item);
+export function runCheck(taskId: string) {
+  return command({ command: "check", taskId });
 }
 
-function upstreamContext(task: Task): UpstreamContext[] {
-  return upstreamTasks(task).map((item) => ({
-    name: item.name,
-    objective: item.objective,
-    files: item.filesChanged,
-    summary: item.status === "completed" ? item.activity : undefined,
-  }));
-}
-
-async function streamRun(task: Task, extra?: string) {
-  controllers.get(task.id)?.abort();
-  const controller = new AbortController();
-  controllers.set(task.id, controller);
-  const workspace = workspacePath();
-  const project = useShepherd.getState().state.projects.find((item) => item.id === task.projectId);
-  let response: Response;
-  try {
-    response = await fetch("/api/runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        taskId: task.id,
-        name: task.name,
-        workspace,
-        directory: project?.directory ?? "",
-        worktree: task.worktree,
-        branch: task.git?.branch,
-        upstream: upstreamTasks(task).flatMap((item) => (item.git ? [item.git.branch] : [])),
-        prompt: taskPrompt(task, extra, upstreamContext(task)),
-        provider: providerFor(task),
-        resumeId: task.sessionId ?? null,
-      }),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted) return;
-    fail(task.id, error instanceof Error ? error.message : "Could not reach the agent runner.");
-    return;
-  }
-  if (!response.ok || !response.body) {
-    const message = await response.text();
-    fail(task.id, message || `Agent runner returned ${response.status}`);
-    return;
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let settled = false;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let event: LiveEvent;
-        try {
-          event = JSON.parse(line) as LiveEvent;
-        } catch {
-          continue;
-        }
-        if (event.kind === "result" || event.kind === "error") settled = true;
-        applyEvent(task.id, event);
-        if (event.kind === "exit" && !settled) {
-          settled = true;
-          const code = event.code ?? 1;
-          if (code === 0) finish(task.id, event.files || "The agent finished");
-          else fail(task.id, event.error ? `The agent exited with code ${code}: ${event.error}` : `The agent exited with code ${code}.`);
-        }
-      }
-    }
-  } catch (error) {
-    if (!controller.signal.aborted) fail(task.id, error instanceof Error ? error.message : "The agent stream broke.");
-  } finally {
-    if (controllers.get(task.id) === controller) controllers.delete(task.id);
-  }
-  const latest = useShepherd.getState().state.tasks.find((item) => item.id === task.id);
-  if (!controller.signal.aborted && latest?.status === "completed" && latest.checkCommand) await runCheck(task.id);
-}
-
-export async function runCheck(taskId: string) {
-  const store = useShepherd.getState();
-  const task = store.state.tasks.find((item) => item.id === taskId);
-  const command = task?.checkCommand;
-  if (!task || !command) return;
-  const project = store.state.projects.find((item) => item.id === task.projectId);
-  store.dispatch({ type: "startCheck", taskId });
-  const started = Date.now();
-  let run: CheckRun;
-  try {
-    const response = await fetch("/api/checks", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace: workspacePath(), directory: project?.directory ?? "", branch: task.git?.branch, command }),
-    });
-    const body = (await response.json()) as Partial<CheckRun> & { error?: string };
-    run = response.ok
-      ? {
-          command,
-          exitCode: body.exitCode ?? null,
-          output: body.output ?? "",
-          durationMs: body.durationMs ?? Date.now() - started,
-          timedOut: body.timedOut,
-        }
-      : { command, exitCode: null, output: body.error ?? `The check runner returned ${response.status}.`, durationMs: Date.now() - started };
-  } catch (error) {
-    run = {
-      command,
-      exitCode: null,
-      output: error instanceof Error ? error.message : "Could not reach the check runner.",
-      durationMs: Date.now() - started,
-    };
-  }
-  useShepherd.getState().dispatch({ type: "recordCheck", taskId, run });
+export function markComplete(taskId: string) {
+  return command({ command: "complete", taskId });
 }
 
 /** Merges a verified task's branch into the project folder's branch. Returns an error to show, or null. */
-export async function mergeTask(taskId: string): Promise<string | null> {
-  const { tasks, projects } = useShepherd.getState().state;
-  const task = tasks.find((item) => item.id === taskId);
-  if (!task?.git) return "This task has no branch yet. Run it first.";
-  if (!isFullyVerified(task)) return "Verify the task before merging it.";
-  const project = projects.find((item) => item.id === task.projectId);
-  try {
-    const response = await fetch("/api/merge", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspace: workspacePath(), directory: project?.directory ?? "", branch: task.git.branch, name: task.name }),
-    });
-    const body = (await response.json()) as { into?: string; sha?: string; error?: string };
-    if (!response.ok || !body.into || !body.sha) return body.error ?? `The merge failed with status ${response.status}.`;
-    useShepherd.getState().dispatch({ type: "merged", id: taskId, into: body.into, sha: body.sha });
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : "Could not reach the Shepherd server.";
-  }
+export function mergeTask(taskId: string): Promise<string | null> {
+  return command({ command: "merge", taskId });
 }
 
-export async function markComplete(taskId: string) {
-  const store = useShepherd.getState();
-  store.dispatch({ type: "setStatus", id: taskId, status: "completed" });
-  const task = useShepherd.getState().state.tasks.find((item) => item.id === taskId);
-  if (task?.status === "completed" && task.checkCommand) await runCheck(taskId);
-}
-
-interface LiveEvent {
-  kind?: string;
-  text?: string;
-  id?: string;
-  ok?: boolean;
-  summary?: string;
-  error?: string;
-  code?: number;
-  files?: string;
-  changed?: string[];
-  opened?: { path: string; text: string }[];
-  head?: string;
-  branch?: string;
-  folder?: string;
-  target?: string;
-}
-
-function applyEvent(taskId: string, event: LiveEvent) {
-  const dispatch = useShepherd.getState().dispatch;
-  const task = () => useShepherd.getState().state.tasks.find((item) => item.id === taskId);
-  if (event.kind === "started" && event.branch && event.folder) {
-    const git = { ...task()?.git, branch: event.branch, folder: event.folder, target: event.target ?? "main" };
-    dispatch({ type: "updateTask", id: taskId, patch: { git } });
-  }
-  if (event.kind === "chat" && event.id) {
-    dispatch({ type: "updateTask", id: taskId, patch: { sessionId: event.id } });
-  }
-  if (event.kind === "activity" && event.text) {
-    dispatch({ type: "updateTask", id: taskId, patch: { activity: event.text } });
-  }
-  if (event.kind === "result") {
-    if (event.ok === false) fail(taskId, event.summary || "The agent failed.");
-    else finish(taskId, event.summary || "The agent finished");
-  }
-  const git = task()?.git;
-  if (event.kind === "exit" && event.changed && git) {
-    dispatch({
-      type: "updateTask",
-      id: taskId,
-      patch: { filesChanged: event.changed, previews: event.opened ?? [], git: { ...git, head: event.head } },
-    });
-  }
-  if (event.kind === "error") fail(taskId, event.error || "The agent failed to start.");
-}
-
-function finish(taskId: string, summary: string) {
-  const dispatch = useShepherd.getState().dispatch;
-  dispatch({ type: "setStatus", id: taskId, status: "completed" });
-  dispatch({ type: "updateTask", id: taskId, patch: { activity: summary } });
+/** Sends a task's failed check to an upstream task that owns the cause, and runs that task. */
+export function forwardFailure(taskId: string, to: string): Promise<string | null> {
+  return command({ command: "forward", taskId, to });
 }
 
 export function runLabel(task: Task): string {
@@ -292,8 +87,7 @@ function providerFor(task: Task): "claude" | "codex" {
   return agentById(task.agentId)?.provider === "claude-code" ? "claude" : "codex";
 }
 
-function fail(taskId: string, message: string) {
-  const dispatch = useShepherd.getState().dispatch;
-  dispatch({ type: "updateTask", id: taskId, patch: { blocker: message, activity: message } });
-  dispatch({ type: "setStatus", id: taskId, status: "failed" });
+/** Each check gets its own evidence folder on the server; this is where one of its files is served. */
+export function evidenceUrl(taskId: string, file: string): string {
+  return `/api/evidence/${encodeURIComponent(taskId)}/${file.split("/").map(encodeURIComponent).join("/")}`;
 }

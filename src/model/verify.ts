@@ -2,6 +2,7 @@ import type { Dependency, Task } from "./types";
 
 export function isFullyVerified(task: Task): boolean {
   const checks = task.verification;
+  if (task.outdated) return false;
   if (task.runner === "human") {
     return task.status === "completed" && checks.every((check) => check.state === "passed");
   }

@@ -1,11 +1,8 @@
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { reducer } from "../src/model/reducer";
 import type { OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
-import { TAB_LIVE_MS, boardSummary, createInbox, planProject, planTasks } from "./intake";
+import { boardSummary, planProject, planTasks } from "./intake";
 
 function board(): OrchestrationState {
   return reducer(workspace(1), { type: "createProject", project: { id: "proj-2", name: "Greeter", summary: "", directory: "greeter" } });
@@ -102,92 +99,12 @@ describe("planProject", () => {
   });
 });
 
-describe("inbox", () => {
-  function setup() {
-    const file = path.join(mkdtempSync(path.join(tmpdir(), "shepherd-inbox-")), "inbox.json");
-    let now = 1_000;
-    let written: OrchestrationState | null = null;
-    const inbox = createInbox(file, (state) => (written = state), () => now);
-    return {
-      inbox,
-      file,
-      written: () => written,
-      advance: (ms: number) => (now += ms),
-      queued: () => (JSON.parse(readFileSync(file, "utf8")) as { batches: unknown[] }).batches,
-    };
-  }
-
-  it("writes the board itself when no tab is open", () => {
-    const { inbox, written, queued } = setup();
-    const result = inbox.add(board(), { project: "Greeter", name: "Greet module" });
-    expect(result).toMatchObject({ applied: true, project: "proj-2" });
-    expect(written()!.tasks.map((task) => task.name)).toEqual(["Greet module"]);
-    expect(queued()).toEqual([]);
-  });
-
-  it("leaves new tasks to an open tab and forgets them once the tab saves them", () => {
-    const { inbox, written, queued } = setup();
-    inbox.poll();
-    const result = inbox.add(board(), { project: "Greeter", tasks: [{ name: "A" }, { name: "B", dependsOn: ["A"] }] });
-    expect(result).toMatchObject({ applied: false });
-    expect(written()).toBeNull();
-
-    const preview = inbox.flushOrPreview(board());
-    expect(boardSummary(preview.state, preview.pending).projects[1]!.tasks).toMatchObject([
-      { name: "A", pending: true, dependsOn: [] },
-      { name: "B", pending: true, dependsOn: [{ task: (result as { tasks: { id: string }[] }).tasks[0]!.id, gate: "verified" }] },
+describe("boardSummary", () => {
+  it("lists each project's tasks with what an outside agent needs to depend on them", () => {
+    const state = apply(board(), { project: "Greeter", tasks: [{ name: "A" }, { name: "B", dependsOn: ["A"] }] });
+    expect(boardSummary(state).projects[1]!.tasks).toMatchObject([
+      { id: "api-1", name: "A", status: "queued", verified: false, dependsOn: [] },
+      { id: "api-2", name: "B", dependsOn: [{ task: "api-1", gate: "verified" }] },
     ]);
-
-    const [batch] = inbox.poll();
-    const applied = batch!.actions.reduce(reducer, board());
-    inbox.saved({ state: { state: board() }, version: 2 });
-    expect(queued()).toHaveLength(1);
-    inbox.saved({ state: { state: applied }, version: 2 });
-    expect(queued()).toEqual([]);
-  });
-
-  it("lets later requests depend on tasks still waiting for the tab", () => {
-    const { inbox } = setup();
-    inbox.poll();
-    inbox.add(board(), { project: "Greeter", name: "A" });
-    expect(inbox.add(board(), { project: "Greeter", name: "B", dependsOn: ["A"] })).toMatchObject({ applied: false });
-  });
-
-  it("writes queued tasks to the board when the tab goes away", () => {
-    const { inbox, written, advance, queued } = setup();
-    inbox.poll();
-    inbox.add(board(), { project: "Greeter", name: "A" });
-    advance(TAB_LIVE_MS + 1);
-    const { pending } = inbox.flushOrPreview(board());
-    expect(pending.size).toBe(0);
-    expect(written()!.tasks.map((task) => task.name)).toEqual(["A"]);
-    expect(queued()).toEqual([]);
-  });
-
-  it("drops queued tasks whose project was deleted", () => {
-    const { inbox, queued } = setup();
-    inbox.poll();
-    inbox.add(board(), { project: "Greeter", name: "A" });
-    inbox.saved({ state: { state: workspace(1) }, version: 2 });
-    expect(queued()).toEqual([]);
-  });
-
-  it("queues a new project and its tasks for the tab, keeping them until a save includes them", () => {
-    const { inbox, queued } = setup();
-    inbox.poll();
-    const created = inbox.addProject(board(), { name: "Hello counter" });
-    expect(created).toMatchObject({ applied: false, project: { name: "Hello counter", directory: "hello-counter" } });
-    const project = (created as { project: { id: string } }).project.id;
-    expect(inbox.add(board(), { project: "Hello counter", name: "Architect" })).toMatchObject({ applied: false, project });
-
-    const preview = inbox.flushOrPreview(board());
-    expect(boardSummary(preview.state, preview.pending).projects[2]).toMatchObject({ id: project, pending: true, tasks: [{ name: "Architect" }] });
-
-    // A save from before the tab applied anything keeps both batches, even though the project is not on it yet.
-    inbox.saved({ state: { state: board() }, version: 2 });
-    expect(queued()).toHaveLength(2);
-    const applied = inbox.poll().flatMap((batch) => batch.actions).reduce(reducer, board());
-    inbox.saved({ state: { state: applied }, version: 2 });
-    expect(queued()).toEqual([]);
   });
 });

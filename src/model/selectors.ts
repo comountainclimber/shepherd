@@ -1,3 +1,4 @@
+import { needsYou } from "./stage";
 import type { Dependency, Filters, OrchestrationState, Task } from "./types";
 import { isFullyVerified, unmetDependencies } from "./verify";
 
@@ -15,7 +16,7 @@ export function taskMatches(task: Task, filters: Filters, tasks: Task[], deps: D
   if (filters.verification === "failed" && task.status !== "failed" && !task.verification.some((check) => check.state === "failed")) {
     return false;
   }
-  if (filters.savedView === "needs-me" && !needsMe(task, tasks, deps)) return false;
+  if (filters.savedView === "needs-me" && !needsYou(task, tasks, deps)) return false;
   if (filters.savedView === "running" && task.status !== "running") return false;
   if (filters.savedView === "unverified" && !(task.status === "completed" && !isFullyVerified(task))) return false;
   if (filters.search.trim()) {

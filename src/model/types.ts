@@ -10,7 +10,9 @@ export type Gate = "completed" | "verified";
 
 export type Tone = "info" | "success" | "warning" | "failure";
 
-export type ViewId = "canvas" | "agents" | "project";
+export type ViewId = "canvas" | "agents";
+
+export type PanelTab = "overview" | "proof" | "log" | "edit";
 
 export type Runner = "agent" | "human";
 
@@ -25,6 +27,16 @@ export interface VerificationCheck {
   output?: string;
   durationMs?: number;
   running?: boolean;
+  /** What a gate script reported, step by step. */
+  steps?: GateStep[];
+  /** Files the check left in the task's evidence folder, relative to it. */
+  artifacts?: string[];
+}
+
+export interface GateStep {
+  name: string;
+  ok: boolean;
+  detail?: string;
 }
 
 export interface CheckRun {
@@ -33,6 +45,8 @@ export interface CheckRun {
   output: string;
   durationMs: number;
   timedOut?: boolean;
+  steps?: GateStep[];
+  artifacts?: string[];
 }
 
 export interface FilePreview {
@@ -79,6 +93,10 @@ export interface Task {
   autoRun?: boolean;
   /** Leave the upstream agents' own summaries out of this task's prompt, so it judges their work from the files. */
   independent?: boolean;
+  /** Why the task's verification no longer counts: upstream work changed after it ran. */
+  outdated?: string;
+  /** Automatic retries since its check last passed. */
+  retries?: number;
 }
 
 export interface Dependency {
@@ -129,6 +147,8 @@ export interface OrchestrationState {
   notifications: Notification[];
   now: number;
   seq: number;
+  /** The folder that holds every project. Unset means the server's default. */
+  workspace?: string;
 }
 
 export interface Filters {
@@ -146,6 +166,7 @@ export interface UiState {
   selectedAgentId: string | null;
   selectedEdgeId: string | null;
   inspectorOpen: boolean;
+  panelTab: PanelTab;
   filters: Filters;
   paletteOpen: boolean;
   newTaskOpen: boolean;
@@ -171,6 +192,17 @@ export type Action =
   | { type: "reassign"; id: string; agentId: string | null }
   | { type: "instruct"; id: string; text: string }
   | { type: "merged"; id: string; into: string; sha: string }
+  | { type: "setWorkspace"; path: string }
+  | { type: "outdate"; id: string; reason: string }
+  | {
+      type: "refreshed";
+      id: string;
+      head: string;
+      merged: string[];
+      filesChanged: string[];
+      previews: FilePreview[];
+      keepReview: boolean;
+    }
   | { type: "approvePlan"; tasks: Task[]; dependencies: Dependency[] }
   | { type: "deleteTask"; id: string }
   | { type: "reset" }

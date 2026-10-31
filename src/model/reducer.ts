@@ -43,6 +43,8 @@ const GATE_ACTIONS = new Set<Action["type"]>([
   "deleteTask",
   "approvePlan",
   "createTask",
+  "outdate",
+  "refreshed",
 ]);
 
 export function reducer(state: OrchestrationState, action: Action): OrchestrationState {
@@ -53,7 +55,7 @@ export function reducer(state: OrchestrationState, action: Action): Orchestratio
 function reduce(state: OrchestrationState, action: Action): OrchestrationState {
   switch (action.type) {
     case "reset":
-      return workspace(state.now);
+      return state.workspace ? { ...workspace(state.now), workspace: state.workspace } : workspace(state.now);
     case "dismissNotification":
       return { ...state, notifications: state.notifications.filter((item) => item.id !== action.id) };
     case "readNotifications":
@@ -93,6 +95,16 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return instruct(state, action.id, action.text);
     case "merged":
       return merged(state, action.id, action.into, action.sha);
+    case "setWorkspace": {
+      const path = action.path.trim();
+      if ((state.workspace ?? "") === path) return state;
+      const { workspace: _previous, ...rest } = state;
+      return path ? { ...rest, workspace: path } : rest;
+    }
+    case "outdate":
+      return outdate(state, action.id, action.reason);
+    case "refreshed":
+      return refreshed(state, action);
     case "approvePlan":
       return approvePlan(state, action.tasks, action.dependencies);
     case "deleteTask":
@@ -226,7 +238,8 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
   let next: Task = { ...task, status, gated: false };
   if (task.status === "running" && task.startedAt != null) next.elapsedMs = Math.max(0, state.now - task.startedAt);
   if (status === "running") {
-    const rerun = task.status === "failed" || task.status === "completed";
+    const rerun = task.status === "failed" || task.status === "completed" || !!task.outdated;
+    delete next.outdated;
     if (next.git?.merged) {
       const { merged: _landed, ...git } = next.git;
       next.git = git;
@@ -373,7 +386,16 @@ function startCheck(state: OrchestrationState, taskId: string): OrchestrationSta
     ...task,
     verification: task.verification.map((check) =>
       check.kind === "command"
-        ? { ...check, command, state: "pending", running: true, timestamp: null, evidence: `Running ${command}…` }
+        ? {
+            ...check,
+            command,
+            state: "pending",
+            running: true,
+            timestamp: null,
+            evidence: `Running ${command}…`,
+            steps: undefined,
+            artifacts: undefined,
+          }
         : check,
     ),
   };
@@ -408,12 +430,15 @@ function recordCheck(state: OrchestrationState, taskId: string, run: CheckRun): 
           exitCode: run.timedOut ? null : run.exitCode,
           output: run.output.length > OUTPUT_LIMIT ? `…${run.output.slice(-OUTPUT_LIMIT)}` : run.output,
           durationMs: run.durationMs,
+          steps: run.steps?.length ? run.steps : undefined,
+          artifacts: run.artifacts?.length ? run.artifacts : undefined,
         }
       : check,
   );
   let next: Task = { ...task, verification };
   const human = task.runner === "human";
   if (passed) {
+    delete next.retries;
     if (task.blocker?.startsWith("The check failed")) {
       next = { ...next, status: "completed", blocker: null, activity: human ? "Signed off by you" : "Check passed" };
     }
@@ -467,6 +492,63 @@ function merged(state: OrchestrationState, id: string, into: string, sha: string
   log.event({ taskId: id, projectId: task.projectId, message: `Merged ${task.name} into ${into}`, tone: "success" });
   log.note({ message: `${task.name} is merged into ${into}.`, tone: "success", taskId: id });
   const next: Task = { ...task, git: { ...task.git, merged: { into, sha, at: state.now } } };
+  return log.finish({ tasks: replaceTask(state.tasks, next) });
+}
+
+/**
+ * Upstream work changed after this task ran, so its check result no longer counts. A running task
+ * only remembers why; Shepherd refreshes it when the run ends.
+ */
+function outdate(state: OrchestrationState, id: string, reason: string): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task?.git || task.runner !== "agent") return state;
+  if (task.status === "running") return { ...state, tasks: replaceTask(state.tasks, { ...task, outdated: reason }) };
+  const checkFailed = task.verification.some((check) => check.kind === "command" && check.state === "failed");
+  if (task.status !== "completed" && !(task.status === "failed" && checkFailed)) return state;
+  const log = createLog(state, state.now);
+  log.event({ taskId: id, projectId: task.projectId, message: `${task.name} is out of date: ${reason}`, tone: "warning" });
+  const next: Task = {
+    ...task,
+    status: "queued",
+    outdated: reason,
+    blocker: null,
+    activity: `Out of date: ${reason}`,
+    verification: task.verification.map((check) =>
+      check.kind === "command"
+        ? { ...check, state: "pending", running: false, timestamp: null, evidence: "Upstream work changed. Shepherd checks again after bringing it in." }
+        : check,
+    ),
+  };
+  return log.finish({ tasks: replaceTask(state.tasks, next) });
+}
+
+/** Shepherd merged new upstream work into an out-of-date task's branch without rerunning its agent. */
+function refreshed(state: OrchestrationState, action: Extract<Action, { type: "refreshed" }>): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === action.id);
+  if (!task?.git) return state;
+  const log = createLog(state, state.now);
+  const brought = action.merged.length ? `Brought in ${action.merged.join(", ")}` : "Already had the upstream work";
+  const activity = action.keepReview
+    ? `${brought}. Its own changes are the same.`
+    : `${brought}. Its own changes differ now, so it needs review again.`;
+  log.event({ taskId: task.id, projectId: task.projectId, message: `${task.name}: ${brought.toLowerCase()}`, tone: "info" });
+  const moved = task.git.head !== action.head;
+  const { merged: landed, ...git } = task.git;
+  const next: Task = {
+    ...task,
+    status: "completed",
+    blocker: null,
+    activity,
+    filesChanged: action.filesChanged,
+    previews: action.previews,
+    git: { ...git, head: action.head, ...(landed && !moved ? { merged: landed } : {}) },
+    verification: task.verification.map((check) =>
+      check.kind === "review" && !action.keepReview
+        ? { ...check, state: "pending", timestamp: null, evidence: "Its diff changed after upstream work came in. Review it again." }
+        : check,
+    ),
+  };
+  delete next.outdated;
   return log.finish({ tasks: replaceTask(state.tasks, next) });
 }
 

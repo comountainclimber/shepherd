@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interruptChecks, loadState } from "./migrate";
+import { interruptWork, loadState } from "./migrate";
 import { workspace } from "./workspace";
 
 const schemaOneTask = {
@@ -110,15 +110,22 @@ describe("loadState", () => {
   });
 });
 
-describe("interruptChecks", () => {
-  it("clears a check that was running when the page closed", () => {
+describe("interruptWork", () => {
+  it("clears a check that was running when the server stopped", () => {
     const state = loadState({
       ...schemaOne,
       tasks: [{ ...schemaOneTask, verification: [{ ...schemaOneTask.verification[0], state: "pending", running: true }] }],
     })!;
     expect(state.tasks[0]!.verification[0]!.running).toBe(true);
-    const check = interruptChecks(state).tasks[0]!.verification[0]!;
+    const check = interruptWork(state).tasks[0]!.verification[0]!;
     expect(check.running).toBe(false);
-    expect(check.evidence).toBe("Interrupted by a reload. Run it again.");
+    expect(check.evidence).toBe("Interrupted when Shepherd restarted. Run it again.");
+  });
+
+  it("fails a run that was going when the server stopped, so it can be retried", () => {
+    const state = loadState({ ...schemaOne, tasks: [{ ...schemaOneTask, status: "running" }] })!;
+    const task = interruptWork(state).tasks[0]!;
+    expect(task.status).toBe("failed");
+    expect(task.blocker).toBe("Shepherd restarted while this was running. Retry it.");
   });
 });

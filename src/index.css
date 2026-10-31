@@ -3,31 +3,33 @@
 @theme {
   --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, monospace;
-  --color-bg: #0e0f12;
-  --color-surface: #14161b;
-  --color-surface-2: #1b1e25;
-  --color-surface-3: #232733;
+  --color-bg: #0f1115;
+  --color-surface: #16191f;
+  --color-surface-2: #1d2129;
+  --color-surface-3: #272c36;
   --color-line: rgb(255 255 255 / 0.08);
   --color-line-strong: rgb(255 255 255 / 0.16);
-  --color-text: #e8e6e1;
-  --color-muted: #908d86;
-  --color-faint: #6c6963;
-  --color-brass: #c4a574;
-  --color-brass-2: #d7bc93;
-  --color-ink: #1a140c;
-  --color-queued: #8b909a;
-  --color-running: #d4a054;
-  --color-completed: #8eae88;
-  --color-blocked: #d09255;
-  --color-failed: #d17b6a;
-  --color-approval: #9aa3d4;
+  --color-text: #e9ebf0;
+  --color-muted: #a0a6b4;
+  --color-faint: #6c7383;
+  --color-brass: #f2b544;
+  --color-brass-2: #f6c66b;
+  --color-ink: #1f1600;
+  --color-queued: #7f8696;
+  --color-ready: #9b8cf5;
+  --color-running: #4fb3f6;
+  --color-checking: #34c7b5;
+  --color-completed: #4cc77f;
+  --color-blocked: #f0954a;
+  --color-failed: #f26d7d;
+  --color-approval: #f2b544;
 }
 
 html,
 body,
 #root {
   height: 100%;
-  background: #0e0f12;
+  background: #0f1115;
 }
 
 body {
@@ -35,8 +37,7 @@ body {
   overflow: hidden;
   color: var(--color-text);
   font-family: var(--font-sans);
-  font-size: 13px;
-  letter-spacing: -0.011em;
+  font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -49,69 +50,85 @@ textarea {
 }
 
 ::selection {
-  background: rgb(196 165 116 / 0.35);
+  background: rgb(242 181 68 / 0.3);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2a2e38 transparent;
+  scrollbar-color: #272c36 transparent;
 }
 
-@keyframes rail-live {
-  0%,
-  100% {
-    opacity: 0.45;
+@keyframes stripes {
+  from {
+    background-position: 0 0;
   }
-  50% {
+  to {
+    background-position: 28px 0;
+  }
+}
+
+/* Moving stripes on anything that is in progress. */
+.stripes {
+  background-image: repeating-linear-gradient(-45deg, rgb(255 255 255 / 0.2) 0 7px, transparent 7px 14px);
+  background-size: 28px 100%;
+  animation: stripes 0.8s linear infinite;
+}
+
+@keyframes enter {
+  from {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
     opacity: 1;
   }
 }
 
-.rail-live {
-  animation: rail-live 1.6s ease-in-out infinite;
+.enter {
+  animation: enter 0.16s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stripes,
+  .enter {
+    animation: none;
+  }
 }
 
 .react-flow {
-  --xy-background-color: #0e0f12;
-  background: #0e0f12;
+  --xy-background-color: transparent;
+  background: transparent;
 }
 
 .react-flow__attribution {
   display: none !important;
 }
 
-.react-flow__minimap {
-  background: #14161b !important;
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 6px;
-  overflow: hidden;
-  box-shadow: none !important;
-}
-
 .react-flow__controls {
-  border: 1px solid rgb(255 255 255 / 0.08);
-  border-radius: 6px;
+  border: 1px solid rgb(255 255 255 / 0.12);
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: none;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.3);
 }
 
 .react-flow__controls-button {
-  width: 22px;
-  height: 22px;
-  background: #1b1e25;
+  width: 28px;
+  height: 28px;
+  background: #1d2129;
   border-bottom: 1px solid rgb(255 255 255 / 0.08);
-  fill: #e8e6e1;
+  fill: #e9ebf0;
 }
 
 .react-flow__controls-button:hover {
-  background: #232733;
+  background: #272c36;
 }
 
 .react-flow__handle {
-  width: 7px;
-  height: 7px;
-  background: #232733;
-  border: 1px solid rgb(255 255 255 / 0.35);
+  width: 10px;
+  height: 10px;
+  background: #272c36;
+  border: 2px solid rgb(255 255 255 / 0.3);
 }
 
 .react-flow__edge-path {
@@ -119,8 +136,8 @@ textarea {
 }
 
 .react-flow__selection {
-  background: rgb(196 165 116 / 0.08);
-  border: 1px solid rgb(196 165 116 / 0.45);
+  background: rgb(242 181 68 / 0.08);
+  border: 1px solid rgb(242 181 68 / 0.45);
 }
 
 .react-flow__node {

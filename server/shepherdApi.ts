@@ -1,506 +1,231 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createReadStream, mkdirSync, realpathSync, statSync } from "node:fs";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import type { Plugin } from "vite";
-import { loadState } from "../src/model/migrate";
-import type { OrchestrationState } from "../src/model/types";
-import { CODEX_MODEL, isDemoState, workspace } from "../src/model/workspace";
-import { boardSummary, createInbox } from "./intake";
-import { parseAgentLine } from "../src/runner/parse";
-import {
-  changes,
-  commitAll,
-  ensureRepo,
-  gitAvailable,
-  isTaskBranch,
-  isTaskName,
-  mergeBranch,
-  openWorktree,
-  prepareRun,
-  serialized,
-  worktreeFolder,
-  type Author,
-  type Worktree,
-} from "./git";
+import type { Action } from "../src/model/types";
+import { createEngine, envelope, tabAction, type Engine } from "./engine";
+import { gitAvailable } from "./git";
+import { boardSummary, planProject, planTasks } from "./intake";
+import { agentStatus, createRunner, inside, type Runner } from "./runner";
 
-type AgentCli = "claude" | "codex";
+/** How often an open tab hears about changes while agents are busy. */
+const STREAM_THROTTLE_MS = 250;
 
-interface RunBody {
-  taskId?: string;
-  name?: string;
-  workspace?: string;
-  directory?: string;
-  worktree?: string;
-  branch?: string;
-  upstream?: string[];
-  prompt?: string;
-  resumeId?: string | null;
-  provider?: string;
-}
-
-interface ActiveRun {
-  child: ChildProcess;
-  stopped: boolean;
-}
-
-const runs = new Map<string, ActiveRun>();
-
-const AUTHORS: Record<AgentCli, Author> = {
-  codex: { name: "Codex", email: "codex@shepherd.local" },
-  claude: { name: "Claude Code", email: "claude-code@shepherd.local" },
-};
+class BadRequest extends Error {}
 
 export function shepherdApi(): Plugin {
-  const sandbox = path.resolve(process.cwd(), ".agent-sandbox");
-  const worktrees = path.resolve(process.cwd(), ".shepherd/worktrees");
-  const stateFile = path.resolve(process.cwd(), ".shepherd/state.json");
-  const inbox = createInbox(path.resolve(process.cwd(), ".shepherd/inbox.json"), (state) =>
-    writeSharedState(stateFile, { state: { state }, version: 2 }),
-  );
+  const root = process.cwd();
+  const sandbox = path.resolve(root, ".agent-sandbox");
+  const shepherd = path.resolve(root, ".shepherd");
   return {
     name: "shepherd-api",
     configureServer(server) {
       mkdirSync(sandbox, { recursive: true });
-      mkdirSync(path.dirname(stateFile), { recursive: true });
-      server.middlewares.use(async (req, res, next) => {
-        const url = new URL(req.url ?? "/", "http://shepherd.local");
-        if (url.pathname === "/api/state") {
-          if (req.method === "GET") {
-            sendJson(res, 200, readSharedState(stateFile));
-            return;
-          }
-          if (req.method === "PUT") {
-            const body = await readJson(req);
-            writeSharedState(stateFile, body);
-            inbox.saved(body);
-            sendJson(res, 200, { ok: true });
-            return;
-          }
-          if (req.method === "DELETE") {
-            writeSharedState(stateFile, { state: { state: workspace() }, version: 2 });
-            sendJson(res, 200, { ok: true });
-            return;
-          }
-        }
-        const intake = url.pathname === "/api/tasks" || url.pathname === "/api/projects";
-        if (intake && (req.method === "POST" || (req.method === "GET" && url.pathname === "/api/tasks"))) {
-          const board = savedBoard(stateFile);
-          if ("error" in board) {
-            sendJson(res, 409, { error: board.error });
-            return;
-          }
-          if (req.method === "GET") {
-            const { state, pending } = inbox.flushOrPreview(board.state);
-            sendJson(res, 200, boardSummary(state, pending));
-            return;
-          }
-          const body = await readJson(req);
-          const result = url.pathname === "/api/projects" ? inbox.addProject(board.state, body) : inbox.add(board.state, body);
-          sendJson(res, "error" in result ? 400 : result.applied ? 201 : 202, result);
-          return;
-        }
-        if (req.method === "GET" && url.pathname === "/api/inbox") {
-          sendJson(res, 200, { batches: inbox.poll() });
-          return;
-        }
-        if (req.method === "GET" && url.pathname === "/api/agents") {
-          const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
-          sendJson(res, 200, { ...status, git, workspace: sandbox });
-          return;
-        }
-        if (req.method === "POST" && url.pathname === "/api/checks") {
-          const body = (await readJson(req)) as { workspace?: string; directory?: string; branch?: string; command?: string };
-          const command = body.command?.trim() ?? "";
-          const folder = checkFolder(body, sandbox, worktrees);
-          if (!command || "error" in folder) {
-            sendJson(res, 400, { error: command ? (folder as { error: string }).error : "No command to run." });
-            return;
-          }
-          sendJson(res, 200, await runCheckCommand(folder.path, command));
-          return;
-        }
-        if (req.method === "POST" && url.pathname === "/api/merge") {
-          const body = (await readJson(req)) as { workspace?: string; directory?: string; branch?: string; name?: string };
-          const dir = projectFolder(body, sandbox);
-          const branch = body.branch ?? "";
-          if ("error" in dir || !isTaskBranch(branch)) {
-            sendJson(res, 400, { error: "error" in dir ? dir.error : "This task has no branch to merge." });
-            return;
-          }
-          try {
-            const merged = await serialized(dir.path, () =>
-              mergeBranch(realpathSync(dir.path), branch, `Merge ${body.name?.trim() || branch} (${branch})`),
-            );
-            sendJson(res, 200, merged);
-          } catch (error) {
-            sendJson(res, 409, { error: message(error) });
-          }
-          return;
-        }
-        if (req.method === "POST" && url.pathname === "/api/runs/cancel") {
-          const body = (await readJson(req)) as RunBody;
-          const taskId = body.taskId ?? "";
-          const run = runs.get(taskId);
-          if (run) {
-            run.stopped = true;
-            run.child.kill("SIGTERM");
-            runs.delete(taskId);
-          }
-          sendJson(res, 200, { ok: true, stopped: Boolean(run) });
-          return;
-        }
-        if (req.method === "POST" && url.pathname === "/api/runs") {
-          const body = (await readJson(req)) as RunBody;
-          await startRun(res, body, sandbox, worktrees);
-          return;
-        }
-        next();
+      const engine = createEngine(path.join(shepherd, "state.json"));
+      const evidence = path.join(shepherd, "evidence");
+      const runner = createRunner({
+        engine,
+        sandbox,
+        worktrees: path.join(shepherd, "worktrees"),
+        evidence,
+        gate: path.resolve(root, "gates/shepherd-gate.mjs"),
       });
+      // Vite rebuilds this plugin in the same process when a server file changes, so the old
+      // runner and engine must stop for good or they keep running agents and writing the board.
+      const stop = () => {
+        runner.close();
+        engine.close();
+      };
+      server.httpServer?.once("close", stop);
+      process.once("exit", stop);
+      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence }));
     },
   };
 }
 
-async function startRun(res: import("node:http").ServerResponse, body: RunBody, sandbox: string, worktrees: string) {
-  const taskId = body.taskId?.trim();
-  const prompt = body.prompt?.trim();
-  if (!taskId || !prompt) {
-    sendJson(res, 400, { ok: false, error: "A task id and prompt are required." });
-    return;
-  }
-  const dir = projectFolder(body, sandbox);
-  const name = body.worktree?.trim() ?? "";
-  if ("error" in dir || !isTaskName(name)) {
-    sendJson(res, 400, { ok: false, error: "error" in dir ? dir.error : `Not a usable task folder name: ${name}` });
-    return;
-  }
-  const existing = runs.get(taskId);
-  if (existing) {
-    existing.stopped = true;
-    existing.child.kill("SIGTERM");
-  }
+interface Context {
+  engine: Engine;
+  runner: Runner;
+  sandbox: string;
+  evidence: string;
+}
 
-  res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-cache" });
-  const write = (event: Record<string, unknown>) => {
-    res.write(`${JSON.stringify(event)}\n`);
-  };
-  const provider: AgentCli = body.provider === "codex" ? "codex" : "claude";
-  const status = await agentStatus();
-  if ((provider === "claude" && !status.claude) || (provider === "codex" && !status.codex)) {
-    res.end(`${JSON.stringify({ kind: "error", error: `${AUTHORS[provider].name} is not logged in.` })}\n`);
-    return;
-  }
-
-  const author = AUTHORS[provider];
-  let tree: Worktree;
-  let merged: string[];
-  try {
-    [tree, merged] = await serialized(dir.path, async () => {
-      const repo = await ensureRepo(dir.path);
-      const opened = await openWorktree(repo, worktrees, taskId, name, body.branch);
-      return [opened, await prepareRun(opened, body.upstream ?? [], author)] as const;
-    });
-  } catch (error) {
-    res.end(`${JSON.stringify({ kind: "error", error: message(error) })}\n`);
-    return;
-  }
-
-  const command = agentCommand(provider, prompt, body.resumeId ?? null);
-  const child = spawn(command.cmd, command.args, {
-    cwd: tree.folder,
-    env: agentEnv(provider, process.env),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  child.stdin?.end();
-  const run: ActiveRun = { child, stopped: false };
-  runs.set(taskId, run);
-  write({ kind: "started", branch: tree.branch, folder: tree.folder, target: tree.target });
-  if (merged.length) write({ kind: "activity", text: `Merged ${merged.join(", ")} into ${tree.branch}` });
-
-  let buffer = "";
-  let lastActivity = "";
-  let summary = "";
-  const consume = (chunk: Buffer) => {
-    buffer += chunk.toString("utf8");
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const parsed = parseAgentLine(line);
-      if (!parsed) continue;
-      if (parsed.chatId) write({ kind: "chat", id: parsed.chatId });
-      if (parsed.activity && parsed.activity !== lastActivity) {
-        lastActivity = parsed.activity;
-        write({ kind: "activity", text: parsed.activity });
-      }
-      if (parsed.done) {
-        summary = parsed.summary && parsed.summary !== "Codex finished" ? parsed.summary : lastActivity || parsed.summary || "";
-        write({ kind: "result", ok: parsed.ok !== false, summary });
-      }
-    }
-  };
-  child.stdout?.on("data", consume);
-  let stderrTail = "";
-  child.stderr?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf8").replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").trim();
-    if (!text || /Reading additional input from stdin/.test(text)) return;
-    stderrTail = `${stderrTail}\n${text}`.slice(-2000);
-    const notice = withoutLogLines(text);
-    if (notice) write({ kind: "activity", text: notice.slice(0, 240) });
-  });
-  child.on("error", (error) => {
-    write({ kind: "error", error: error.message });
-  });
-  child.on("close", async (code) => {
-    if (runs.get(taskId) === run) runs.delete(taskId);
-    if (buffer.trim()) consume(Buffer.from("\n"));
-    // A stopped run's changes stay uncommitted; the next run commits them before it starts.
-    if (run.stopped) {
-      res.end();
+export function apiHandler(context: Context) {
+  let counter = 0;
+  const stamp = () => `${Date.now().toString(36)}${(counter++).toString(36)}`;
+  return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    const url = new URL(req.url ?? "/", "http://shepherd.local");
+    if (!url.pathname.startsWith("/api/")) {
+      next();
       return;
     }
-    const error = code === 0 ? undefined : exitError(stderrTail);
+    // A JSON content type makes another site's request need a CORS preflight, which this server never grants.
+    if (req.method === "POST" && !/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+      sendJson(res, 415, { error: "Send JSON with content-type: application/json." });
+      return;
+    }
     try {
-      const diff = await serialized(dir.path, async () => {
-        await commitAll(tree.folder, [(body.name?.trim() || name).slice(0, 72), summary.slice(0, 2000)], author);
-        return changes(tree.folder, tree.branch);
-      });
-      const files = diff.files.length
-        ? `${diff.files.length} ${diff.files.length === 1 ? "file" : "files"} changed on ${tree.branch}`
-        : "No files changed";
-      write({ kind: "exit", code: code ?? 1, files, changed: diff.files, opened: diff.diffs, head: diff.head, error });
-    } catch (commitError) {
-      write({ kind: "error", error: `Could not commit the run: ${message(commitError)}` });
-      write({ kind: "exit", code: code ?? 1 });
+      if (!(await route(context, url, req, res, stamp))) next();
+    } catch (error) {
+      if (!res.headersSent) {
+        sendJson(res, error instanceof BadRequest ? 400 : 500, { error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    res.end();
-  });
+  };
 }
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function projectFolder(body: { workspace?: string; directory?: string }, sandbox: string): { path: string } | { error: string } {
-  if (!body.directory?.trim()) return { error: "This project has no folder." };
-  const workspace = resolveWorkspace(body.workspace, sandbox);
-  if ("error" in workspace) return workspace;
-  const dir = inside(workspace.path, body.directory);
-  return dir ? { path: dir } : { error: "The project folder must stay inside the workspace." };
-}
-
-/** A task with a branch is checked in its worktree; anything else is checked in the project folder. */
-function checkFolder(
-  body: { workspace?: string; directory?: string; branch?: string },
-  sandbox: string,
-  worktrees: string,
-): { path: string } | { error: string } {
-  const dir = projectFolder(body, sandbox);
-  if ("error" in dir || !body.branch) {
-    if (!("error" in dir)) mkdirSync(dir.path, { recursive: true });
-    return dir;
+async function route(
+  { engine, runner, sandbox, evidence }: Context,
+  url: URL,
+  req: IncomingMessage,
+  res: ServerResponse,
+  stamp: () => string,
+): Promise<boolean> {
+  const { pathname } = url;
+  const method = req.method ?? "GET";
+  if (pathname === "/api/state" && method === "GET") {
+    sendJson(res, 200, { ...envelope(engine.get()), revision: engine.version() });
+    return true;
   }
-  if (!isTaskBranch(body.branch)) return { error: `Not a Shepherd branch: ${body.branch}` };
-  let folder: string;
-  try {
-    folder = worktreeFolder(worktrees, realpathSync(dir.path), body.branch);
-  } catch {
-    return { error: `The project folder ${dir.path} does not exist.` };
+  if (pathname === "/api/state" && method === "DELETE") {
+    runner.cancelAll();
+    engine.dispatch({ type: "reset" });
+    sendJson(res, 200, { ok: true, revision: engine.version() });
+    return true;
   }
-  return existsSync(folder) ? { path: folder } : { error: `The worktree for ${body.branch} is missing. Run the task again to recreate it.` };
-}
-
-const CHECK_OUTPUT_LIMIT = 64_000;
-
-export function runCheckCommand(
-  dir: string,
-  command: string,
-  timeoutMs = 300_000,
-): Promise<{ exitCode: number | null; output: string; durationMs: number; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    let output = "";
-    let timedOut = false;
-    const child = spawn("/bin/sh", ["-c", command], { cwd: dir, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
-    const append = (chunk: Buffer) => {
-      output = (output + chunk.toString("utf8")).slice(-CHECK_OUTPUT_LIMIT);
-    };
-    child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000).unref();
-    }, timeoutMs);
-    const done = (exitCode: number | null, extra = "") => {
-      clearTimeout(timer);
-      resolve({ exitCode: timedOut ? null : exitCode, output: output + extra, durationMs: Date.now() - started, timedOut });
-    };
-    child.on("error", (error) => done(null, `\n${error.message}`));
-    child.on("close", (code) => done(code));
-  });
-}
-
-/** Timestamped tracing output from the CLI itself, such as Codex failing to reach one of its MCP servers. */
-const LOG_LINE = /^\d{4}-\d{2}-\d{2}T\S+\s+(TRACE|DEBUG|INFO|WARN|ERROR)\b/;
-
-export function withoutLogLines(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !LOG_LINE.test(line))
-    .join("\n");
-}
-
-export function exitError(stderr: string): string | undefined {
-  const lines = stderr.split("\n").map((line) => line.trim()).filter(Boolean);
-  const own = lines.filter((line) => !LOG_LINE.test(line));
-  const line = own.find((item) => /^error\b/i.test(item)) ?? own.at(-1) ?? lines.at(-1);
-  return line?.slice(0, 240);
-}
-
-export function inside(base: string, relative: string | undefined): string | null {
-  const trimmed = relative?.trim() ?? "";
-  if (!trimmed) return base;
-  if (path.isAbsolute(trimmed)) return null;
-  const resolved = path.resolve(base, trimmed);
-  return resolved === base || resolved.startsWith(base + path.sep) ? resolved : null;
-}
-
-function resolveWorkspace(requested: string | undefined, sandbox: string): { path: string } | { error: string } {
-  const raw = requested?.trim() || sandbox;
-  const resolved = path.resolve(raw);
-  try {
-    if (!statSync(resolved).isDirectory()) return { error: `${resolved} is not a directory.` };
-  } catch {
-    return { error: `Workspace does not exist: ${resolved}` };
+  if (pathname === "/api/stream" && method === "GET") {
+    stream(engine, req, res);
+    return true;
   }
-  return { path: resolved };
-}
-
-export function agentCommand(provider: AgentCli, prompt: string, resumeId: string | null): { cmd: string; args: string[] } {
-  if (provider === "codex") {
-    // Without network the sandbox cannot install packages; agents install, build and test like a developer would.
-    const shared = ["-m", CODEX_MODEL, "--json", "--skip-git-repo-check", "-c", "sandbox_workspace_write.network_access=true"];
-    if (resumeId) {
-      // `codex exec resume` has no --sandbox flag; the config override is equivalent.
-      return {
-        cmd: "codex",
-        args: ["exec", "resume", resumeId, ...shared, "-c", 'sandbox_mode="workspace-write"', prompt],
-      };
+  if (pathname === "/api/actions" && method === "POST") {
+    const body = (await readJson(req)) as { action?: unknown; actions?: unknown };
+    const list = Array.isArray(body.actions) ? body.actions : [body.action];
+    const errors: string[] = [];
+    for (const raw of list) {
+      const action = tabAction(engine.get(), raw);
+      if ("error" in action) {
+        errors.push(action.error);
+        continue;
+      }
+      if (action.type === "deleteTask") runner.cancel(action.id);
+      if (action.type === "reset") runner.cancelAll();
+      engine.dispatch(action);
     }
-    return { cmd: "codex", args: ["exec", ...shared, "--sandbox", "workspace-write", prompt] };
+    sendJson(res, errors.length ? 400 : 200, { revision: engine.version(), ...(errors.length ? { error: errors.join(" ") } : { ok: true }) });
+    return true;
   }
-  const args = ["-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "acceptEdits"];
-  if (resumeId) args.push("--resume", resumeId);
-  args.push(prompt);
-  return { cmd: "claude", args };
+  if (pathname === "/api/commands" && method === "POST") {
+    const result = await runner.handle(await readJson(req));
+    sendJson(res, "error" in result ? 409 : 200, { ...result, revision: engine.version() });
+    return true;
+  }
+  if (pathname === "/api/tasks" && method === "GET") {
+    sendJson(res, 200, boardSummary(engine.get()));
+    return true;
+  }
+  if (pathname === "/api/tasks" && method === "POST") {
+    const id = stamp();
+    const planned = planTasks(engine.get(), await readJson(req), (index) => `task-api-${id}-${index + 1}`);
+    if ("error" in planned) {
+      sendJson(res, 400, planned);
+      return true;
+    }
+    planned.actions.forEach((action: Action) => engine.dispatch(action));
+    sendJson(res, 201, { project: planned.projectId, tasks: planned.tasks, note: "Added to the board." });
+    return true;
+  }
+  if (pathname === "/api/projects" && method === "POST") {
+    const planned = planProject(engine.get(), await readJson(req), `proj-api-${stamp()}`);
+    if ("error" in planned) {
+      sendJson(res, 400, planned);
+      return true;
+    }
+    engine.dispatch(planned.action);
+    sendJson(res, 201, { project: planned.project, note: "Added to the board." });
+    return true;
+  }
+  if (pathname === "/api/agents" && method === "GET") {
+    const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
+    sendJson(res, 200, { ...status, git, workspace: sandbox });
+    return true;
+  }
+  const file = /^\/api\/evidence\/([\w.-]+)\/(.+)$/.exec(pathname);
+  if (file && method === "GET") {
+    serveEvidence(evidence, file[1]!, decodeURIComponent(file[2]!), res);
+    return true;
+  }
+  return false;
 }
 
-/** Codex's sandbox can only write to the worktree and the temp folder, so npm's cache moves to the temp folder. */
-export function agentEnv(provider: AgentCli, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  if (provider !== "codex") return env;
-  const next = Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== "npm_config_cache"));
-  return { ...next, npm_config_cache: path.join(tmpdir(), "shepherd-npm-cache") };
-}
-
-function agentStatus(): Promise<{ claude: boolean; codex: boolean }> {
-  return Promise.all([
-    commandSucceeds("claude", ["auth", "status"], (text) => /"loggedIn"\s*:\s*true/.test(text)),
-    commandSucceeds("codex", ["login", "status"], (text) => /Logged in/.test(text)),
-  ]).then(([claude, codex]) => ({ claude, codex }));
-}
-
-function commandSucceeds(cmd: string, args: string[], accept: (text: string) => boolean): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn(cmd, args, { env: process.env });
-    let output = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      resolve(false);
-    }, 8000);
-    child.stdout?.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-    });
-    child.stderr?.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf8");
-    });
-    child.on("error", () => {
-      clearTimeout(timer);
-      resolve(false);
-    });
-    child.on("close", () => {
-      clearTimeout(timer);
-      resolve(accept(output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "")));
-    });
+/** Sends the whole board now and again after changes, at most every STREAM_THROTTLE_MS. */
+function stream(engine: Engine, req: IncomingMessage, res: ServerResponse) {
+  res.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+  });
+  let sent = -1;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const send = () => {
+    timer = null;
+    const revision = engine.version();
+    if (revision === sent) return;
+    sent = revision;
+    res.write(`data: ${JSON.stringify({ revision, state: engine.get() })}\n\n`);
+  };
+  send();
+  const unsubscribe = engine.subscribe(() => {
+    timer ??= setTimeout(send, STREAM_THROTTLE_MS);
+  });
+  const ping = setInterval(() => res.write(": ping\n\n"), 20_000);
+  req.on("close", () => {
+    unsubscribe();
+    clearInterval(ping);
+    if (timer) clearTimeout(timer);
   });
 }
 
-function savedBoard(file: string): { state: OrchestrationState } | { error: string } {
-  if (!existsSync(file)) return { state: workspace() };
-  const body = readSharedState(file) as { state?: { state?: unknown } } | null;
-  const state = loadState(body?.state?.state);
-  return state ? { state } : { error: `Shepherd cannot read the saved board in ${file}, so it will not add tasks to it.` };
-}
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".json": "application/json; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".zip": "application/zip",
+};
 
-function readSharedState(file: string): unknown {
+function serveEvidence(root: string, taskId: string, relative: string, res: ServerResponse) {
+  const base = path.join(root, taskId);
+  let file = inside(base, relative);
   try {
-    return sanitizeSharedState(JSON.parse(readFileSync(file, "utf8")));
+    if (file && statSync(file).isDirectory()) file = path.join(file, "index.html");
+    if (!file || !statSync(file).isFile() || !realpathSync(file).startsWith(realpathSync(base) + path.sep)) throw new Error();
   } catch {
-    return { state: null, version: 2 };
-  }
-}
-
-function writeSharedState(file: string, body: unknown) {
-  const clean = sanitizeSharedState(body);
-  mkdirSync(path.dirname(file), { recursive: true });
-  backupSharedState(file, clean);
-  writeFileSync(file, JSON.stringify(clean));
-}
-
-const BACKUP_LIMIT = 30;
-let lastBackupAt = 0;
-
-function taskCount(body: unknown): number {
-  const tasks = (body as { state?: { state?: { tasks?: unknown } } } | null)?.state?.state?.tasks;
-  return Array.isArray(tasks) ? tasks.length : 0;
-}
-
-function backupSharedState(file: string, next: unknown) {
-  let previous: unknown;
-  try {
-    previous = JSON.parse(readFileSync(file, "utf8"));
-  } catch {
+    sendJson(res, 404, { error: "No such evidence file. A newer check may have replaced it." });
     return;
   }
-  const shrinking = taskCount(next) < taskCount(previous);
-  if (!shrinking && Date.now() - lastBackupAt < 60_000) return;
-  lastBackupAt = Date.now();
-  const dir = path.join(path.dirname(file), "backups");
-  mkdirSync(dir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  writeFileSync(path.join(dir, `state-${stamp}.json`), JSON.stringify(previous));
-  const stale = readdirSync(dir)
-    .filter((name) => name.startsWith("state-"))
-    .sort()
-    .slice(0, -BACKUP_LIMIT);
-  for (const name of stale) rmSync(path.join(dir, name));
+  res.writeHead(200, {
+    "content-type": TYPES[path.extname(file).toLowerCase()] ?? "text/plain; charset=utf-8",
+    "cache-control": "no-store",
+    // Reports are written by the code under test, so their pages run without access to Shepherd's origin.
+    "content-security-policy": "sandbox allow-scripts allow-popups",
+    "x-content-type-options": "nosniff",
+  });
+  createReadStream(file).pipe(res);
 }
 
-function sanitizeSharedState(body: unknown): unknown {
-  const record = body as { state?: { state?: unknown }; version?: number } | null;
-  const saved = record?.state?.state;
-  if (isDemoState(saved)) {
-    return { state: { state: workspace() }, version: 2 };
-  }
-  return body;
-}
-
-function sendJson(res: import("node:http").ServerResponse, status: number, body: unknown) {
+function sendJson(res: ServerResponse, status: number, body: unknown) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 }
 
-function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
+function readJson(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -512,8 +237,8 @@ function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
       }
       try {
         resolve(JSON.parse(raw));
-      } catch (error) {
-        reject(error);
+      } catch {
+        reject(new BadRequest("The request body is not valid JSON."));
       }
     });
     req.on("error", reject);
