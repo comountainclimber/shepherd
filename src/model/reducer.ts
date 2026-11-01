@@ -106,9 +106,12 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return state.workspace ? { ...workspace(state.now), workspace: state.workspace } : workspace(state.now);
     case "dismissNotification":
       return { ...state, notifications: state.notifications.filter((item) => item.id !== action.id) };
-    case "readNotifications":
-      if (state.notifications.every((item) => item.read)) return state;
-      return { ...state, notifications: state.notifications.map((item) => (item.read ? item : { ...item, read: true })) };
+    case "readNotifications": {
+      const ids = action.goalId === undefined ? null : new Set(state.tasks.filter((task) => task.goalId === action.goalId).map((task) => task.id));
+      const matches = (item: OrchestrationState["notifications"][number]) => !item.read && (!ids || !!item.taskId && ids.has(item.taskId));
+      if (!state.notifications.some(matches)) return state;
+      return { ...state, notifications: state.notifications.map((item) => matches(item) ? { ...item, read: true } : item) };
+    }
     case "moveTask": {
       const current = state.tasks.find((task) => task.id === action.id);
       if (!current || (current.position.x === action.position.x && current.position.y === action.position.y)) return state;

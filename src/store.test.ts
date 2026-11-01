@@ -44,3 +44,9 @@ describe("task selection", () => {
     disconnect();
   });
 });
+
+it("clears task-specific filters, agent selection and draft text when switching tasks", () => {
+  useShepherd.setState({ state: board(), ui: { ...initialUi, selectedAgentId: "agent-codex", draftToken: 3, draftSeed: "Old task goal", filters: { ...initialUi.filters, search: "Old step", savedView: "needs-me" } } });
+  useShepherd.getState().setGoal("second");
+  expect(useShepherd.getState().ui).toMatchObject({ selectedAgentId: null, filters: initialUi.filters, draftToken: 0, draftSeed: "" });
+});

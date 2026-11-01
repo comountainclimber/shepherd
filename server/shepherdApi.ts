@@ -12,6 +12,7 @@ import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
+import { openTaskFolder } from "./openTaskFolder";
 import { availableRepo } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
@@ -181,6 +182,13 @@ async function route(
     }
     planned.actions.forEach((action: Action) => engine.dispatch(action));
     sendJson(res, 201, { project: planned.projectId, goal: planned.goalId, tasks: planned.tasks, note: "Added to the board." });
+    return true;
+  }
+  const openFolder = /^\/api\/goals\/([\w.-]+)\/open$/.exec(pathname);
+  if (openFolder && method === "POST") {
+    const body = (await readJson(req)) as { app?: unknown } | null;
+    const result = await openTaskFolder(engine.get(), openFolder[1]!, body?.app);
+    sendJson(res, "error" in result ? 409 : 200, result);
     return true;
   }
   if (pathname === "/api/goals" && method === "GET") {

@@ -160,3 +160,21 @@ export function evidenceUrl(taskId: string, file: string): string {
 export function lookUrl(taskId: string, file: string): string {
   return `/api/looks/${encodeURIComponent(taskId)}/${encodeURIComponent(file)}`;
 }
+
+/** Opens the saved task folder on the Mac running Shepherd. */
+export async function openTaskFolder(goalId: string, app: "cursor" | "finder"): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/goals/${encodeURIComponent(goalId)}/open`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app }),
+    });
+    const body = await response.json() as { error?: string };
+    if (response.ok) return null;
+    const error = body.error ?? "Could not open the task folder.";
+    useShepherd.getState().setProblem(error);
+    return error;
+  } catch {
+    const error = "Could not reach the Shepherd server.";
+    useShepherd.getState().setProblem(error);
+    return error;
+  }
+}

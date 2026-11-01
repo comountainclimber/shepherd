@@ -275,6 +275,7 @@ export interface UiState {
   filters: Filters;
   paletteOpen: boolean;
   newProjectOpen: boolean;
+  newTaskProjectId: string | null;
   contextMenu: { x: number; y: number; taskId: string } | null;
   fitToken: number;
   /** Bumped to put the cursor in the outline's goal box. */
@@ -350,7 +351,7 @@ export type Action =
   | { type: "deleteTask"; id: string }
   | { type: "reset" }
   | { type: "dismissNotification"; id: string }
-  | { type: "readNotifications" };
+  | { type: "readNotifications"; goalId?: string };
 
 export const STATUSES: TaskStatus[] = ["queued", "running", "completed", "blocked", "failed"];
 

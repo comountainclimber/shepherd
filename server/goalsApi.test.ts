@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync }
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as folders from "./openTaskFolder";
 import * as drafting from "./draft";
 import { createEngine, type Engine } from "./engine";
 import { createLooks } from "./looks";
@@ -45,6 +46,15 @@ async function close(http: Server, runner: Runner, engine: Engine) {
 }
 
 describe("goal API", () => {
+  it("opens the chosen task folder through the goal endpoint and reports refused launches", async () => {
+    const { request, engine } = await server();
+    const launch = vi.spyOn(folders, "openTaskFolder").mockResolvedValue({ ok: true });
+    expect(await request("goals/goal-proj-local/open", { app: "cursor" })).toMatchObject({ status: 200, body: { ok: true } });
+    expect(launch).toHaveBeenCalledWith(engine.get(), "goal-proj-local", "cursor");
+    launch.mockResolvedValue({ error: "The task folder is missing." });
+    expect(await request("goals/goal-proj-local/open", { app: "finder" })).toMatchObject({ status: 409, body: { error: "The task folder is missing." } });
+  });
+
   it("checks supplied repositories, rejects aliases already in use, and rechecks drafts and checklists", async () => {
     const { request, engine, root, sandbox } = await server();
     const repo = path.join(root, "my repo");

@@ -9,6 +9,10 @@ import { needsAbove } from "../saved/SavedPicker";
 import { useSavedSteps } from "../saved/useSavedSteps";
 
 export function CommandPalette() {
+  const state = useShepherd((store) => store.state);
+  const projectId = useShepherd((store) => store.ui.projectId);
+  const setGoal = useShepherd((store) => store.setGoal);
+  const setNewTaskProject = useShepherd((store) => store.setNewTaskProject);
   const open = useShepherd((store) => store.ui.paletteOpen);
   const goalId = useShepherd((store) => store.ui.goalId);
   const running = useShepherd((store) => !!store.state.goals.find((project) => project.id === goalId)?.running);
@@ -44,6 +48,7 @@ export function CommandPalette() {
       .filter((entry) => !needsAbove(entry, place, !hasSteps))
       .map((entry) => ({ id: `saved-${entry.id}`, label: `Add saved step: ${entry.name}`, run: () => void addSaved(entry, placeFor(goalId, target)) }));
     return [
+      { id: "new-task", label: "New task", run: () => setNewTaskProject(projectId) },
       { id: "add", label: "Add a step", hint: "N", run: () => appendStep(goalId) },
       { id: "draft", label: "Draft steps from a goal", run: () => requestDraft() },
       running
@@ -59,10 +64,15 @@ export function CommandPalette() {
       { id: "fit", label: "Fit the map to the screen", hint: "F", run: () => requestFit() },
       ...(selectedTaskId && selectedName ? [{ id: "save", label: "Save this step for reuse", run: () => setSaveFor(selectedTaskId) }] : []),
       { id: "manage", label: "Manage saved steps", run: () => setManageSaved(true) },
+      ...state.goals.map((goal) => ({
+        id: `goal-${goal.id}`,
+        label: `Switch task: ${goal.name} · ${state.projects.find((project) => project.id === goal.projectId)?.name ?? ""}${goal.status === "open" ? "" : ` · ${goal.status}`}`,
+        run: () => setGoal(goal.id),
+      })),
       ...addSavedCommands,
       { id: "reset", label: "Clear the whole board", run: clearWorkspace },
     ];
-  }, [hasSteps, goalId, requestDraft, requestFit, running, saved, selectedName, selectedTaskId, setFilters, setManageSaved, setNewProjectOpen, setSaveFor, setView]);
+  }, [state.goals, state.projects, projectId, setGoal, setNewTaskProject, hasSteps, goalId, requestDraft, requestFit, running, saved, selectedName, selectedTaskId, setFilters, setManageSaved, setNewProjectOpen, setSaveFor, setView]);
 
   const filtered = commands.filter((command) => command.label.toLowerCase().includes(query.trim().toLowerCase()));
   const draftRow = query.trim() && filtered.length === 0;
@@ -107,7 +117,7 @@ export function CommandPalette() {
                 runActive();
               }
             }}
-            placeholder="A command, or a goal to break into steps"
+            placeholder="Search tasks and commands"
             className="h-12 w-full bg-transparent text-[15px] outline-none placeholder:text-faint"
           />
         </div>

@@ -68,7 +68,7 @@ export function useTaskToasts() {
         for (const project of goals) {
           if (!complete.get(project.id) || finished.get(project.id) !== false) continue;
           const last = tasks.filter((task) => task.goalId === project.id).at(-1);
-          if (last) push({ tone: "verified", title: `Every step in ${project.name} is done`, detail: "Merge the result from the bottom of the step list.", taskId: last.id });
+          if (last) push({ tone: "verified", title: `Every step in ${project.name} is done`, detail: "Merge the result from Task actions in the header.", taskId: last.id });
         }
       }
       seen = now;

@@ -38,6 +38,7 @@ export const initialUi: UiState = {
   filters: initialFilters,
   paletteOpen: false,
   newProjectOpen: false,
+  newTaskProjectId: null,
   contextMenu: null,
   fitToken: 0,
   draftToken: 0,
@@ -77,6 +78,7 @@ interface ShepherdStore {
   setFilters: (patch: Partial<Filters>) => void;
   setPaletteOpen: (open: boolean) => void;
   setNewProjectOpen: (open: boolean) => void;
+  setNewTaskProject: (projectId: string | null) => void;
   setContextMenu: (menu: UiState["contextMenu"]) => void;
   requestFit: () => void;
   /** Puts the cursor in the outline's goal box, with a goal in it if given. */
@@ -159,7 +161,12 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
           selectedEdgeId: null,
           contextMenu: null,
           addSaved: null,
-          filters: { ...store.ui.filters, agentId: "all", search: "" },
+          filters: initialFilters,
+          selectedAgentId: null,
+          inspectorOpen: false,
+          draftSeed: "",
+          draftToken: 0,
+          fitToken: store.ui.fitToken + 1,
         },
       };
     }),
@@ -167,7 +174,7 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
     const goal = store.state.goals.find((goal) => goal.id === goalId);
     if (!goal) return store;
     return { ui: { ...store.ui, projectId: goal.projectId, goalId, selectedTaskId: null,
-      selectedEdgeId: null, contextMenu: null, addSaved: null, inspectorOpen: false, fitToken: store.ui.fitToken + 1 } };
+      selectedEdgeId: null, selectedAgentId: null, contextMenu: null, addSaved: null, saveFor: null, filters: initialFilters, inspectorOpen: false, draftSeed: "", draftToken: 0, fitToken: store.ui.fitToken + 1 } };
   }),
   selectTask: (id) =>
     set((store) => ({
@@ -196,6 +203,7 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
   setInspectorOpen: (open) => set((store) => ({ ui: { ...store.ui, inspectorOpen: open } })),
   setFilters: (patch) => set((store) => ({ ui: { ...store.ui, filters: { ...store.ui.filters, ...patch } } })),
   setPaletteOpen: (open) => set((store) => ({ ui: { ...store.ui, paletteOpen: open } })),
+  setNewTaskProject: (newTaskProjectId) => set((store) => ({ ui: { ...store.ui, newTaskProjectId, paletteOpen: false, contextMenu: null } })),
   setNewProjectOpen: (open) => set((store) => ({ ui: { ...store.ui, newProjectOpen: open, paletteOpen: false } })),
   setContextMenu: (menu) => set((store) => ({ ui: { ...store.ui, contextMenu: menu } })),
   requestFit: () => set((store) => ({ ui: { ...store.ui, fitToken: store.ui.fitToken + 1, view: "canvas" } })),

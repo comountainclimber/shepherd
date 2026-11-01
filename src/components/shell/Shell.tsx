@@ -3,6 +3,8 @@ import { connectToServer, useShepherd } from "../../store";
 import { AgentActivity } from "../agents/AgentActivity";
 import { OrchestrationCanvas } from "../canvas/OrchestrationCanvas";
 import { CommandPalette } from "../delegation/CommandPalette";
+import { NewTaskDialog } from "../delegation/NewTaskDialog";
+import { TaskHeader } from "../outline/TaskHeader";
 import { NewProjectDialog } from "../delegation/NewProjectDialog";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { Outline } from "../outline/Outline";
@@ -42,12 +44,13 @@ export function Shell() {
         if (store.ui.paletteOpen) store.setPaletteOpen(false);
         else if (store.ui.saveFor || store.ui.manageSaved) return;
         else if (store.ui.addSaved) store.setAddSaved(null);
+        else if (store.ui.newTaskProjectId) store.setNewTaskProject(null);
         else if (store.ui.newProjectOpen) store.setNewProjectOpen(false);
         else if (store.ui.contextMenu) store.setContextMenu(null);
         else if (store.ui.inspectorOpen && !typing) store.setInspectorOpen(false);
         return;
       }
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (typing || store.ui.newTaskProjectId || store.ui.newProjectOpen || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "1") store.setView("canvas");
       else if (event.key === "2") store.setView("agents");
       else if (event.key === "f") store.requestFit();
@@ -62,6 +65,7 @@ export function Shell() {
     <div className="flex h-screen flex-col overflow-hidden bg-bg text-text">
       <Hud />
       <ServerNotice />
+      {loaded ? <TaskHeader key={goalId} /> : null}
       <div className="relative flex min-h-0 flex-1">
         {loaded ? <div className={view === "agents" ? "hidden sm:contents" : "contents"}><Outline key={goalId} /></div> : null}
         <div className={`${showInspector ? "absolute inset-0 z-10 sm:relative sm:inset-auto" : !loaded || view === "agents" ? "relative" : "hidden sm:block"} min-w-0 flex-1`}>
@@ -72,6 +76,7 @@ export function Shell() {
       <Toasts />
       <CommandPalette />
       <NewProjectDialog />
+      <NewTaskDialog />
       <SaveDialog />
       <ManageDialog />
     </div>

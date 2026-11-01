@@ -118,6 +118,9 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
       return { error: "A project needs an id, name, summary and a repository path or workspace folder." };
     }
   }
+  if (action.type === "readNotifications" && action.goalId !== undefined && (typeof action.goalId !== "string" || !state.goals.some((goal) => goal.id === action.goalId))) {
+    return { error: "Choose a task whose activity to read." };
+  }
   if (action.type === "updateTask") {
     const blocked = Object.keys(action.patch ?? {}).filter((key) => !EDITABLE.has(key));
     if (blocked.length) return { error: `A tab cannot change ${blocked.join(", ")} directly.` };

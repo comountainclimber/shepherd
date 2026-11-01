@@ -1,5 +1,4 @@
-import { TaskPicker } from "./TaskPicker";
-import { BookmarkPlus, ChevronRight, GitMerge, GripVertical, LoaderCircle, Play, Plus, Sparkles, Square, Waypoints } from "lucide-react";
+import { BookmarkPlus, ChevronRight, GripVertical, LoaderCircle, Play, Plus, Sparkles, Square, Waypoints } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
 import { cx } from "../../model/format";
@@ -8,7 +7,7 @@ import { indent, moveBlock, moveDown, moveUp, outdent, outlineOf, parseList, sub
 import { STAGE_LABEL, STEP_LABEL, assigneeFor, needsYou, nextStep, openIssues, progress, stageHint, stageOf } from "../../model/stage";
 import type { Effort, OutlineItem, Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
-import { draftSteps, mergePlan, runPlan, stopPlan } from "../../runner/live";
+import { draftSteps, runPlan, stopPlan } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { ModelPicker } from "../inspector/ModelPicker";
 import { placeFor } from "../saved/addSaved";
@@ -80,7 +79,7 @@ export function Outline() {
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "n" || event.metaKey || event.ctrlKey || event.altKey || editable(event.target)) return;
       const { ui } = useShepherd.getState();
-      if (ui.paletteOpen || ui.newProjectOpen) return;
+      if (ui.paletteOpen || ui.newProjectOpen || ui.newTaskProjectId) return;
       event.preventDefault();
       appendStep(ui.goalId);
     };
@@ -94,7 +93,7 @@ export function Outline() {
     if (task && !task.name && !editable(document.activeElement)) setPendingFocus({ id: task.id, at: "start" });
   }, [selectedTaskId]);
 
-  if (!project) return <aside className="w-full sm:w-[340px] shrink-0 border-r border-line bg-surface"><TaskPicker /></aside>;
+  if (!project) return <aside className="w-full sm:w-[340px] shrink-0 border-r border-line bg-surface p-4 text-[13px] text-muted">Choose or create a task from the project switcher.</aside>;
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>, index: number) => {
     const item = items[index]!;
@@ -162,7 +161,6 @@ export function Outline() {
   const pickerUnder = addSaved ? (addSaved.replace ?? (addSaved.after !== items.at(-1)?.id ? addSaved.after : null)) : null;
   return (
     <aside className="flex w-full sm:w-[340px] shrink-0 flex-col border-r border-line bg-surface">
-      <TaskPicker />
       <div className="flex items-baseline justify-between px-4 pb-1 pt-3.5">
         <h2 className="text-[13px] font-semibold text-text">Steps</h2>
         {items.length ? <span className="text-[11px] text-faint">Enter adds · Tab runs side by side</span> : null}
@@ -553,7 +551,7 @@ function Draft({ goalId, big }: { goalId: string; big: boolean }) {
             <Button disabled variant={big ? "primary" : "ghost"}>
               <LoaderCircle size={14} className="animate-spin" /> Drafting… {Math.max(0, Math.round((now - started) / 1000))}s
             </Button>
-            <Button variant="quiet" onClick={() => abort.current?.abort()}>
+            <Button variant="quiet" onClick={() => { abort.current?.abort(); abort.current = null; setStarted(null); }}>
               Cancel
             </Button>
           </>
@@ -588,7 +586,6 @@ function PlanBar({ goalId }: { goalId: string }) {
   const working = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, allTasks, deps)).length;
   const failed = tasks.filter((task) => task.status === "failed").length;
-  const target = project?.base ?? "the base branch";
   const started = tasks.some((task) => task.status !== "queued" || task.git);
   const running = !!project?.running;
   const issues = tasks.reduce((count, task) => count + openIssues(task, allTasks).length, 0);
@@ -623,25 +620,13 @@ function PlanBar({ goalId }: { goalId: string }) {
           {score.done}/{score.total}
         </span>
       </div>
-      {project?.branch ? <p className="break-all text-[12px] text-muted">Task branch: <span className="font-mono">{project.branch}</span></p> : null}
-      {project?.folder ? <p className="break-all font-mono text-[11px] text-faint">{project.folder}</p> : null}
-      {project?.blocker ? <p role="status" className="text-[12px] leading-5 text-approval [overflow-wrap:anywhere]">{project.blocker}</p> : null}
       <ProgressBar percent={score.percent} tone={cx(score.complete ? "bg-completed" : "bg-running", running && "stripes")} />
       {project?.status !== "open" && !score.complete ? <p className="text-center text-[12px] text-muted">Reopen this task to run its steps.</p> : running ? (
         <Button size="lg" className="w-full" disabled={busy} onClick={() => void act(() => stopPlan(goalId))}>
           <Square size={13} /> Stop
         </Button>
       ) : score.complete ? (
-        project?.branch ? (
-          <>
-            <Button size="lg" variant="primary" className="w-full" disabled={busy || !!project?.blocker} onClick={() => void act(() => mergePlan(goalId))}>
-              <GitMerge size={15} /> {busy ? "Merging…" : `Merge this task into ${target}`}
-            </Button>
-            {project.merged ? <p className="break-all text-center text-[12px] text-faint">Last merged into {project.merged.into} as {project.merged.sha}.</p> : null}
-          </>
-        ) : (
-          <p className="text-center text-[12px] text-faint">Nothing to merge.</p>
-        )
+        <p className="text-center text-[12px] text-faint">Merge the task from its header when you are ready.</p>
       ) : (
         <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => runPlan(goalId))}>
           <Play size={15} /> {started ? "Run the rest" : "Run"}

@@ -482,3 +482,16 @@ describe("screenshots", () => {
     expect(looks[0]!.file).toBe("3.png");
   });
 });
+
+it("reading one task's activity leaves other task notifications unread", () => {
+  const state = workspace(NOW);
+  state.tasks = [make("one"), make("two", { goalId: "other" })];
+  state.notifications = [
+    { id: "one", at: NOW, message: "One", tone: "info", taskId: "one", read: false },
+    { id: "two", at: NOW, message: "Two", tone: "info", taskId: "two", read: false },
+  ];
+  const next = reducer(state, { type: "readNotifications", goalId: "goal-proj-local" });
+  expect(next.notifications.map((item) => item.read)).toEqual([true, false]);
+  expect(reducer(next, { type: "readNotifications", goalId: "goal-proj-local" })).toBe(next);
+  expect(reducer(next, { type: "readNotifications" }).notifications.every((item) => item.read)).toBe(true);
+});
