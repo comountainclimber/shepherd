@@ -7,13 +7,14 @@ import { isFullyVerified } from "../../model/verify";
 import { evidenceUrl, forwardFailure, runCheck } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Button, Card, Select } from "../ui";
+import { WorkVerdicts } from "./WorkVerdicts";
 import { useSelectedTask } from "./useSelectedTask";
 
 const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
 
 function verdict(task: Task, done: boolean): { tone: string; text: string } {
   const reviewed = task.verification.some((check) => check.kind === "review");
-  const checked = task.verification.some((check) => check.kind === "command");
+  const checked = task.verification.some((check) => check.kind !== "review");
   if (done) {
     if (reviewed && checked) return { tone: "completed", text: "Its check passed and you accepted it." };
     return { tone: "completed", text: reviewed ? "You accepted it." : "Its check passed." };
@@ -66,6 +67,8 @@ export function Verification() {
       {task.verification.map((check) =>
         check.kind === "command" ? (
           <CheckCard key={check.id} check={check} task={task} />
+        ) : check.kind === "work" ? (
+          <WorkCheckCard key={check.id} check={check} task={task} />
         ) : (
           <ReviewCard key={check.id} check={check} task={task} />
         ),
@@ -306,3 +309,14 @@ function SendFailure({ task }: { task: Task }) {
   );
 }
 
+
+function WorkCheckCard({ check, task }: { check: VerificationCheck; task: Task }) {
+  return <Card title="Work against this step" right={<StateChip check={check} />}>
+    <p className="mb-3 text-[12px] leading-5 text-muted">{check.evidence}</p>
+    {check.result ? <WorkVerdicts result={check.result} acceptance={task.acceptance} /> : null}
+    {check.timestamp ? <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-faint">
+      <span>Checked by Codex at {formatClock(check.timestamp)}</span>
+      <Button variant="quiet" size="sm" disabled={task.status === "running" || task.verification.some((item) => item.running)} onClick={() => void runCheck(task.id)}>Check again</Button>
+    </div> : null}
+  </Card>;
+}

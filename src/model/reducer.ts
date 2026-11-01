@@ -1,4 +1,5 @@
-import { blankGoal, commandCheck, reviewCheck } from "./factory";
+import { blankGoal, commandCheck, reviewCheck, workCheck } from "./factory";
+import { workCheckInput, workCheckPassed } from "./workCheck";
 import { acceptanceItems, keptMarks } from "./acceptance";
 import { EFFORT_LABEL, isEffort, isModelId } from "./models";
 import { layoutGoal, normalize, outlineOf, syncOutlines } from "./outline";
@@ -66,6 +67,9 @@ const GATE_ACTIONS = new Set<Action["type"]>([
   "outdate",
   "refreshed",
   "setReview",
+  "setWorkCheck",
+  "startWorkCheck",
+  "recordWorkCheck",
 ]);
 
 /** Actions that can change what the outline implies, so its arrows are redrawn after them. */
@@ -176,6 +180,12 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return setOutline(state, action.goalId, action.items);
     case "followOutline":
       return followOutline(state, action.id);
+    case "setWorkCheck":
+      return setWorkCheck(state, action.id, action.on);
+    case "startWorkCheck":
+      return startWorkCheck(state, action.taskId);
+    case "recordWorkCheck":
+      return recordWorkCheck(state, action);
     case "setReview":
       return setReview(state, action.id, action.on);
     case "setPlanRunning": {
@@ -479,6 +489,13 @@ function updateTask(state: OrchestrationState, id: string, patch: Partial<Task>)
   delete nextPatch.checkCommand;
   const next = { ...task, ...nextPatch };
   next.acceptanceMarks = keptMarks(next.acceptance, next.acceptanceMarks, task.acceptance);
+  if (workCheckInput(next) !== workCheckInput(task)) {
+    next.verification = next.verification.map((check) => check.kind === "work" ? { ...workCheck(id) } : check);
+    if (task.status === "failed" && task.verification.some((check) => check.kind === "work" && check.state === "failed")) {
+      next.status = "completed";
+      next.blocker = null;
+    }
+  }
   return { ...state, tasks: replaceTask(state.tasks, next) };
 }
 
@@ -516,6 +533,7 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
             ...check,
             state: "pending" as const,
             running: false,
+            result: undefined,
             timestamp: null,
             evidence: check.kind === "command" ? "Runs again when the agent finishes." : "A new run started. Review its output.",
           }))
@@ -700,7 +718,7 @@ function recordCheck(state: OrchestrationState, taskId: string, run: CheckRun): 
   let next: Task = { ...task, verification };
   const human = task.runner === "human";
   if (passed) {
-    delete next.retries;
+    if (!task.verification.some((check) => check.kind === "work")) delete next.retries;
     if (task.blocker?.startsWith("The check failed")) {
       next = { ...next, status: "completed", blocker: null, activity: human ? "Signed off by you" : "Check passed" };
     }
@@ -750,7 +768,7 @@ function reassign(state: OrchestrationState, id: string, agentId: string | null,
     next = {
       ...next,
       runner: nextRunner,
-      verification: human ? task.verification.filter((check) => check.kind !== "review") : task.verification,
+      verification: human ? task.verification.filter((check) => check.kind === "command") : task.verification,
       activity: task.status === "queued" ? (human ? "Waiting for you" : "Queued") : task.activity,
     };
     if (human) {
@@ -767,7 +785,7 @@ function instruct(state: OrchestrationState, id: string, text: string): Orchestr
   const task = state.tasks.find((item) => item.id === id);
   if (!task || !trimmed) return state;
   const log = createLog(state, state.now);
-  const next = { ...task, instructions: [...task.instructions, trimmed] };
+  const next = { ...task, instructions: [...task.instructions, trimmed], verification: task.status === "failed" ? task.verification : task.verification.map((check) => check.kind === "work" ? workCheck(id) : check) };
   log.event({ taskId: id, projectId: task.projectId, message: `Instruction sent to ${task.name}`, tone: "info" });
   return log.finish({ tasks: replaceTask(state.tasks, next) });
 }
@@ -796,7 +814,7 @@ function outdate(state: OrchestrationState, id: string, reason: string): Orchest
     return log.finish({ tasks: replaceTask(state.tasks, { ...task, status: "queued", outdated: reason, activity: `Out of date: ${reason}` }) });
   }
   if (task.status === "running") return { ...state, tasks: replaceTask(state.tasks, { ...task, outdated: reason }) };
-  const checkFailed = task.verification.some((check) => check.kind === "command" && check.state === "failed");
+  const checkFailed = task.verification.some((check) => check.kind !== "review" && check.state === "failed");
   if (task.status !== "completed" && !(task.status === "failed" && checkFailed)) return state;
   const log = createLog(state, state.now);
   log.event({ taskId: id, projectId: task.projectId, message: `${task.name} is out of date: ${reason}`, tone: "warning" });
@@ -807,8 +825,8 @@ function outdate(state: OrchestrationState, id: string, reason: string): Orchest
     blocker: null,
     activity: `Out of date: ${reason}`,
     verification: task.verification.map((check) =>
-      check.kind === "command"
-        ? { ...check, state: "pending", running: false, timestamp: null, evidence: "Upstream work changed. Shepherd checks again after bringing it in." }
+      check.kind !== "review"
+        ? { ...check, result: undefined, state: "pending", running: false, timestamp: null, evidence: "Upstream work changed. Shepherd checks again after bringing it in." }
         : check,
     ),
   };
@@ -943,4 +961,34 @@ function deleteTask(state: OrchestrationState, id: string): OrchestrationState {
 function createGoal(state: OrchestrationState, goal: Goal): OrchestrationState {
   if (!goal || !goal.id || (typeof goal.name !== "string" || !goal.name.trim()) || !state.projects.some((project) => project.id === goal.projectId) || state.goals.some((item) => item.id === goal.id)) return state;
   return { ...state, seq: state.seq + 1, goals: [...state.goals, blankGoal(goal.projectId, goal.name.trim(), goal.id, typeof goal.goal === "string" ? goal.goal.trim() : "")] };
+}
+
+function setWorkCheck(state: OrchestrationState, id: string, on: boolean): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task || task.runner !== "agent" || task.status === "running" || task.verification.some((check) => check.running)) return state;
+  if (task.verification.some((check) => check.kind === "work") === on) return state;
+  const verification = on ? [...task.verification, workCheck(id)] : task.verification.filter((check) => check.kind !== "work");
+  const recover = !on && task.status === "failed" && task.verification.some((check) => check.kind === "work" && check.state === "failed");
+  return { ...state, tasks: replaceTask(state.tasks, { ...task, verification, ...(recover ? { status: "completed", blocker: null } : {}) }) };
+}
+
+function startWorkCheck(state: OrchestrationState, taskId: string): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task || task.runner !== "agent" || task.status !== "completed" || task.outdated || task.verification.some((check) => check.kind === "command" && check.state !== "passed")) return state;
+  if (!task.verification.some((check) => check.kind === "work")) return state;
+  return { ...state, tasks: replaceTask(state.tasks, { ...task, verification: task.verification.map((check) => check.kind === "work" ? { ...workCheck(taskId), running: true, evidence: "Codex is checking the work against this step…" } : check) }) };
+}
+
+function recordWorkCheck(state: OrchestrationState, action: Extract<Action, { type: "recordWorkCheck" }>): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === action.taskId);
+  if (!task || task.status !== "completed" || task.outdated || !task.verification.some((check) => check.kind === "work" && check.running)) return state;
+  const passed = !!action.result && workCheckPassed(action.result) && !action.failure;
+  const evidence = action.failure ?? (passed ? "No unmet items or work against the step's instructions. Read each verdict below." : "The work did not meet this step. Retry sends the verdicts to the agent.");
+  const next: Task = { ...task, verification: task.verification.map((check) => check.kind === "work" ? { ...check, state: passed ? "passed" : "failed", running: false, timestamp: state.now, evidence, result: action.result } : check) };
+  if (passed) delete next.retries;
+  else { next.status = "failed"; next.blocker = `The work check failed. ${evidence}`; next.activity = "Work check failed"; }
+  const log = createLog(state, state.now);
+  log.event({ taskId: task.id, projectId: task.projectId, message: `${task.name}: work check ${passed ? "passed" : "failed"}`, tone: passed ? "success" : "failure" });
+  log.note({ taskId: task.id, message: passed ? `${task.name}: work check passed.` : `${task.name}: work check failed. ${evidence}`, tone: passed ? "success" : "failure" });
+  return log.finish({ tasks: replaceTask(state.tasks, next) });
 }

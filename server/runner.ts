@@ -12,6 +12,8 @@ import { isFullyVerified, unmetDependencies } from "../src/model/verify";
 import { agentById } from "../src/model/workspace";
 import { createTimelineParser, parseAgentLine } from "../src/runner/parse";
 import { taskPrompt, upstreamContext, upstreamTasks } from "../src/runner/prompt";
+import { workCheckInput, workCheckText } from "../src/model/workCheck";
+import { checkWork } from "./workCheck";
 import { acceptanceItems } from "../src/model/acceptance";
 import type { Engine } from "./engine";
 import {
@@ -72,7 +74,8 @@ export interface RunnerOptions {
   /** Lets agents report which Done when items they have confirmed. */
   done?: { script: string; server: () => string | null };
   /** Writes the checklist for a step a person does, from the work of the steps before it. */
-    checklist?: (board: OrchestrationState, task: Task, signal: AbortSignal) => Promise<{ text: string } | { error: string }>;
+  checklist?: (board: OrchestrationState, task: Task, signal: AbortSignal) => Promise<{ text: string } | { error: string }>;
+  workCheck?: typeof checkWork;
 }
 
 export interface Runner {
@@ -102,6 +105,7 @@ export function createRunner(options: RunnerOptions): Runner {
   const loggedIn = options.loggedIn ?? cachedLogin();
   const runs = new Map<string, Attempt>();
   const checks = new Set<string>();
+  const checkControllers = new Map<string, AbortController>();
   const refreshing = new Set<string>();
   const collecting = new Set<string>();
   const retryMergeAt = new Map<string, number>();
@@ -172,6 +176,12 @@ export function createRunner(options: RunnerOptions): Runner {
   }
 
   function kill(taskId: string) {
+    const controller = checkControllers.get(taskId);
+    if (controller) {
+      controller.abort();
+      const task = find(taskId);
+      if (task) dispatch({ type: "updateTask", id: taskId, patch: { verification: task.verification.map((check) => check.running ? { ...check, running: false, state: "pending", evidence: "Check stopped. Runs again after the work." } : check) } });
+    }
     const attempt = runs.get(taskId);
     if (!attempt) return;
     endRun(taskId, "stopped", "Stopped");
@@ -284,7 +294,7 @@ export function createRunner(options: RunnerOptions): Runner {
       } : {}),
     };
     const goal = state().goals.find((item) => item.id === latest.goalId)!;
-    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), {
+    const prompt = taskPrompt({ ...latest, verification: task.verification }, extra, upstreamContext(state(), latest), {
       look: !!tools.SHEPHERD_LOOK,
       done: !!tools.SHEPHERD_DONE,
       taskBranch: goal.branch,
@@ -399,7 +409,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const done = find(taskId);
     if (done?.status === "completed") {
       if (done.outdated) await refresh(taskId);
-      else if (done.checkCommand) await check(taskId);
+      else if (done.checkCommand || done.verification.some((item) => item.kind === "work")) await check(taskId);
     }
     return null;
   }
@@ -473,7 +483,7 @@ export function createRunner(options: RunnerOptions): Runner {
       refreshing.delete(taskId);
       schedule();
     }
-    if (find(taskId)?.status === "completed" && find(taskId)?.checkCommand) await check(taskId);
+    if (find(taskId)?.status === "completed") await check(taskId);
   }
 
   /** A person works directly in the task folder. Preparing it never commits their edits. */
@@ -578,49 +588,68 @@ export function createRunner(options: RunnerOptions): Runner {
   async function check(taskId: string): Promise<void> {
     const task = find(taskId);
     const commandLine = task?.checkCommand;
-    if (!task || !commandLine || checks.has(taskId) || closed()) return;
+    if (!task || (!commandLine && !task.verification.some((item) => item.kind === "work")) || checks.has(taskId) || runs.has(taskId) || closed()) return;
     checks.add(taskId);
+    const controller = new AbortController();
+    checkControllers.set(taskId, controller);
+    const stop = () => controller.abort();
+    closing.signal.addEventListener("abort", stop, { once: true });
     try {
-      dispatch({ type: "startCheck", taskId });
-      const started = Date.now();
-      const project = state().projects.find((item) => item.id === task.projectId);
-      let folder = await checkFolder(state().workspace, project?.directory, task.git?.branch, sandbox, worktrees, project?.repo);
-      if (!("error" in folder) && !task.git) {
-        const dir = folder.path;
+      if (task.status === "failed" && task.verification.some((item) => item.kind === "work" && item.state === "failed")) dispatch({ type: "setStatus", id: taskId, status: "completed" });
+      if (commandLine) {
+        dispatch({ type: "startCheck", taskId });
+        const started = Date.now();
+        const project = state().projects.find((item) => item.id === task.projectId);
+        let folder = await checkFolder(state().workspace, project?.directory, task.git?.branch, sandbox, worktrees, project?.repo);
+        if (!("error" in folder) && !task.git) {
+          const dir = folder.path;
+          try {
+            const tree = await serialized(dir, async () => {
+              const repo = project?.repo ? (await inspectRepo(dir)).repo : await ensureRepo(dir);
+              return taskTree(task, repo);
+            });
+            folder = { path: tree.folder };
+          } catch (error) { folder = { error: message(error) }; }
+        }
+        let run: CheckRun;
         try {
-          const tree = await serialized(dir, async () => {
-            const repo = project?.repo ? (await inspectRepo(dir)).repo : await ensureRepo(dir);
-            return taskTree(task, repo);
-          });
-          folder = { path: tree.folder };
-        } catch (error) { folder = { error: message(error) }; }
+          if ("error" in folder) throw new Error(folder.error);
+          const dir = evidenceFolder(evidence, taskId);
+          const env: NodeJS.ProcessEnv = {
+            ...process.env,
+            SHEPHERD_GATE: gate,
+            SHEPHERD_EVIDENCE_DIR: dir,
+            SHEPHERD_TASK: task.name,
+            ...lookEnv(taskId),
+            ...taskEnv(task),
+            ...(task.git ? { SHEPHERD_BRANCH: task.git.branch, SHEPHERD_BASE_REF: `refs/shepherd-base/${task.git.branch}` } : {}),
+          };
+          const result = await runCheckCommand(folder.path, commandLine, options.checkTimeoutMs, env, controller.signal);
+          run = { command: commandLine, ...result, steps: gateSteps(dir), artifacts: artifacts(dir) };
+        } catch (error) {
+          run = { command: commandLine, exitCode: null, output: message(error), durationMs: Date.now() - started };
+        }
+        if (closed() || controller.signal.aborted) return;
+        dispatch({ type: "recordCheck", taskId, run });
       }
-      let run: CheckRun;
-      try {
-        if ("error" in folder) throw new Error(folder.error);
-        const dir = evidenceFolder(evidence, taskId);
-        const env: NodeJS.ProcessEnv = {
-          ...process.env,
-          SHEPHERD_GATE: gate,
-          SHEPHERD_EVIDENCE_DIR: dir,
-          SHEPHERD_TASK: task.name,
-          ...lookEnv(taskId),
-          ...taskEnv(task),
-          ...(task.git ? { SHEPHERD_BRANCH: task.git.branch, SHEPHERD_BASE_REF: `refs/shepherd-base/${task.git.branch}` } : {}),
-        };
-        const result = await runCheckCommand(folder.path, commandLine, options.checkTimeoutMs, env, closing.signal);
-        run = { command: commandLine, ...result, steps: gateSteps(dir), artifacts: artifacts(dir) };
-      } catch (error) {
-        run = { command: commandLine, exitCode: null, output: message(error), durationMs: Date.now() - started };
+      const latest = find(taskId);
+      if (latest?.status === "completed" && !latest.outdated && latest.verification.some((item) => item.kind === "work") && !latest.verification.some((item) => item.kind === "command" && item.state !== "passed") && !controller.signal.aborted) {
+        dispatch({ type: "startWorkCheck", taskId });
+        let answer: Awaited<ReturnType<typeof checkWork>>;
+        try { answer = await (options.workCheck ?? checkWork)(latest, controller.signal); }
+        catch (error) { answer = { error: message(error) }; }
+        const current = find(taskId);
+        if (closed() || controller.signal.aborted || !current || workCheckInput(current) !== workCheckInput(latest)) return;
+        dispatch({ type: "recordWorkCheck", taskId, ...("error" in answer ? { failure: answer.error } : { result: answer }) });
       }
-      if (closed()) return;
-      dispatch({ type: "recordCheck", taskId, run });
     } finally {
+      closing.signal.removeEventListener("abort", stop);
+      checkControllers.delete(taskId);
       checks.delete(taskId);
       schedule();
     }
     const after = find(taskId);
-    const failed = after?.verification.some((item) => item.kind === "command" && item.state === "failed");
+    const failed = after?.verification.some((item) => item.kind !== "review" && item.state === "failed");
     const automatic = after && (after.autoRun || planRunning(after.goalId));
     if (after && failed && automatic && after.runner === "agent" && after.status === "failed" && (after.retries ?? 0) < MAX_RETRIES) {
       const attempt = (after.retries ?? 0) + 1;
@@ -677,7 +706,7 @@ export function createRunner(options: RunnerOptions): Runner {
     if (!from || !to) return "There is no such task.";
     if (to.runner !== "agent") return `${to.name} is done by a person. Tell them directly.`;
     if (!upstreamOf(fromId).includes(toId)) return `${to.name} is not upstream of ${from.name}, so its fix would not reach it.`;
-    const failed = from.verification.find((item) => item.kind === "command" && item.state === "failed");
+    const failed = from.verification.find((item) => item.kind !== "review" && item.state === "failed");
     if (!failed) return `${from.name} has no failed check to send.`;
     const steps = (failed.steps ?? []).filter((step) => !step.ok);
     const brief = `Fix what made ${from.name} fail its check${steps[0] ? `: ${steps[0].name}${steps[0].detail ? ` (${steps[0].detail})` : ""}` : ""}.`;
@@ -685,6 +714,7 @@ export function createRunner(options: RunnerOptions): Runner {
       `${from.name} (downstream of this task) failed its check, and the cause is in this task's part of the work. Fix it here; do not work around it.`,
       `Its check: ${failed.command ?? from.checkCommand ?? ""}`,
       steps.length ? ["Failed steps:", ...steps.map((step) => `- ${step.name}${step.detail ? `: ${step.detail}` : ""}`)].join("\n") : "",
+      failed.result ? workCheckText(failed.result) : "",
       "The end of its output:",
       "```",
       (failed.output ?? "").slice(-2500).trim() || "(no output)",
@@ -745,7 +775,7 @@ export function createRunner(options: RunnerOptions): Runner {
         if (Date.now() >= (retryMergeAt.get(task.id) ?? 0)) track(collect(task.id));
         continue;
       }
-      if (task.status === "completed" && !task.outdated && task.checkCommand && uncheckedCommand(task)) {
+      if (task.status === "completed" && !task.outdated && (uncheckedCommand(task) || task.verification.some((check) => check.kind === "work" && check.state === "pending" && !check.running))) {
         track(check(task.id));
         continue;
       }
@@ -799,7 +829,7 @@ export function createRunner(options: RunnerOptions): Runner {
   function stopPlan(goalId: string) {
     dispatch({ type: "setPlanRunning", goalId, running: false });
     for (const task of state().tasks) {
-      if (task.goalId !== goalId || !runs.has(task.id)) continue;
+      if (task.goalId !== goalId || (!runs.has(task.id) && !checks.has(task.id))) continue;
       kill(task.id);
       dispatch({ type: "setStatus", id: task.id, status: "blocked" });
     }
@@ -880,7 +910,7 @@ export function createRunner(options: RunnerOptions): Runner {
         return { ok: true };
       }
       case "check":
-        if (!task.checkCommand) return { error: `${task.name} has no check command.` };
+        if (!task.checkCommand && !task.verification.some((item) => item.kind === "work")) return { error: `${task.name} has no check command.` };
         track(check(taskId));
         return { ok: true };
       case "complete": {
@@ -937,7 +967,7 @@ export function createRunner(options: RunnerOptions): Runner {
     handle,
     cancel: kill,
     cancelAll() {
-      for (const id of [...runs.keys()]) kill(id);
+      for (const id of new Set([...runs.keys(), ...checks])) kill(id);
     },
     close() {
       closing.abort();
@@ -945,7 +975,7 @@ export function createRunner(options: RunnerOptions): Runner {
       unsubscribe();
       if (tick) clearTimeout(tick);
       tick = null;
-      for (const id of [...runs.keys()]) kill(id);
+      for (const id of new Set([...runs.keys(), ...checks])) kill(id);
     },
     schedule,
     async idle() {

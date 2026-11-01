@@ -22,7 +22,7 @@ export function reviewPending(task: Task): VerificationCheck | undefined {
 }
 
 export function failedCheck(task: Task): VerificationCheck | undefined {
-  return task.verification.find((check) => check.kind === "command" && check.state === "failed");
+  return task.verification.find((check) => check.kind !== "review" && check.state === "failed");
 }
 
 /** The upstream tasks whose gates into this one are still closed. */

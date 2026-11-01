@@ -203,7 +203,8 @@ export function askArgs(prompt: string, answer: string, choice: Choice): string[
 }
 
 /** Runs Codex read-only and ephemeral in the folder, and returns its final message. */
-function askCodex(prompt: string, folder: string, choice: Choice, signal: AbortSignal | undefined, what: string): Promise<{ reply: string } | NoAnswer> {
+export function askCodex(prompt: string, folder: string, choice: Choice, signal: AbortSignal | undefined, what: string): Promise<{ reply: string } | NoAnswer> {
+  if (signal?.aborted) return Promise.resolve({ error: "Codex run stopped." });
   const scratch = mkdtempSync(path.join(tmpdir(), "shepherd-draft-"));
   const answer = path.join(scratch, "answer.txt");
   const args = askArgs(prompt, answer, choice);
@@ -220,9 +221,12 @@ function askCodex(prompt: string, folder: string, choice: Choice, signal: AbortS
         child.kill("SIGTERM");
       }
     };
+    let finished = false;
     const timer = setTimeout(stop, DRAFT_TIMEOUT_MS);
     signal?.addEventListener("abort", stop, { once: true });
     const finish = (result: { reply: string } | NoAnswer) => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", stop);
       rmSync(scratch, { recursive: true, force: true });
@@ -237,7 +241,7 @@ function askCodex(prompt: string, folder: string, choice: Choice, signal: AbortS
         // No answer file means Codex stopped before it replied.
       }
       if (reply.trim()) return finish({ reply });
-      if (code === null) return finish({ error: "Drafting took too long and was stopped." });
+      if (code === null) return finish({ error: "Codex took too long and was stopped." });
       const why = codexError(stderr);
       finish({ error: `Codex could not draft ${what}${why.text ? `: ${why.text}` : "."}`, ...(why.refusedModel ? { refusedModel: true } : {}) });
     });

@@ -123,3 +123,10 @@ describe("boardSummary", () => {
     ]);
   });
 });
+
+it("accepts the optional work check through POST task planning and rejects invalid or human options", () => {
+  const state = apply(board(), { project: "Greeter", name: "Build", acceptance: ["Works"], workCheck: true });
+  expect(state.tasks[0].verification).toMatchObject([{ kind: "work", state: "pending" }]);
+  expect(planTasks(board(), { project: "Greeter", name: "Build", workCheck: "yes" }, ids)).toEqual({ error: "workCheck must be true or false." });
+  expect(planTasks(board(), { project: "Greeter", name: "Build", runner: "human", workCheck: true }, ids)).toHaveProperty("error");
+});

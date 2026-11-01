@@ -1,3 +1,4 @@
+import { workCheckText } from "../model/workCheck";
 import { openIssues } from "../model/stage";
 import { acceptanceItems } from "../model/acceptance";
 import { dependencyOrder } from "../model/outline";
@@ -118,6 +119,11 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
       'If a mark is no longer true, take it back with node "$SHEPHERD_DONE" ITEM --undo. These marks show what you say you have met; Shepherd still decides whether the step is done from its checks.',
     ].join("\n") : "",
     ...checkLines,
+    ...task.verification.filter((check) => check.kind === "work" && check.state === "failed").map((check) => [
+      "Shepherd checked the work against this step and it failed. Fix the causes in these verdicts:",
+      check.evidence,
+      check.result ? workCheckText(check.result) : "Codex could not complete the work check.",
+    ].join("\n")),
     ...(options.look ? LOOK_LINES : []),
     "",
     inputs.length ? "Earlier steps this one builds on. Their work is already merged into this worktree:" : "",

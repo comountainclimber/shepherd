@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { blankTask, newStep } from "../src/model/factory";
 import { reducer } from "../src/model/reducer";
 import type { OrchestrationState, Task } from "../src/model/types";
@@ -12,6 +12,9 @@ import { createEngine, envelope } from "./engine";
 import { commitAll, ensureRepo, openWorktree } from "./git";
 import { createRunner, type RunnerOptions } from "./runner";
 import { acceptanceItems } from "../src/model/acceptance";
+
+// These tests start agents and run git in real worktrees on a shared host.
+vi.setConfig({ testTimeout: 30_000 });
 
 function gitOut(cwd: string, ...args: string[]) {
   return execFileSync("git", ["-c", "user.name=Person", "-c", "user.email=person@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
@@ -30,7 +33,7 @@ say({ type: "item.completed", item: { type: "agent_message", text: "Report from 
 say({ type: "turn.completed" });
 `;
 
-function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT, tools: Pick<RunnerOptions, "done"> = {}) {
+function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT, tools: Pick<RunnerOptions, "done" | "workCheck"> = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
   const sandbox = path.join(root, "sandbox");
   mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
@@ -629,5 +632,105 @@ describe("task work collection", () => {
       expect(existsSync(path.join(project, "build.txt"))).toBe(true);
       expect(engine.get().goals[0].merged?.into).toBe(goal.base);
     } finally { runner.close(); engine.close(); }
+  });
+});
+
+
+describe("work checks", () => {
+  function checkedBoard(command = "test -f build.txt") {
+    let board = outlined("Build\nNext");
+    const id = board.tasks[0].id;
+    board = reducer(board, { type: "updateTask", id, patch: { acceptance: ["Writes build.txt"] } });
+    board = reducer(board, { type: "setCheckCommand", id, command });
+    return reducer(board, { type: "setWorkCheck", id, on: true });
+  }
+  const verdict = (task: Task, met: boolean) => ({ items: [{ key: acceptanceItems(task.acceptance)[0].key, item: 1, verdict: met ? "met" as const : "not met" as const, reason: met ? "File exists" : "The requested export is missing" }], unrequested: [], violations: [] });
+
+  it("checks the finished folder after the command passes, sends verdicts back, and stops at the shared retry limit", async () => {
+    const board = checkedBoard();
+    let checks = 0;
+    const server = planServer(board, undefined, FAKE_AGENT, { workCheck: async (task) => {
+      checks++;
+      expect(task.status).toBe("completed");
+      expect(task.verification.find((item) => item.kind === "command")?.state).toBe("passed");
+      expect(readFileSync(path.join(task.git!.folder, "build.txt"), "utf8")).toBe("build\n");
+      return verdict(task, false);
+    } });
+    try {
+      await server.runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await server.runner.idle();
+      expect(checks).toBe(3);
+      expect(server.prompts()).toHaveLength(3);
+      expect(server.prompts()[1].prompt).toContain("Done when 1: not met — The requested export is missing");
+      expect(server.engine.get().tasks[0]).toMatchObject({ status: "failed", retries: 2 });
+      expect(server.engine.get().tasks[1].status).toBe("queued");
+      const entries = server.engine.timelines.read(board.tasks[0].id).entries;
+      expect(entries.filter((entry) => entry.kind === "check_ended" && entry.text === "Done when 1: not met")).toHaveLength(3);
+      expect(entries.some((entry) => entry.kind === "check_ended" && entry.detail?.includes("The requested export is missing"))).toBe(true);
+    } finally { server.runner.close(); server.engine.close(); }
+  });
+
+  it("shares retries across a command failure and work failures", async () => {
+    const board = checkedBoard("if test -f checked; then true; else touch checked; exit 1; fi");
+    let checks = 0;
+    const server = planServer(board, undefined, FAKE_AGENT, { workCheck: async (task) => { checks++; return verdict(task, false); } });
+    try {
+      await server.runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await server.runner.idle();
+      expect(server.prompts()).toHaveLength(3);
+      expect(checks).toBe(2);
+      expect(server.engine.get().tasks[0]).toMatchObject({ status: "failed", retries: 2 });
+    } finally { server.runner.close(); server.engine.close(); }
+  });
+
+  it("rechecks a correction, accepts it and releases the next step", async () => {
+    const board = checkedBoard();
+    let checks = 0;
+    const server = planServer(board, undefined, FAKE_AGENT, { workCheck: async (task) => verdict(task, ++checks > 1) });
+    try {
+      await server.runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await server.runner.idle();
+      expect(checks).toBe(2);
+      expect(server.engine.get().tasks.every(isFullyVerified)).toBe(true);
+      expect(server.engine.get().tasks[0].retries).toBeUndefined();
+    } finally { server.runner.close(); server.engine.close(); }
+  });
+
+  it("does not call Codex when off or when the command fails", async () => {
+    for (const on of [false, true]) {
+      let board = checkedBoard(on ? "exit 1" : "true");
+      if (!on) board = reducer(board, { type: "setWorkCheck", id: board.tasks[0].id, on: false });
+      let checks = 0;
+      const server = planServer(board, undefined, FAKE_AGENT, { workCheck: async (task) => { checks++; return verdict(task, true); } });
+      try {
+        await server.runner.handle({ command: "run", taskId: board.tasks[0].id });
+        await server.runner.idle();
+        expect(checks).toBe(0);
+        expect(server.engine.get().tasks[0].status).toBe(on ? "failed" : "completed");
+      } finally { server.runner.close(); server.engine.close(); }
+    }
+  });
+
+  it("discards a verdict after the request changes and checks the new request", async () => {
+    const board = checkedBoard();
+    let checks = 0;
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>((resolve) => { entered = resolve; });
+    const server = planServer(board, undefined, FAKE_AGENT, { workCheck: async (task) => {
+      checks++;
+      if (checks === 1) { entered(); await new Promise<void>((resolve) => { release = resolve; }); }
+      return verdict(task, true);
+    } });
+    try {
+      await server.runner.handle({ command: "run", taskId: board.tasks[0].id });
+      await waiting;
+      server.engine.dispatch({ type: "updateTask", id: board.tasks[0].id, patch: { acceptance: ["A different request"] } });
+      release();
+      await server.runner.idle();
+      expect(checks).toBe(2);
+      expect(server.engine.get().tasks[0].verification.find((item) => item.kind === "work")?.result?.items[0].key).toBe(acceptanceItems(["A different request"])[0].key);
+      expect(server.engine.timelines.read(board.tasks[0].id).entries.filter((entry) => entry.kind === "check_ended" && entry.text === "Work against this step: Passed")).toHaveLength(1);
+    } finally { server.runner.close(); server.engine.close(); }
   });
 });

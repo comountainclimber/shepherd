@@ -19,3 +19,13 @@ it("shows the same count during and after runs, with each item and the agent's e
     expect(renderToStaticMarkup(createElement(component, { task: { ...task, runner: "human" } }))).toBe("");
   }
 });
+
+it("puts the independent verdict and its reason next to the agent's claim", () => {
+  const acceptance = ["Page loads"];
+  const key = acceptanceItems(acceptance)[0].key;
+  const task = blankTask({ id: "a", projectId: "proj-local", name: "Build", objective: "Build", agentId: "agent-codex", position: { x: 0, y: 0 }, acceptance, workCheck: true });
+  task.acceptanceMarks = { [key]: { at: 1, note: "Loaded once" } };
+  task.verification[0] = { ...task.verification[0], state: "failed", result: { items: [{ key, item: 1, verdict: "not met", reason: "Reload returns an error" }], unrequested: [], violations: [] } };
+  const html = renderToStaticMarkup(createElement(AcceptanceProgress, { task }));
+  for (const text of ["Agent says: met", "Loaded once", "Check: not met", "Reload returns an error"]) expect(html).toContain(text);
+});

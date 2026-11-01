@@ -1,6 +1,6 @@
 export type TaskStatus = "queued" | "running" | "completed" | "blocked" | "failed";
 
-export type VerificationKind = "command" | "review";
+export type VerificationKind = "command" | "work" | "review";
 
 export type VerificationState = "pending" | "passed" | "failed";
 
@@ -27,10 +27,19 @@ export interface VerificationCheck {
   output?: string;
   durationMs?: number;
   running?: boolean;
+  result?: WorkCheckResult;
   /** What a gate script reported, step by step. */
   steps?: GateStep[];
   /** Files the check left in the task's evidence folder, relative to it. */
   artifacts?: string[];
+}
+
+export type WorkVerdict = "met" | "not met" | "can't tell";
+
+export interface WorkCheckResult {
+  items: { key: string; item: number; verdict: WorkVerdict; reason: string }[];
+  unrequested: string[];
+  violations: string[];
 }
 
 export interface GateStep {
@@ -156,6 +165,7 @@ export interface SavedStepItem {
   acceptance: string[];
   checkCommand?: string;
   review?: boolean;
+  workCheck?: boolean;
   independent?: boolean;
   /** Shepherd pushes the task branch before starting this agent. */
   pushBeforeRun?: boolean;
@@ -335,6 +345,9 @@ export type Action =
   | { type: "addSteps"; goalId: string; after: string | null; steps: { task: Task; depth: number }[] }
   | { type: "setOutline"; goalId: string; items: OutlineItem[] }
   | { type: "followOutline"; id: string }
+  | { type: "setWorkCheck"; id: string; on: boolean }
+  | { type: "startWorkCheck"; taskId: string }
+  | { type: "recordWorkCheck"; taskId: string; result?: WorkCheckResult; failure?: string }
   | { type: "setReview"; id: string; on: boolean }
   | { type: "setPlanRunning"; goalId: string; running: boolean }
   | { type: "instruct"; id: string; text: string }
@@ -379,6 +392,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 export const CHECK_LABEL: Record<VerificationKind, string> = {
   command: "Check command",
   review: "Review",
+  work: "Work against this step",
 };
 
 export const GATE_LABEL: Record<Gate, string> = {

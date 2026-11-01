@@ -338,7 +338,8 @@ function MoreOptions({ task }: { task: Task }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const agent = task.runner === "agent";
   const review = task.verification.some((check) => check.kind === "review");
-  const extras = task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent || !!task.pushBeforeRun;
+  const workCheck = task.verification.some((check) => check.kind === "work");
+  const extras = workCheck || task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent || !!task.pushBeforeRun;
   const [open, setOpen] = useState(extras);
   const [checkCommand, setCheckCommand] = useState(task.checkCommand ?? "");
   useEffect(() => setCheckCommand(task.checkCommand ?? ""), [task.checkCommand]);
@@ -387,6 +388,13 @@ function MoreOptions({ task }: { task: Task }) {
           </label>
           {agent ? (
             <>
+              <Toggle
+                checked={workCheck}
+                disabled={task.status === "running" || task.verification.some((check) => check.running)}
+                onChange={(on) => dispatch({ type: "setWorkCheck", id: task.id, on })}
+                label="Check the work against this step"
+                hint="Each check is another Codex run. It reads the work after the command check passes and checks each Done when item."
+              />
               <Toggle
                 checked={review}
                 disabled={task.status === "running"}

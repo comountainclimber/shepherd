@@ -36,6 +36,7 @@ export function blankTask(args: {
   checkCommand?: string;
   /** You look at the agent's work before the steps after it start. */
   review?: boolean;
+  workCheck?: boolean;
   autoRun?: boolean;
   independent?: boolean;
   pushBeforeRun?: boolean;
@@ -43,7 +44,7 @@ export function blankTask(args: {
   const runner = args.runner ?? "agent";
   const command = args.checkCommand?.trim() ?? "";
   const agent = runner === "agent";
-  const review = agent && args.review ? [reviewCheck(args.id)] : [];
+  const review = [...(agent && args.workCheck ? [workCheck(args.id)] : []), ...(agent && args.review ? [reviewCheck(args.id)] : [])];
   return {
     id: args.id,
     projectId: args.projectId,
@@ -108,4 +109,8 @@ export function defaultGoalId(projectId: string): string {
 
 export function blankGoal(projectId: string, name: string, id = defaultGoalId(projectId), goal = ""): Goal {
   return { id, projectId, name, goal, outline: [], running: false, status: "open" };
+}
+
+export function workCheck(taskId: string): VerificationCheck {
+  return check(taskId, "work", "pending", "Runs after the agent finishes and its command check passes. Each check is another Codex run.");
 }

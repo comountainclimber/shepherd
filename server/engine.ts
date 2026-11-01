@@ -7,6 +7,7 @@ import type { Action, OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
 import { formatDuration } from "../src/model/format";
 import { commandLine } from "../src/runner/timeline";
+import { workCheckPassed } from "../src/model/workCheck";
 import { acceptanceItems } from "../src/model/acceptance";
 import { createTimelines, type Timelines } from "./timelines";
 
@@ -38,6 +39,7 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "setOutline",
   "followOutline",
   "setReview",
+  "setWorkCheck",
   "noteIssue",
   "dropIssue",
   "fixIssue",
@@ -106,6 +108,18 @@ export function createEngine(file: string, clock: () => number = () => Date.now(
         const task = next.tasks.find((item) => item.id === action.id)!;
         const item = acceptanceItems(task.acceptance).find((item) => item.key === action.key)!;
         timelines.append(task.id, { kind: "acceptance", item: item.number, text: item.text, met: action.note !== null, note: task.acceptanceMarks?.[action.key]?.note });
+      }
+      if (action.type === "startWorkCheck") {
+        checkRuns.set(action.taskId, timelines.append(action.taskId, { kind: "check_started", text: "Work against this step · Codex" }).run);
+      }
+      if (action.type === "recordWorkCheck") {
+        const ok = !!action.result && workCheckPassed(action.result) && !action.failure;
+        const run = checkRuns.get(action.taskId);
+        timelines.append(action.taskId, { kind: "check_ended", ok, text: `Work against this step: ${ok ? "Passed" : "Failed"}`, detail: action.failure }, run);
+        for (const item of action.result?.items ?? []) timelines.append(action.taskId, { kind: "check_ended", ok: item.verdict !== "not met", text: `Done when ${item.item}: ${item.verdict}`, detail: [next.tasks.find((task) => task.id === action.taskId)?.acceptance[item.item - 1], item.reason].filter(Boolean).join("\n") }, run);
+        for (const text of action.result?.violations ?? []) timelines.append(action.taskId, { kind: "check_ended", ok: false, text: "Against the step's instructions", detail: text }, run);
+        for (const text of action.result?.unrequested ?? []) timelines.append(action.taskId, { kind: "check_ended", ok: true, text: "Not asked for (does not fail the check)", detail: text }, run);
+        checkRuns.delete(action.taskId);
       }
       if (action.type === "startCheck") {
         const task = next.tasks.find((item) => item.id === action.taskId);
@@ -178,6 +192,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
       return { error: "Use a nonempty name and text for the task's goal." };
     }
   }
+  if (action.type === "setWorkCheck" && typeof action.on !== "boolean") return { error: "on must be true or false." };
   if (action.type === "setCheck") {
     const check = state.tasks.find((task) => task.id === action.taskId)?.verification.find((item) => item.id === action.checkId);
     if (check && check.kind !== "review") return { error: "Only reviews are accepted or rejected by hand. Checks pass by running." };

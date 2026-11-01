@@ -56,6 +56,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const name = text(request.name, field("name")) || fail(`${where} needs a name.`);
     const runner = runnerFor(request.runner, field("runner"));
     const checkCommand = text(request.checkCommand, field("checkCommand"));
+    const workCheck = flag(request.workCheck, field("workCheck"), false);
     const review = flag(request.review, field("review"), false);
     const autoRun = flag(request.autoRun, field("autoRun"), false);
     const independent = flag(request.independent, field("independent"), false);
@@ -64,8 +65,8 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     if (model && !isModelId(model)) fail(`${field("model")} is not a model name, such as gpt-6-astra or opus.`);
     const effort = text(request.thinking, field("thinking"));
     if (effort && !isEffort(effort)) fail(`${field("thinking")} must be one of: ${EFFORTS.join(", ")}.`);
-    if (runner === "human" && (autoRun || independent || pushBeforeRun || review || model || effort)) {
-      fail(`${where} is done by a person, so autoRun, independent, pushBeforeRun, review, model and thinking do not apply to it.`);
+    if (runner === "human" && (autoRun || independent || pushBeforeRun || workCheck || review || model || effort)) {
+      fail(`${where} is done by a person, so autoRun, independent, pushBeforeRun, workCheck, review, model and thinking do not apply to it.`);
     }
     const dependsOn = dependencies(scratch, goal.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
@@ -80,6 +81,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
         acceptance: lines(request.acceptance, field("acceptance")),
         checkCommand,
         review,
+        workCheck,
         autoRun,
         independent,
         pushBeforeRun,

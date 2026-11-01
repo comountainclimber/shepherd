@@ -47,7 +47,7 @@ function project(raw: Raw): Project {
 }
 
 function check(raw: Raw): VerificationCheck | null {
-  if (raw.kind !== "command" && raw.kind !== "review") return null;
+  if (raw.kind !== "command" && raw.kind !== "review" && raw.kind !== "work") return null;
   if (raw.state !== "pending" && raw.state !== "passed" && raw.state !== "failed") return null;
   const out: VerificationCheck = {
     id: text(raw.id),
@@ -61,6 +61,18 @@ function check(raw: Raw): VerificationCheck | null {
   if (typeof raw.output === "string") out.output = raw.output;
   if (typeof raw.durationMs === "number") out.durationMs = raw.durationMs;
   if (raw.running === true) out.running = true;
+  const result = record(raw.result);
+  if (raw.kind === "work" && result && Array.isArray(result.items) && Array.isArray(result.unrequested) && Array.isArray(result.violations)) {
+    out.result = {
+      items: result.items.flatMap((value) => {
+        const item = record(value);
+        return item && typeof item.key === "string" && typeof item.item === "number" && (item.verdict === "met" || item.verdict === "not met" || item.verdict === "can't tell") && typeof item.reason === "string"
+          ? [{ key: item.key, item: item.item, verdict: item.verdict, reason: item.reason.slice(0, 1500) }] : [];
+      }),
+      unrequested: result.unrequested.filter((text): text is string => typeof text === "string").slice(0, 20).map((text) => text.slice(0, 1500)),
+      violations: result.violations.filter((text): text is string => typeof text === "string").slice(0, 20).map((text) => text.slice(0, 1500)),
+    };
+  }
   const steps = list(raw.steps).flatMap((item) => {
     const step = record(item);
     return step && typeof step.name === "string" && typeof step.ok === "boolean"
