@@ -47,7 +47,7 @@ function planServer(board: OrchestrationState) {
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { name: string; prompt: string });
-  return { engine, runner, prompts };
+  return { engine, runner, prompts, project: path.join(sandbox, "workspace") };
 }
 
 function outlined(spec: string): OrchestrationState {
@@ -163,6 +163,42 @@ describe("plans", () => {
 
     expect(await runner.handle({ command: "mergePlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
     expect(engine.get().tasks.every((task) => task.git?.merged)).toBe(true);
+    runner.close();
+    engine.close();
+  }, 60_000);
+
+  it("gives a step you do a folder with the earlier work, keeps your changes, and sends problems back", async () => {
+    const board = outlined("Plan\n  Front\n  Back\nTry");
+    const human = { ...board, tasks: board.tasks.map((task) => (task.name === "Try" ? { ...task, runner: "human" as const, agentId: null } : task)) };
+    const { engine, runner, prompts, project } = planServer(human);
+    const step = (name: string) => engine.get().tasks.find((task) => task.name === name)!;
+    expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
+    await runner.idle();
+
+    const folder = step("Try").git!.folder;
+    expect(step("Try").status).toBe("queued");
+    expect(step("Try").git?.branch).toBe("shepherd/try");
+    for (const file of ["plan.txt", "front.txt", "back.txt"]) expect(existsSync(path.join(folder, file))).toBe(true);
+    expect(engine.get().projects[0]!.running).toBe(true);
+
+    expect(await runner.handle({ command: "sendBack", taskId: step("Try").id, to: step("Front").id, text: "The button is blue" })).toEqual({
+      ok: true,
+    });
+    await runner.idle();
+    expect(prompts().filter((item) => item.name === "front")).toHaveLength(2);
+    expect(prompts().at(-1)!.prompt).toContain("Try found a problem with this work: The button is blue");
+    expect(step("Try").status).toBe("queued");
+    expect(step("Try").outdated).toBeUndefined();
+
+    writeFileSync(path.join(folder, "notes.txt"), "looks good\n");
+    expect(await runner.handle({ command: "complete", taskId: step("Try").id })).toEqual({ ok: true });
+    await runner.idle();
+    expect(step("Try").filesChanged).toEqual(["notes.txt"]);
+    expect(engine.get().tasks.every(isFullyVerified)).toBe(true);
+    expect(engine.get().projects[0]!.running).toBeUndefined();
+
+    expect(await runner.handle({ command: "mergePlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
+    for (const file of ["plan.txt", "front.txt", "back.txt", "notes.txt"]) expect(existsSync(path.join(project, file))).toBe(true);
     runner.close();
     engine.close();
   }, 60_000);

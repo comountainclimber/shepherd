@@ -91,6 +91,15 @@ async function userIdentity(repo: string): Promise<NodeJS.ProcessEnv> {
   return email.code === 0 && email.stdout.trim() ? {} : identity();
 }
 
+/** Who to credit for changes a person made by hand: their git identity, or a plain stand-in. */
+export async function personAuthor(repo: string): Promise<Author> {
+  const [name, email] = await Promise.all([git(repo, ["config", "user.name"]), git(repo, ["config", "user.email"])]);
+  return {
+    name: (name.code === 0 && name.stdout.trim()) || "You",
+    email: (email.code === 0 && email.stdout.trim()) || "you@shepherd.local",
+  };
+}
+
 const queues = new Map<string, Promise<unknown>>();
 
 /** Runs git work for one repository at a time, so parallel runs do not race on its locks and refs. */

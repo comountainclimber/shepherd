@@ -35,7 +35,7 @@ export function OrchestrationCanvas() {
 }
 
 function CanvasInner() {
-  const { fitView } = useReactFlow();
+  const { fitView, zoomIn, zoomOut } = useReactFlow();
   const state = useShepherd((store) => store.state);
   const ui = useShepherd((store) => store.ui);
   const dispatch = useShepherd((store) => store.dispatch);
@@ -169,6 +169,21 @@ function CanvasInner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [dispatch, selectEdge, ui.selectedEdgeId]);
+
+  useEffect(() => {
+    // Cmd/Ctrl with + - 0 zoom the map instead of the whole page.
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const { key, code } = event;
+      if (key === "=" || key === "+" || code === "Equal" || code === "NumpadAdd") void zoomIn({ duration: 150 });
+      else if (key === "-" || key === "_" || code === "Minus" || code === "NumpadSubtract") void zoomOut({ duration: 150 });
+      else if (key === "0" || code === "Digit0" || code === "Numpad0") void fitView({ padding: 0.2, duration: 200 });
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoomIn, zoomOut, fitView]);
 
   return (
     <div className="relative h-full w-full">

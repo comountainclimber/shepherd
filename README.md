@@ -24,10 +24,12 @@ Settings (the gear) shows which ones Shepherd can use.
 - **Write the outline.** The list on the left is the plan. Enter adds a step, Tab indents it, Shift+Tab outdents it, Alt+↑/↓ moves it, Backspace on an empty step deletes it, and the grip drags it. Pasting a bulleted or numbered list makes one step per line, keeping its indents. `N` adds a step from anywhere.
 - **Draft from a goal.** Type what you want done and press Draft steps. Codex reads the project folder (read-only) and suggests steps, which land at the end of the outline for you to edit. Nothing runs until you press Run.
 - **What runs when.** Steps run top to bottom. An indented step runs after the step it sits under, at the same time as the other steps indented under it. The next step at the left edge waits for all of them. The map draws exactly these arrows and lays itself out left to right.
+- **The map.** Cmd (Ctrl elsewhere) with + or − zooms it, and Cmd+0 or F fits it to the screen.
 - **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
 - **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab has the agent's report, the files it changed with their diff, and a merge button for that step alone. The Log tab lets you send the agent an instruction.
 - **Run.** Run, at the bottom of the list, starts every step that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses the agents where they are. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
 - **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
+- **Your steps.** When the steps before one of yours are done, Shepherd merges their work into a folder for it, on its own branch, and the step shows the path. Try the result there. Anything you change in that folder is committed under your git name when you mark the step done. If earlier work changes after that, the folder is brought up to date and the step asks you again. "Found a problem? Send it back" reruns an earlier agent step with your note, and the folder picks up its fix.
 - **Merge.** When every step is done, "Merge the result" brings the work into the branch the project folder has checked out. The last steps' branches already hold the earlier steps' work. Shepherd refuses if that folder has uncommitted changes or the merge conflicts, and leaves it untouched.
 
 ### Optional checks
@@ -53,7 +55,7 @@ Everything the UI does goes through these, so agents and scripts can use them to
 
 - `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
 - `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "projectId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
-- `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "projectId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`.
+- `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "projectId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note.
 - `POST /api/draft` with `{ "projectId": "...", "goal": "..." }` returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them.
 - `GET /api/tasks` lists every project and its steps, with ids, status, whether each is done, its branch, and what it waits for.
 - `POST /api/projects` adds a project: `{ "name": "Hello counter", "summary": "...", "directory": "hello-counter" }`. The folder is optional and defaults to one named after the project. Project names must be unique.

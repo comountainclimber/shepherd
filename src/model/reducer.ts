@@ -445,8 +445,9 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
     next = { ...next, blocker: task.status === "running" ? "Paused by you" : task.blocker };
     log.event({ taskId: task.id, projectId: task.projectId, message: `Paused ${task.name}`, tone: "warning" });
   } else if (status === "queued") {
-    next = { ...next, blocker: null, startedAt: null, activity: "Cancelled" };
-    log.event({ taskId: task.id, projectId: task.projectId, message: `Cancelled ${task.name}`, tone: "warning" });
+    const again = task.status === "failed";
+    next = { ...next, blocker: null, startedAt: null, activity: again ? "Trying again" : "Cancelled" };
+    log.event({ taskId: task.id, projectId: task.projectId, message: again ? `Trying ${task.name} again` : `Cancelled ${task.name}`, tone: again ? "info" : "warning" });
   } else if (status === "completed") {
     const human = task.runner === "human";
     next = { ...next, blocker: null, activity: human ? "Signed off by you" : task.activity };
@@ -694,7 +695,13 @@ function merged(state: OrchestrationState, id: string, into: string, sha: string
  */
 function outdate(state: OrchestrationState, id: string, reason: string): OrchestrationState {
   const task = state.tasks.find((item) => item.id === id);
-  if (!task?.git || task.runner !== "agent") return state;
+  if (!task?.git) return state;
+  if (task.runner === "human") {
+    if (task.status !== "completed" && task.status !== "queued") return state;
+    const log = createLog(state, state.now);
+    log.event({ taskId: id, projectId: task.projectId, message: `${task.name} is out of date: ${reason}`, tone: "warning" });
+    return log.finish({ tasks: replaceTask(state.tasks, { ...task, status: "queued", outdated: reason, activity: `Out of date: ${reason}` }) });
+  }
   if (task.status === "running") return { ...state, tasks: replaceTask(state.tasks, { ...task, outdated: reason }) };
   const checkFailed = task.verification.some((check) => check.kind === "command" && check.state === "failed");
   if (task.status !== "completed" && !(task.status === "failed" && checkFailed)) return state;
@@ -721,15 +728,18 @@ function refreshed(state: OrchestrationState, action: Extract<Action, { type: "r
   if (!task?.git) return state;
   const log = createLog(state, state.now);
   const brought = action.merged.length ? `Brought in ${action.merged.join(", ")}` : "Already had the upstream work";
-  const activity = action.keepReview
-    ? `${brought}. Its own changes are the same.`
-    : `${brought}. Its own changes differ now, so it needs review again.`;
+  const human = task.runner === "human";
+  const activity = human
+    ? `${brought}. Check the result in this step's folder.`
+    : action.keepReview
+      ? `${brought}. Its own changes are the same.`
+      : `${brought}. Its own changes differ now, so it needs review again.`;
   log.event({ taskId: task.id, projectId: task.projectId, message: `${task.name}: ${brought.toLowerCase()}`, tone: "info" });
   const moved = task.git.head !== action.head;
   const { merged: landed, ...git } = task.git;
   const next: Task = {
     ...task,
-    status: "completed",
+    status: human ? "queued" : "completed",
     blocker: null,
     activity,
     filesChanged: action.filesChanged,

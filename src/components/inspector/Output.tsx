@@ -25,7 +25,11 @@ function Report({ task }: { task: Task }) {
     return (
       <Card title="Report">
         <p className="text-[13px] leading-5 text-muted">
-          {task.status === "completed" ? "You marked this step done." : "This step is yours. Mark it done when it is, and the steps after it start."}
+          {task.status === "completed"
+            ? "You marked this step done."
+            : task.git
+              ? `This step is yours. The earlier steps' work is merged together in ${task.git.folder}. Try it there, then mark it done.`
+              : "This step is yours. Mark it done when it is, and the steps after it start."}
         </p>
       </Card>
     );

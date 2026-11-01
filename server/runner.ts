@@ -18,6 +18,7 @@ import {
   isTaskName,
   mergeBranch,
   openWorktree,
+  personAuthor,
   prepareRun,
   serialized,
   worktreeFolder,
@@ -342,6 +343,90 @@ export function createRunner(options: RunnerOptions): Runner {
     if (find(taskId)?.status === "completed" && find(taskId)?.checkCommand) await check(taskId);
   }
 
+  /**
+   * Gives a step a person does its own worktree with the earlier steps' work merged in, so there
+   * is one folder to try the result in. It is brought up to date again when that work changes.
+   */
+  async function prepareFolder(taskId: string): Promise<void> {
+    const task = find(taskId);
+    if (!task || task.runner !== "human" || refreshing.has(taskId) || closed()) return;
+    refreshing.add(taskId);
+    try {
+      const dir = folderFor(task);
+      if ("error" in dir) {
+        fail(taskId, dir.error);
+        return;
+      }
+      const name = task.git ? task.worktree : branchName(task, state().tasks);
+      if (!isTaskName(name)) {
+        fail(taskId, `Not a usable step folder name: ${name}`);
+        return;
+      }
+      dispatch({ type: "updateTask", id: taskId, patch: { worktree: name, activity: "Bringing in the earlier steps' work…" } });
+      let tree: Awaited<ReturnType<typeof openWorktree>>;
+      let merged: string[];
+      let diff: Changes;
+      try {
+        [tree, merged, diff] = await serialized(dir.path, async () => {
+          const repo = await ensureRepo(dir.path);
+          const opened = await openWorktree(repo, worktrees, taskId, name, task.git?.branch);
+          const brought = await prepareRun(opened, branches(upstreamTasks(state(), task)), await personAuthor(repo));
+          return [opened, brought, await changes(opened.folder, opened.branch)] as const;
+        });
+      } catch (error) {
+        fail(taskId, `Could not bring in the earlier steps' work: ${message(error)}`);
+        return;
+      }
+      const latest = find(taskId);
+      if (!latest || latest.status !== "queued" || closed()) return;
+      if (!latest.git) {
+        dispatch({ type: "updateTask", id: taskId, patch: { git: { branch: tree.branch, folder: tree.folder, target: tree.target, head: diff.head } } });
+      }
+      dispatch({ type: "refreshed", id: taskId, head: diff.head, merged, filesChanged: diff.files, previews: diff.diffs, keepReview: true });
+    } finally {
+      refreshing.delete(taskId);
+      schedule();
+    }
+  }
+
+  /** Commits what a person changed in their step's folder, so it is part of the result. */
+  async function commitPerson(taskId: string): Promise<string | null> {
+    const task = find(taskId);
+    if (!task?.git || !existsSync(task.git.folder)) return null;
+    const dir = folderFor(task);
+    if ("error" in dir) return dir.error;
+    const folder = task.git.folder;
+    const branch = task.git.branch;
+    let diff: Changes;
+    try {
+      diff = await serialized(dir.path, async () => {
+        await commitAll(folder, [(task.name || "Shepherd step").slice(0, 72), "Changes made by hand"], await personAuthor(dir.path));
+        return changes(folder, branch);
+      });
+    } catch (error) {
+      return `Could not commit your changes: ${message(error)}`;
+    }
+    const git = find(taskId)?.git;
+    if (!git) return null;
+    dispatch({ type: "updateTask", id: taskId, patch: { filesChanged: diff.files, previews: diff.diffs, git: { ...git, head: diff.head } } });
+    if (diff.head !== task.git.head) outdateDownstream(taskId, `${task.name} changed`);
+    return null;
+  }
+
+  /** A person found a problem: tell the earlier step that owns it, and run that step again. */
+  function sendBack(fromId: string, toId: string, note: string): string | null {
+    const from = find(fromId);
+    const to = find(toId);
+    if (!from || !to) return "There is no such step.";
+    if (to.runner !== "agent") return `${to.name} is done by a person. Tell them directly.`;
+    if (!upstreamOf(fromId).includes(toId)) return `${to.name} is not before ${from.name}, so its fix would not reach it.`;
+    if (runs.has(toId)) return `${to.name} is already running. Send it an instruction from its Log tab.`;
+    const text = `${from.name || "A later step"} found a problem with this work: ${note}`;
+    dispatch({ type: "instruct", id: toId, text });
+    track(run(toId, text, true));
+    return null;
+  }
+
   async function check(taskId: string): Promise<void> {
     const task = find(taskId);
     const commandLine = task?.checkCommand;
@@ -475,7 +560,12 @@ export function createRunner(options: RunnerOptions): Runner {
         track(check(task.id));
         continue;
       }
-      if (task.runner !== "agent" || task.status !== "queued" || unmetDependencies(task.id, tasks, dependencies).length) continue;
+      if (task.status !== "queued" || unmetDependencies(task.id, tasks, dependencies).length) continue;
+      if (task.runner === "human") {
+        const due = task.outdated || (!task.git && upstreamTasks(state(), task).some((item) => item.git));
+        if (due) track(prepareFolder(task.id));
+        continue;
+      }
       if (task.outdated) {
         track(refresh(task.id));
         continue;
@@ -565,7 +655,12 @@ export function createRunner(options: RunnerOptions): Runner {
     if (!task) return { error: taskId ? `There is no task ${taskId}.` : "Say which task, as taskId." };
     switch (raw.command) {
       case "run": {
-        if (task.runner === "human") return { error: "A person does this task. Mark it complete when it is done." };
+        if (task.runner === "human") {
+          if (task.status !== "failed") return { error: "A person does this task. Mark it complete when it is done." };
+          dispatch({ type: "setStatus", id: taskId, status: "queued" });
+          track(prepareFolder(taskId));
+          return { ok: true };
+        }
         track(run(taskId, typeof raw.extra === "string" ? raw.extra : undefined, true));
         return { ok: true };
       }
@@ -593,6 +688,12 @@ export function createRunner(options: RunnerOptions): Runner {
         return { ok: true };
       case "complete": {
         if (task.runner !== "human") return { error: "Agent tasks complete when their run finishes." };
+        if (refreshing.has(taskId) || task.outdated) return { error: "Shepherd is still bringing in the earlier steps' work. Try again in a moment." };
+        const unmet = unmetDependencies(taskId, state().tasks, state().dependencies);
+        if (!unmet.length) {
+          const error = await commitPerson(taskId);
+          if (error) return { error };
+        }
         dispatch({ type: "setStatus", id: taskId, status: "completed" });
         const latest = find(taskId);
         if (latest?.status !== "completed") return { error: latest?.blocker ?? `${task.name} cannot be completed yet.` };
@@ -603,8 +704,13 @@ export function createRunner(options: RunnerOptions): Runner {
         return outcome(await merge(taskId));
       case "forward":
         return outcome(await forward(taskId, typeof raw.to === "string" ? raw.to : ""));
+      case "sendBack": {
+        const note = typeof raw.text === "string" ? raw.text.trim() : "";
+        if (!note) return { error: "Say what is wrong, as text." };
+        return outcome(sendBack(taskId, typeof raw.to === "string" ? raw.to : "", note));
+      }
       default:
-        return { error: "command must be run, stop, instruct, check, complete, merge, forward, runPlan, stopPlan or mergePlan." };
+        return { error: "command must be run, stop, instruct, check, complete, merge, forward, sendBack, runPlan, stopPlan or mergePlan." };
     }
   }
 

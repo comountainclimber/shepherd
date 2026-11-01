@@ -78,6 +78,11 @@ export function forwardFailure(taskId: string, to: string): Promise<string | nul
   return command({ command: "forward", taskId, to });
 }
 
+/** Tells an earlier step what a person found wrong with its work, and runs it again. */
+export function sendBack(taskId: string, to: string, text: string): Promise<string | null> {
+  return command({ command: "sendBack", taskId, to, text: text.trim() });
+}
+
 /** Runs every step that is not done, each as soon as the steps before it are done. */
 export function runPlan(projectId: string) {
   return command({ command: "runPlan", projectId });

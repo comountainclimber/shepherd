@@ -2,13 +2,14 @@ import { Check, Clock, LoaderCircle, Play, RefreshCw, Square, Undo2, X } from "l
 import { cx } from "../../model/format";
 import { assigneeFor, failedCheck, reviewPending, stageHint, stageOf, waitingFor, type Stage } from "../../model/stage";
 import type { PanelTab, Task } from "../../model/types";
-import { markComplete, runTask, stopTask } from "../../runner/live";
+import { runTask, stopTask } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, Button, StageBadge, Tabs, stageBg, stageBorder } from "../ui";
 import { Log } from "./Log";
 import { Output } from "./Output";
 import { Step } from "./Step";
 import { Verification } from "./Verification";
+import { YourStep } from "./YourStep";
 
 export function TaskInspector() {
   const taskId = useShepherd((store) => store.ui.selectedTaskId);
@@ -148,30 +149,22 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
           </div>
         );
       }
-      return (
-        <div className="flex items-center gap-3">
-          <Button size="lg" variant="primary" onClick={() => void markComplete(task.id)}>
-            <Check size={16} /> Mark done
-          </Button>
-          <p className="text-[12px] leading-5 text-muted">The steps after it start once you do.</p>
-        </div>
-      );
+      return <YourStep task={task} />;
     case "failed":
       return (
         <div className="space-y-2">
           <p className="line-clamp-3 text-[13px] leading-5 text-failed [overflow-wrap:anywhere]">{task.blocker ?? hint}</p>
           <div className="flex gap-2">
-            {task.runner === "agent" ? (
-              <Button size="lg" variant="primary" onClick={() => void runTask(task.id)}>
-                <RefreshCw size={15} /> Retry
-              </Button>
-            ) : null}
+            <Button size="lg" variant="primary" onClick={() => void runTask(task.id)}>
+              <RefreshCw size={15} /> {task.runner === "agent" ? "Retry" : "Try again"}
+            </Button>
             {failedCheck(task) && tab !== "checks" ? (
               <Button size="lg" onClick={() => setPanelTab("checks")}>
                 See why
               </Button>
             ) : null}
           </div>
+          {task.runner === "human" ? <YourStep task={task} /> : null}
         </div>
       );
     case "paused":
