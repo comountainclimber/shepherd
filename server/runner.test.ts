@@ -9,6 +9,7 @@ import type { OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { WORKSPACE_PROJECT_ID, workspace } from "../src/model/workspace";
 import { createEngine, envelope } from "./engine";
+import { commitAll, ensureRepo, openWorktree } from "./git";
 import { createRunner, type RunnerOptions } from "./runner";
 
 function gitOut(cwd: string, ...args: string[]) {
@@ -21,7 +22,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 const [log, prompt] = process.argv.slice(2);
 const name = /Objective: Do (\\w+)/.exec(prompt)[1].toLowerCase();
 writeFileSync(name + ".txt", name + "\\n");
-appendFileSync(log, JSON.stringify({ name, prompt }) + "\\n");
+appendFileSync(log, JSON.stringify({ name, prompt, env: { branch: process.env.SHEPHERD_TASK_BRANCH, folder: process.env.SHEPHERD_TASK_FOLDER, base: process.env.SHEPHERD_TASK_BASE } }) + "\\n");
 const say = (event) => console.log(JSON.stringify(event));
 say({ type: "thread.started", thread_id: "thread-" + name });
 say({ type: "item.completed", item: { type: "agent_message", text: "Report from " + name + ": wrote " + name + ".txt" } });
@@ -52,7 +53,7 @@ function planServer(board: OrchestrationState, checklist?: RunnerOptions["checkl
     readFileSync(log, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { name: string; prompt: string });
+      .map((line) => JSON.parse(line) as { name: string; prompt: string; env: { branch: string; folder: string; base: string } });
   return { engine, runner, prompts, project: path.join(sandbox, "workspace") };
 }
 
@@ -121,7 +122,7 @@ describe("scheduler", () => {
       await runner.idle();
       const step = engine.get().tasks[0];
       expect(step.status).toBe("completed");
-      expect(step.git?.branch).toBe("shepherd/build-2");
+      expect(step.git?.branch).toBe("shepherd-step/build");
       expect(step.git?.folder).not.toBe(repo);
       expect(readFileSync(path.join(step.git!.folder, "build.txt"), "utf8")).toBe("build\n");
       expect(gitOut(repo, "rev-list", "--count", step.git!.branch)).toBe("2");
@@ -213,7 +214,7 @@ describe("plans", () => {
     expect(said.ship).not.toContain("Report from plan");
 
     expect(step("Plan").output).toBe("Report from plan: wrote plan.txt");
-    expect(step("Ship").git?.branch).toBe("shepherd/ship");
+    expect(step("Ship").git?.branch).toBe("shepherd-step/ship");
     for (const file of ["plan.txt", "front.txt", "back.txt", "ship.txt"]) {
       expect(existsSync(path.join(step("Ship").git!.folder, file))).toBe(true);
     }
@@ -234,7 +235,8 @@ describe("plans", () => {
 
     const folder = step("Try").git!.folder;
     expect(step("Try").status).toBe("queued");
-    expect(step("Try").git?.branch).toBe("shepherd/try");
+    expect(step("Try").git?.branch).toBe(engine.get().goals[0].branch);
+    expect(folder).toBe(engine.get().goals[0].folder);
     for (const file of ["plan.txt", "front.txt", "back.txt"]) expect(existsSync(path.join(folder, file))).toBe(true);
     expect(engine.get().goals[0]!.running).toBe(true);
 
@@ -323,7 +325,7 @@ describe("separate task plans", () => {
       expect(await runner.handle({ command: "mergePlan", goalId: first })).toEqual({ ok: true });
       expect(existsSync(path.join(project, "plan.txt"))).toBe(true);
       expect(existsSync(path.join(project, "other.txt"))).toBe(false);
-      expect(engine.get().tasks.find((task) => task.goalId === "second")?.git?.merged).toBeUndefined();
+      expect(engine.get().tasks.find((task) => task.goalId === "second")?.git?.merged?.into).toBe(engine.get().goals.find((goal) => goal.id === "second")?.branch);
       expect(await runner.handle({ command: "mergePlan", goalId: "second" })).toEqual({ ok: true });
       expect(existsSync(path.join(project, "other.txt"))).toBe(true);
     } finally {
@@ -344,5 +346,141 @@ describe("separate task plans", () => {
       runner.close();
       engine.close();
     }
+  });
+});
+
+describe("task work collection", () => {
+  it("waits for acceptance and a clean task folder, then automatically merges and starts from person commits", async () => {
+    const board = outlined("Build\nNext");
+    board.tasks[0].verification = [{ id: "review-build", kind: "review", state: "pending", timestamp: null, evidence: "" }];
+    const { engine, runner, project, prompts } = planServer(board);
+    try {
+      await runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await runner.idle();
+      const goal = engine.get().goals[0];
+      const first = () => engine.get().tasks[0];
+      expect(first().status).toBe("completed");
+      expect(first().git?.merged).toBeUndefined();
+      expect(existsSync(path.join(goal.folder!, "build.txt"))).toBe(false);
+      const projectHead = gitOut(project, "rev-parse", "HEAD");
+      writeFileSync(path.join(goal.folder!, "person.txt"), "starting point\n");
+      gitOut(goal.folder!, "add", ".");
+      gitOut(goal.folder!, "commit", "-qm", "My own task commit");
+      writeFileSync(path.join(goal.folder!, "person.txt"), "my change\n");
+      engine.dispatch({ type: "setCheck", taskId: first().id, checkId: "review-build", state: "passed" });
+      await runner.idle();
+      expect(first().blocker).toContain("Commit or stash");
+      expect(engine.get().goals[0].blocker).toBe(first().blocker);
+      expect(first().git?.merged).toBeUndefined();
+      expect(engine.get().tasks[1].status).toBe("queued");
+      expect(existsSync(path.join(goal.folder!, "build.txt"))).toBe(false);
+      expect(readFileSync(path.join(goal.folder!, "person.txt"), "utf8")).toBe("my change\n");
+      gitOut(goal.folder!, "add", ".");
+      gitOut(goal.folder!, "commit", "-qm", "Keep my change");
+      // Git changes do not dispatch a board action: the runner must notice on its own.
+      await expect.poll(() => engine.get().tasks.every((step) => isFullyVerified(step) && step.git?.merged), { timeout: 15000 }).toBe(true);
+      await runner.idle();
+      expect(engine.get().goals[0].blocker).toBeNull();
+      expect(first().blocker).toBeNull();
+      const next = engine.get().tasks[1];
+      expect(readFileSync(path.join(next.git!.folder, "person.txt"), "utf8")).toBe("my change\n");
+      for (const file of ["build.txt", "next.txt", "person.txt"]) expect(existsSync(path.join(goal.folder!, file))).toBe(true);
+      expect(gitOut(project, "rev-parse", "HEAD")).toBe(projectHead);
+      expect(gitOut(project, "status", "--porcelain")).toBe("");
+      expect(existsSync(path.join(project, "build.txt"))).toBe(false);
+      const prompt = prompts().find((item) => item.name === "next")!;
+      expect(prompt.prompt).toContain(`task branch ${goal.branch}`);
+      expect(prompt.env).toEqual({ branch: goal.branch, folder: goal.folder, base: goal.base });
+    } finally { runner.close(); engine.close(); }
+  }, 30_000);
+
+  it("does not collect a step with a failed command check", async () => {
+    const board = outlined("Build");
+    board.tasks[0] = { ...board.tasks[0], checkCommand: "exit 1", verification: [{ id: "command-build", kind: "command", state: "pending", timestamp: null, evidence: "", command: "exit 1" }] };
+    const { engine, runner } = planServer(board);
+    try {
+      await runner.handle({ command: "run", taskId: board.tasks[0].id });
+      await runner.idle();
+      expect(engine.get().tasks[0].status).toBe("failed");
+      expect(engine.get().tasks[0].git?.merged).toBeUndefined();
+      expect(existsSync(path.join(engine.get().goals[0].folder!, "build.txt"))).toBe(false);
+    } finally { runner.close(); engine.close(); }
+  });
+
+  it("gives a first human step the task folder and commits it on the task branch", async () => {
+    const board = outlined("Try\nNext");
+    board.tasks[0] = { ...board.tasks[0], runner: "human", agentId: null };
+    const { engine, runner, project } = planServer(board);
+    try {
+      await runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await runner.idle();
+      const goal = engine.get().goals[0];
+      expect(engine.get().tasks[0].git?.folder).toBe(goal.folder);
+      expect(engine.get().tasks[0].git?.branch).toBe(goal.branch);
+      const initial = gitOut(project, "rev-parse", "HEAD");
+      gitOut(project, "config", "user.name", "Person");
+      gitOut(project, "config", "user.email", "person@example.test");
+      writeFileSync(path.join(goal.folder!, "human.txt"), "my work\n");
+      expect(await runner.handle({ command: "complete", taskId: board.tasks[0].id })).toEqual({ ok: true });
+      await runner.idle();
+      expect(engine.get().tasks.every(isFullyVerified)).toBe(true);
+      expect(engine.get().tasks[0].filesChanged).toEqual(["human.txt"]);
+      expect(gitOut(goal.folder!, "log", "--format=%s|%an")).toContain("Try|Person");
+      expect(readFileSync(path.join(engine.get().tasks[1].git!.folder, "human.txt"), "utf8")).toBe("my work\n");
+      expect(gitOut(project, "rev-parse", "HEAD")).toBe(initial);
+      expect(existsSync(path.join(project, "human.txt"))).toBe(false);
+    } finally { runner.close(); engine.close(); }
+  });
+
+  it("collects a migrated finished step without renaming its branch or running it again", async () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "shepherd-legacy-"));
+    const root = mkdtempSync(path.join(tmpdir(), "shepherd-legacy-trees-"));
+    await ensureRepo(repo);
+    const old = await openWorktree(repo, root, "step-build", "old-build");
+    writeFileSync(path.join(old.folder, "build.txt"), "old work\n");
+    await commitAll(old.folder, ["Finished before tasks existed"], { name: "Codex", email: "codex@test" });
+    const board = outlined("Build\nNext");
+    board.projects[0] = { ...board.projects[0], repo };
+    board.tasks[0] = { ...board.tasks[0], status: "completed", git: { branch: old.branch, folder: old.folder, target: old.target } };
+    const legacy = { ...board, schema: 2, goals: undefined } as unknown as OrchestrationState;
+    const { engine, runner, prompts } = planServer(legacy);
+    try {
+      expect(engine.get().goals[0].branch).toBeUndefined();
+      expect(engine.get().tasks[0].git?.branch).toBe(old.branch);
+      await runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await runner.idle();
+      const goal = engine.get().goals[0];
+      expect(goal.branch).toMatch(/^shepherd\//);
+      expect(readFileSync(path.join(goal.folder!, "build.txt"), "utf8")).toBe("old work\n");
+      expect(engine.get().tasks[0].git?.branch).toBe(old.branch);
+      expect(engine.get().tasks[0].git?.folder).toBe(old.folder);
+      expect(engine.get().tasks[0].git?.merged?.into).toBe(goal.branch);
+      expect(prompts().map((item) => item.name)).toEqual(["next"]);
+      expect(readFileSync(path.join(engine.get().tasks[1].git!.folder, "build.txt"), "utf8")).toBe("old work\n");
+      expect(existsSync(path.join(repo, "build.txt"))).toBe(false);
+    } finally {
+      runner.close(); engine.close();
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges only into the task's recorded base when explicitly asked", async () => {
+    const board = outlined("Build");
+    const { engine, runner, project } = planServer(board);
+    try {
+      await runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await runner.idle();
+      const goal = engine.get().goals[0];
+      gitOut(project, "checkout", "-qb", "another-branch");
+      const before = gitOut(project, "rev-parse", "HEAD");
+      expect(await runner.handle({ command: "mergePlan", goalId: goal.id })).toEqual({ error: expect.stringContaining(`no longer on ${goal.base}`) });
+      expect(gitOut(project, "rev-parse", "HEAD")).toBe(before);
+      expect(existsSync(path.join(project, "build.txt"))).toBe(false);
+      gitOut(project, "checkout", "-q", goal.base!);
+      expect(await runner.handle({ command: "mergePlan", goalId: goal.id })).toEqual({ ok: true });
+      expect(existsSync(path.join(project, "build.txt"))).toBe(true);
+      expect(engine.get().goals[0].merged?.into).toBe(goal.base);
+    } finally { runner.close(); engine.close(); }
   });
 });

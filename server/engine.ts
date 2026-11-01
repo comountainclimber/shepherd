@@ -124,6 +124,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
   }
   if (action.type === "createGoal") {
     const goal = action.goal;
+    if (goal && ["branch", "folder", "base", "blocker", "merged"].some((key) => key in goal)) return { error: "A new task starts with no branch. Shepherd creates it when needed." };
     if (!goal || typeof goal.id !== "string" || !goal.id || typeof goal.name !== "string" || !goal.name.trim() || typeof goal.goal !== "string" || !state.projects.some((project) => project.id === goal.projectId)) {
       return { error: "A new task needs an id, name, goal text and a project." };
     }

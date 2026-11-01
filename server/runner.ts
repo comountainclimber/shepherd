@@ -14,12 +14,16 @@ import { taskPrompt, upstreamContext, upstreamTasks } from "../src/runner/prompt
 import type { Engine } from "./engine";
 import {
   changes,
+  DirtyWorktreeError,
   commitAll,
   ensureRepo,
   inspectRepo,
+  head,
+  openGoalWorktree,
   isTaskBranch,
   isTaskName,
   mergeBranch,
+  markAccepted,
   openWorktree,
   personAuthor,
   prepareRun,
@@ -91,6 +95,8 @@ export function createRunner(options: RunnerOptions): Runner {
   const runs = new Map<string, Attempt>();
   const checks = new Set<string>();
   const refreshing = new Set<string>();
+  const collecting = new Set<string>();
+  const retryMergeAt = new Map<string, number>();
   const work = new Set<Promise<unknown>>();
   const closing = new AbortController();
   const closed = () => closing.signal.aborted;
@@ -127,6 +133,27 @@ export function createRunner(options: RunnerOptions): Runner {
     return projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
   }
 
+  async function taskTree(task: Task, repo: string) {
+    const goal = state().goals.find((item) => item.id === task.goalId);
+    if (!goal) throw new Error("This step has no task.");
+    const tree = await openGoalWorktree(repo, worktrees, goal.id, slugify(goal.name, "task"), goal);
+    if (goal.branch !== tree.branch || goal.folder !== tree.folder || goal.base !== tree.target) {
+      dispatch({ type: "goalRuntime", id: goal.id, patch: { branch: tree.branch, folder: tree.folder, base: tree.target } });
+    }
+    return tree;
+  }
+
+  function taskEnv(task: Task): Record<string, string> {
+    const goal = state().goals.find((item) => item.id === task.goalId);
+    return goal?.branch && goal.folder && goal.base
+      ? { SHEPHERD_TASK_BRANCH: goal.branch, SHEPHERD_TASK_FOLDER: goal.folder, SHEPHERD_TASK_BASE: goal.base }
+      : {};
+  }
+
+  function collected(task: Task): boolean {
+    return !!task.git?.merged && task.git.merged.into === state().goals.find((goal) => goal.id === task.goalId)?.branch;
+  }
+
   function kill(taskId: string) {
     const attempt = runs.get(taskId);
     if (!attempt) return;
@@ -144,6 +171,12 @@ export function createRunner(options: RunnerOptions): Runner {
     const attempt: Attempt = { stopped: false, child: null, scheduled: !manual };
     runs.set(taskId, attempt);
     try {
+      for (const upstream of upstreamTasks(state(), task)) {
+        if (isFullyVerified(upstream) && upstream.git && !collected(upstream)) {
+          const error = await merge(upstream.id);
+          if (error) return fail(taskId, error);
+        }
+      }
       return await execute(task, attempt, extra, manual);
     } catch (error) {
       return attempt.stopped ? null : fail(taskId, `Shepherd hit an error running this task: ${message(error)}`);
@@ -181,8 +214,9 @@ export function createRunner(options: RunnerOptions): Runner {
         const repo = state().projects.find((project) => project.id === task.projectId)?.repo
           ? (await inspectRepo(dir.path)).repo
           : await ensureRepo(dir.path);
-        const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch);
-        return [opened, await prepareRun(opened, branches(upstreamTasks(state(), current)), author)] as const;
+        const goal = await taskTree(current, repo);
+        const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch, { start: goal.branch, prefix: "shepherd-step" });
+        return [opened, await prepareRun(opened, [goal.branch, ...branches(upstreamTasks(state(), current))], author)] as const;
       });
     } catch (error) {
       return attempt.stopped ? null : fail(taskId, message(error));
@@ -197,11 +231,11 @@ export function createRunner(options: RunnerOptions): Runner {
 
     const latest = find(taskId)!;
     const tools = lookEnv(taskId);
-    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK });
+    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK, taskBranch: taskEnv(latest).SHEPHERD_TASK_BRANCH });
     const spec = command(provider, prompt, latest.sessionId ?? null, agentChoice({ model: latest.model, effort: latest.effort }, models()[provider].default));
     const child = spawn(spec.cmd, spec.args, {
       cwd: tree.folder,
-      env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate, ...tools }),
+      env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate, ...taskEnv(latest), ...tools }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
@@ -339,8 +373,9 @@ export function createRunner(options: RunnerOptions): Runner {
           const repo = state().projects.find((project) => project.id === task.projectId)?.repo
             ? (await inspectRepo(dir.path)).repo
             : await ensureRepo(dir.path);
-          const tree = await openWorktree(repo, worktrees, taskId, task.worktree, task.git?.branch);
-          const brought = await prepareRun(tree, branches(upstreamTasks(state(), task)), author);
+          const goal = await taskTree(task, repo);
+          const tree = await openWorktree(repo, worktrees, taskId, task.worktree, task.git?.branch, { start: goal.branch, prefix: "shepherd-step" });
+          const brought = await prepareRun(tree, [goal.branch, ...branches(upstreamTasks(state(), task))], author);
           return [brought, await changes(tree.folder, tree.branch)] as const;
         });
       } catch (error) {
@@ -366,10 +401,7 @@ export function createRunner(options: RunnerOptions): Runner {
     if (find(taskId)?.status === "completed" && find(taskId)?.checkCommand) await check(taskId);
   }
 
-  /**
-   * Gives a step a person does its own worktree with the earlier steps' work merged in, so there
-   * is one folder to try the result in. It is brought up to date again when that work changes.
-   */
+  /** A person works directly in the task folder. Preparing it never commits their edits. */
   async function prepareFolder(taskId: string): Promise<void> {
     const task = find(taskId);
     if (!task || task.runner !== "human" || refreshing.has(taskId) || closed()) return;
@@ -377,46 +409,31 @@ export function createRunner(options: RunnerOptions): Runner {
     let first = false;
     try {
       const dir = await folderFor(task);
-      if ("error" in dir) {
-        fail(taskId, dir.error);
-        return;
-      }
-      const name = task.git ? task.worktree : branchName(task, state().tasks);
-      if (!isTaskName(name)) {
-        fail(taskId, `Not a usable step folder name: ${name}`);
-        return;
-      }
-      dispatch({ type: "updateTask", id: taskId, patch: { worktree: name, activity: "Bringing in the earlier steps' work…" } });
-      let tree: Awaited<ReturnType<typeof openWorktree>>;
-      let merged: string[];
-      let diff: Changes;
-      try {
-        [tree, merged, diff] = await serialized(dir.path, async () => {
-          const repo = state().projects.find((project) => project.id === task.projectId)?.repo
-            ? (await inspectRepo(dir.path)).repo
-            : await ensureRepo(dir.path);
-          const opened = await openWorktree(repo, worktrees, taskId, name, task.git?.branch);
-          const brought = await prepareRun(opened, branches(upstreamTasks(state(), task)), await personAuthor(repo));
-          return [opened, brought, await changes(opened.folder, opened.branch)] as const;
-        });
-      } catch (error) {
-        fail(taskId, `Could not bring in the earlier steps' work: ${message(error)}`);
-        return;
-      }
+      if ("error" in dir) throw new Error(dir.error);
+      const [tree, start, shortHead] = await serialized(dir.path, async () => {
+        const repo = state().projects.find((project) => project.id === task.projectId)?.repo
+          ? (await inspectRepo(dir.path)).repo : await ensureRepo(dir.path);
+        const tree = await taskTree(task, repo);
+        const base = await head(tree.folder);
+        return [tree, base, (await changes(tree.folder, tree.branch, base)).head] as const;
+      });
       const latest = find(taskId);
       if (!latest || latest.status !== "queued" || closed()) return;
-      if (!latest.git) {
-        first = true;
-        dispatch({ type: "updateTask", id: taskId, patch: { git: { branch: tree.branch, folder: tree.folder, target: tree.target, head: diff.head } } });
-      }
-      dispatch({ type: "refreshed", id: taskId, head: diff.head, merged, filesChanged: diff.files, previews: diff.diffs, keepReview: true });
+      first = !latest.git;
+      dispatch({ type: "updateTask", id: taskId, patch: {
+        git: { branch: tree.branch, folder: tree.folder, target: tree.branch, head: shortHead, diffBase: start },
+        filesChanged: [], previews: [], outdated: undefined, activity: "Ready for you", blocker: null,
+      } });
+    } catch (error) {
+      fail(taskId, `Could not prepare the task folder: ${message(error)}`);
     } finally {
       refreshing.delete(taskId);
       schedule();
     }
-    if (!first) return;
-    const error = await writeChecklist(taskId, false);
-    if (error) console.warn(`[shepherd] Could not write the checklist for ${task.name}: ${error}`);
+    if (first) {
+      const error = await writeChecklist(taskId, false);
+      if (error) console.warn(`[shepherd] Could not write the checklist for ${task.name}: ${error}`);
+    }
   }
 
   /**
@@ -445,7 +462,8 @@ export function createRunner(options: RunnerOptions): Runner {
   /** Commits what a person changed in their step's folder, so it is part of the result. */
   async function commitPerson(taskId: string): Promise<string | null> {
     const task = find(taskId);
-    if (!task?.git || !existsSync(task.git.folder)) return null;
+    if (!task) return "There is no such step.";
+    if (!task.git || !existsSync(task.git.folder)) return "The task folder is not ready yet. Try again in a moment.";
     const dir = await folderFor(task);
     if ("error" in dir) return dir.error;
     const folder = task.git.folder;
@@ -453,8 +471,10 @@ export function createRunner(options: RunnerOptions): Runner {
     let diff: Changes;
     try {
       diff = await serialized(dir.path, async () => {
+        const goal = await taskTree(task, dir.path);
+        if (goal.branch !== branch || goal.folder !== folder) throw new Error("This step must use the task folder. Prepare it again first.");
         await commitAll(folder, [(task.name || "Shepherd step").slice(0, 72), "Changes made by hand"], await personAuthor(dir.path));
-        return changes(folder, branch);
+        return changes(folder, branch, task.git?.diffBase);
       });
     } catch (error) {
       return `Could not commit your changes: ${message(error)}`;
@@ -489,7 +509,17 @@ export function createRunner(options: RunnerOptions): Runner {
       dispatch({ type: "startCheck", taskId });
       const started = Date.now();
       const project = state().projects.find((item) => item.id === task.projectId);
-      const folder = await checkFolder(state().workspace, project?.directory, task.git?.branch, sandbox, worktrees, project?.repo);
+      let folder = await checkFolder(state().workspace, project?.directory, task.git?.branch, sandbox, worktrees, project?.repo);
+      if (!("error" in folder) && !task.git) {
+        const dir = folder.path;
+        try {
+          const tree = await serialized(dir, async () => {
+            const repo = project?.repo ? (await inspectRepo(dir)).repo : await ensureRepo(dir);
+            return taskTree(task, repo);
+          });
+          folder = { path: tree.folder };
+        } catch (error) { folder = { error: message(error) }; }
+      }
       let run: CheckRun;
       try {
         if ("error" in folder) throw new Error(folder.error);
@@ -500,6 +530,7 @@ export function createRunner(options: RunnerOptions): Runner {
           SHEPHERD_EVIDENCE_DIR: dir,
           SHEPHERD_TASK: task.name,
           ...lookEnv(taskId),
+          ...taskEnv(task),
           ...(task.git ? { SHEPHERD_BRANCH: task.git.branch, SHEPHERD_BASE_REF: `refs/shepherd-base/${task.git.branch}` } : {}),
         };
         const result = await runCheckCommand(folder.path, commandLine, options.checkTimeoutMs, env, closing.signal);
@@ -523,21 +554,44 @@ export function createRunner(options: RunnerOptions): Runner {
     }
   }
 
+  /** Accepted steps collect on the task branch; only mergePlan touches the project checkout. */
   async function merge(taskId: string): Promise<string | null> {
     const task = find(taskId);
-    if (!task?.git) return "This task has no branch yet. Run it first.";
-    if (!isFullyVerified(task)) return "Verify the task before merging it.";
+    if (!task?.git) return "This step has no branch yet. Run it first.";
+    if (!isFullyVerified(task)) return "Verify the step before merging it.";
     const dir = await folderFor(task);
-    if ("error" in dir) return dir.error;
     try {
-      const done = await serialized(dir.path, () =>
-        mergeBranch(realpathSync(dir.path), task.git!.branch, `Merge ${task.name} (${task.git!.branch})`),
-      );
+      if ("error" in dir) throw new Error(dir.error);
+      const done = await serialized(dir.path, async () => {
+        const latest = find(taskId);
+        if (!latest || !isFullyVerified(latest) || runs.has(taskId) || latest.git?.head !== task.git?.head || latest.git?.branch !== task.git?.branch) return null;
+        const goal = await taskTree(task, dir.path);
+        const done = await mergeBranch(goal.folder, task.git!.branch, `Merge ${task.name} (${task.git!.branch})`, goal.branch);
+        if (task.git!.branch !== goal.branch) await markAccepted(goal.folder, task.git!.branch);
+        return done;
+      });
+      if (!done) return "This step changed while waiting to merge. Shepherd will collect it after its next acceptance.";
       dispatch({ type: "merged", id: taskId, into: done.into, sha: done.sha });
+      if (find(taskId)?.blocker) dispatch({ type: "updateTask", id: taskId, patch: { blocker: null, activity: `Merged into ${done.into}` } });
+      const blocker = state().tasks.find((step) => step.goalId === task.goalId && step.id !== taskId && isFullyVerified(step) && !collected(step) && step.blocker)?.blocker ?? null;
+      dispatch({ type: "goalRuntime", id: task.goalId, patch: { blocker, merged: undefined } });
+      retryMergeAt.delete(taskId);
       return null;
     } catch (error) {
-      return message(error);
+      const note = error instanceof DirtyWorktreeError
+        ? `Waiting to merge ${task.name}: the task folder has uncommitted changes. Commit or stash them; Shepherd will try again.`
+        : `Waiting to merge ${task.name}: ${message(error)}`;
+      retryMergeAt.set(taskId, Date.now() + 1000);
+      if (find(taskId)?.blocker !== note) dispatch({ type: "updateTask", id: taskId, patch: { blocker: note, activity: note } });
+      if (state().goals.find((goal) => goal.id === task.goalId)?.blocker !== note) dispatch({ type: "goalRuntime", id: task.goalId, patch: { blocker: note } });
+      return note;
     }
+  }
+
+  async function collect(taskId: string) {
+    collecting.add(taskId);
+    try { await merge(taskId); }
+    finally { collecting.delete(taskId); schedule(); }
   }
 
   /** Sends one task's failed check to an upstream task that owns the cause, and runs it. */
@@ -610,14 +664,20 @@ export function createRunner(options: RunnerOptions): Runner {
     let started = [...runs.values()].filter((attempt) => attempt.scheduled).length;
     for (const task of tasks) {
       if (state().goals.find((goal) => goal.id === task.goalId)?.status !== "open") continue;
-      if (runs.has(task.id) || checks.has(task.id) || refreshing.has(task.id)) continue;
+      if (runs.has(task.id) || checks.has(task.id) || refreshing.has(task.id) || collecting.has(task.id)) continue;
+      if (isFullyVerified(task) && task.git && !collected(task)) {
+        if (Date.now() >= (retryMergeAt.get(task.id) ?? 0)) track(collect(task.id));
+        continue;
+      }
       if (task.status === "completed" && !task.outdated && task.checkCommand && uncheckedCommand(task)) {
         track(check(task.id));
         continue;
       }
       if (task.status !== "queued" || unmetDependencies(task.id, tasks, dependencies).length) continue;
+      const upstream = upstreamTasks(state(), task);
+      if (upstream.some((step) => step.git && (isFullyVerified(step) || task.runner === "human") && !collected(step))) continue;
       if (task.runner === "human") {
-        const due = task.outdated || (!task.git && upstreamTasks(state(), task).some((item) => item.git));
+        const due = task.outdated || !task.git;
         if (due) track(prepareFolder(task.id));
         continue;
       }
@@ -633,7 +693,7 @@ export function createRunner(options: RunnerOptions): Runner {
     }
     for (const goalId of planned) {
       const steps = tasks.filter((task) => task.goalId === goalId);
-      if (steps.length && !steps.every(isFullyVerified)) continue;
+      if (steps.length && !steps.every((step) => isFullyVerified(step) && (!step.git || collected(step)))) continue;
       dispatch({ type: "setPlanRunning", goalId, running: false });
     }
   }
@@ -669,24 +729,30 @@ export function createRunner(options: RunnerOptions): Runner {
     }
   }
 
-  /**
-   * Merges every finished step's branch into the project folder's branch. The last steps go first:
-   * their branches already hold the work of the steps before them, so those need no merge of their own.
-   */
+  /** Explicitly merges this task into its recorded base, in the project checkout. */
   async function mergePlan(goalId: string): Promise<string | null> {
     const { tasks, dependencies } = state();
     const steps = tasks.filter((task) => task.goalId === goalId);
-    const waiting = steps.filter((task) => !isFullyVerified(task));
-    if (waiting.length) return `${waiting[0]!.name || "A step"} is not done yet.`;
-    const open = dependencyOrder(steps, dependencies)
-      .filter((task) => task.git && !task.git.merged)
-      .reverse();
-    if (!open.length) return "There is nothing left to merge.";
-    for (const task of open) {
+    const waiting = steps.find((task) => !isFullyVerified(task));
+    if (waiting) return `${waiting.name || "A step"} is not done yet.`;
+    for (const task of dependencyOrder(steps, dependencies)) {
+      if (!task.git || collected(task)) continue;
       const error = await merge(task.id);
-      if (error) return `${task.name}: ${error}`;
+      if (error) return error;
     }
-    return null;
+    const goal = state().goals.find((goal) => goal.id === goalId);
+    if (!goal?.branch || !goal.base || !goal.folder) return "There is nothing to merge yet. Run a step first.";
+    const project = state().projects.find((project) => project.id === goal.projectId);
+    const dir = await projectFolder(state().workspace, project?.directory, sandbox, project?.repo);
+    if ("error" in dir) return dir.error;
+    try {
+      const done = await serialized(dir.path, async () => {
+        await openGoalWorktree(dir.path, worktrees, goal.id, slugify(goal.name, "task"), goal);
+        return mergeBranch(dir.path, goal.branch!, `Merge task ${goal.name} (${goal.branch})`, goal.base);
+      });
+      dispatch({ type: "goalRuntime", id: goalId, patch: { merged: { ...done, at: Date.now() }, blocker: null } });
+      return null;
+    } catch (error) { return message(error); }
   }
 
   async function handle(body: unknown): Promise<{ ok: true } | { error: string }> {
@@ -746,6 +812,13 @@ export function createRunner(options: RunnerOptions): Runner {
         if (refreshing.has(taskId) || task.outdated) return { error: "Shepherd is still bringing in the earlier steps' work. Try again in a moment." };
         const unmet = unmetDependencies(taskId, state().tasks, state().dependencies);
         if (!unmet.length) {
+          for (const step of upstreamTasks(state(), task)) {
+            if (step.git && !collected(step)) {
+              const error = await merge(step.id);
+              if (error) return { error };
+            }
+          }
+          if (!task.git) await prepareFolder(taskId);
           const error = await commitPerson(taskId);
           if (error) return { error };
         }
@@ -778,7 +851,10 @@ export function createRunner(options: RunnerOptions): Runner {
     }
   }
 
-  engine.subscribe(schedule);
+  const unsubscribe = engine.subscribe(schedule);
+  // A person's git commit or stash does not dispatch a board action.
+  const mergePoll = setInterval(() => { if (retryMergeAt.size) schedule(); }, 1000);
+  mergePoll.unref();
   schedule();
 
   return {
@@ -789,6 +865,8 @@ export function createRunner(options: RunnerOptions): Runner {
     },
     close() {
       closing.abort();
+      clearInterval(mergePoll);
+      unsubscribe();
       if (tick) clearTimeout(tick);
       tick = null;
       for (const id of [...runs.keys()]) kill(id);

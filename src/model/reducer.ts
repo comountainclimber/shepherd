@@ -134,6 +134,8 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
           : goal),
       };
     }
+    case "goalRuntime":
+      return { ...state, goals: state.goals.map((goal) => goal.id === action.id ? { ...goal, ...action.patch } : goal) };
     case "finishGoal":
     case "archiveGoal":
     case "reopenGoal":

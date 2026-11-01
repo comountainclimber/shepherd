@@ -84,7 +84,7 @@ export function draftChecklist(taskId: string): Promise<string | null> {
   return command({ command: "checklist", taskId });
 }
 
-/** Merges a verified task's branch into the project folder's branch. Returns an error to show, or null. */
+/** Adds an accepted step's branch to its task branch. Returns an error to show, or null. */
 export function mergeTask(taskId: string): Promise<string | null> {
   return command({ command: "merge", taskId });
 }
@@ -108,7 +108,7 @@ export function stopPlan(goalId: string) {
   return command({ command: "stopPlan", goalId });
 }
 
-/** Merges the finished plan's branches into the project folder's branch. */
+/** Explicitly merges the task branch into its recorded base in the project checkout. */
 export function mergePlan(goalId: string) {
   return command({ command: "mergePlan", goalId });
 }

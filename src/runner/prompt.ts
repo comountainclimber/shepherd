@@ -13,6 +13,7 @@ export interface UpstreamContext {
 export interface PromptOptions {
   /** The agent can ask Shepherd for screenshots with $SHEPHERD_LOOK. */
   look?: boolean;
+  taskBranch?: string;
 }
 
 export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
@@ -89,6 +90,7 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     "Work only in the current directory. It is this step's own git worktree, so other steps cannot see or overwrite your changes.",
     "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
+    options.taskBranch ? `This step belongs to task branch ${options.taskBranch}. Accepted work collects there; the project checkout stays untouched.` : "",
     `Task: ${task.name}`,
     `Objective: ${task.objective || task.name}`,
     task.description && task.description !== task.objective ? `Context: ${task.description}` : "",

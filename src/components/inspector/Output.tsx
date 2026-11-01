@@ -29,7 +29,7 @@ function Report({ task }: { task: Task }) {
   if (task.runner === "human") {
     return (
       <Card title="Report">
-        <p className="text-[13px] leading-5 text-muted">
+        <p className="text-[13px] leading-5 text-muted [overflow-wrap:anywhere]">
           {task.status === "completed"
             ? "You marked this step done."
             : task.git
@@ -56,7 +56,7 @@ function Report({ task }: { task: Task }) {
       {text ? (
         <div className="max-h-[50vh] overflow-auto whitespace-pre-wrap text-[13px] leading-5 text-text [overflow-wrap:anywhere]">{text}</div>
       ) : (
-        <p className="text-[13px] leading-5 text-muted">
+        <p className="text-[13px] leading-5 text-muted [overflow-wrap:anywhere]">
           {task.status === "failed" ? (task.blocker ?? "The run failed before the agent reported.") : "Nothing yet. The agent's report shows up here after the step runs."}
         </p>
       )}
@@ -191,14 +191,15 @@ function Merge({ task, done }: { task: Task; done: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const git = task.git!;
   return (
-    <Card title="Merge" right={git.merged ? <span className="text-[11px] font-medium uppercase text-completed">Merged</span> : null}>
-      <p className="text-[13px] leading-5 text-muted">
+    <Card title="Task branch" right={git.merged ? <span className="text-[11px] font-medium uppercase text-completed">Merged</span> : null}>
+      <p className="text-[13px] leading-5 text-muted [overflow-wrap:anywhere]">
         {git.merged
           ? `Merged into ${git.merged.into} as ${git.merged.sha} at ${formatClock(git.merged.at)}.`
           : done
-            ? `Brings ${git.branch}, with the earlier steps' work, into ${git.target} in the project folder. Merging the whole plan at once is in the step list.`
-            : `Once it is done, you can merge ${git.branch} into ${git.target}.`}
+            ? `Shepherd adds accepted work from ${git.branch} to the task branch. Merge the task into its base from the step list.`
+            : `Once this step is done and its checks pass, Shepherd adds ${git.branch} to the task branch.`}
       </p>
+      {task.blocker ? <p role="status" className="mt-1 text-[12px] leading-5 text-approval [overflow-wrap:anywhere]">{task.blocker}</p> : null}
       {error ? <p className="mt-1 text-[12px] leading-5 text-failed">{error}</p> : null}
       {git.merged ? null : (
         <Button
@@ -211,7 +212,7 @@ function Merge({ task, done }: { task: Task; done: boolean }) {
             setBusy(false);
           }}
         >
-          <GitMerge size={15} /> {busy ? "Merging…" : `Merge just this step into ${git.target}`}
+          <GitMerge size={15} /> {busy ? "Merging…" : `Retry adding this step to the task`}
         </Button>
       )}
     </Card>

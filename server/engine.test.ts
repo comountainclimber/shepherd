@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { blankTask } from "../src/model/factory";
+import { blankGoal, blankTask } from "../src/model/factory";
 import { workspace } from "../src/model/workspace";
 import { createEngine, tabAction } from "./engine";
 
@@ -36,5 +36,7 @@ describe("task actions from tabs", () => {
     }
     expect(tabAction(board, { type: "updateGoal", id: "x", patch: { branch: "main", running: true } })).toHaveProperty("error");
     expect(tabAction(board, { type: "updateTask", id: "x", patch: { goalId: "other" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "goalRuntime", id: "x", patch: { branch: "main" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "createGoal", goal: { ...blankGoal(board.projects[0].id, "Fake"), branch: "main", folder: "/tmp/fake" } })).toHaveProperty("error");
   });
 });

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, openWorktree, prepareRun } from "./git";
+import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, markAccepted, openGoalWorktree, openWorktree, prepareRun } from "./git";
 
 const AGENT = { name: "Codex", email: "codex@shepherd.local" };
 let temps: string[] = [];
@@ -217,5 +217,97 @@ describe("mergeBranch", () => {
     await expect(mergeBranch(repo, tree.branch, "Merge")).rejects.toThrow(/conflicts in x\.txt/);
     expect(gitOut(repo, "rev-parse", "HEAD")).toBe(before);
     expect(gitOut(repo, "status", "--porcelain")).toBe("");
+  });
+});
+
+describe("task branches", () => {
+  it("picks a free task name, keeps its base, and separates new and legacy step names", async () => {
+    const { repo, worktrees } = await project();
+    const base = gitOut(repo, "branch", "--show-current");
+    const initial = gitOut(repo, "rev-parse", "HEAD");
+    const legacy = await openWorktree(repo, worktrees, "old-step", "fix");
+    gitOut(repo, "branch", "shepherd/fix-2/nested");
+    const task = await openGoalWorktree(repo, worktrees, "goal", "fix");
+    expect(task.branch).toBe("shepherd/fix-3");
+    expect(task.target).toBe(base);
+    const namedLikeNamespace = await openGoalWorktree(repo, worktrees, "another-goal", "shepherd-step");
+    const step = await openWorktree(repo, worktrees, "new-step", "fix", undefined, { start: task.branch, prefix: "shepherd-step" });
+    expect(step.branch).toBe("shepherd-step/fix");
+    expect(step.target).toBe(task.branch);
+    expect(step.folder).not.toBe(task.folder);
+    expect(path.dirname(step.folder)).toBe(path.dirname(namedLikeNamespace.folder));
+    expect((await openWorktree(repo, worktrees, "old-step", "fix", legacy.branch, { start: task.branch, prefix: "shepherd-step" })).branch).toBe(legacy.branch);
+    gitOut(repo, "checkout", "-qb", "another-base");
+    write(repo, "another.txt", "other branch\n");
+    gitOut(repo, "add", ".");
+    gitOut(repo, "commit", "-qm", "Other branch");
+    const again = await openGoalWorktree(repo, worktrees, "goal", "renamed", { branch: task.branch, base: task.target });
+    expect(again).toEqual(task);
+    expect(gitOut(task.folder, "rev-parse", "HEAD")).toBe(initial);
+    await expect(mergeBranch(repo, task.branch, "Wrong base", base)).rejects.toThrow(`no longer on ${base}`);
+  });
+
+  it("collects accepted steps into the task folder and includes person commits in later steps", async () => {
+    const { repo, worktrees } = await project();
+    const initial = gitOut(repo, "rev-parse", "HEAD");
+    const task = await openGoalWorktree(repo, worktrees, "goal", "fix");
+    const first = await openWorktree(repo, worktrees, "first", "first", undefined, { start: task.branch, prefix: "shepherd-step" });
+    write(first.folder, "agent.txt", "agent\n");
+    await commitAll(first.folder, ["Agent work"], AGENT);
+    await mergeBranch(task.folder, first.branch, "Collect step", task.branch);
+    expect(readFileSync(path.join(task.folder, "agent.txt"), "utf8")).toBe("agent\n");
+    write(task.folder, "person.txt", "person\n");
+    gitOut(task.folder, "add", ".");
+    gitOut(task.folder, "commit", "-qm", "Person's own commit");
+    const next = await openWorktree(repo, worktrees, "next", "next", undefined, { start: task.branch, prefix: "shepherd-step" });
+    for (const file of ["agent.txt", "person.txt"]) expect(existsSync(path.join(next.folder, file))).toBe(true);
+    expect(gitOut(repo, "rev-parse", "HEAD")).toBe(initial);
+    expect(gitOut(repo, "status", "--porcelain")).toBe("");
+    expect(existsSync(path.join(repo, "agent.txt"))).toBe(false);
+    await mergeBranch(repo, task.branch, "Explicit task merge", task.target);
+    expect(existsSync(path.join(repo, "person.txt"))).toBe(true);
+  });
+
+  it("keeps a rerun's own diff when the task branch brings back its already accepted work", async () => {
+    const { repo, worktrees } = await project();
+    const task = await openGoalWorktree(repo, worktrees, "goal", "fix");
+    const step = await openWorktree(repo, worktrees, "step", "step", undefined, { start: task.branch, prefix: "shepherd-step" });
+    write(step.folder, "agent.txt", "first version\n");
+    await commitAll(step.folder, ["First version"], AGENT);
+    await mergeBranch(task.folder, step.branch, "Collect", task.branch);
+    await markAccepted(repo, step.branch);
+    write(task.folder, "person.txt", "person's commit\n");
+    await commitAll(task.folder, ["Person's commit"], AGENT);
+    // A stopped run also left edits that have never reached the task branch.
+    write(step.folder, "agent.txt", "second version\n");
+    await prepareRun(step, [task.branch], AGENT);
+    const diff = await changes(step.folder, step.branch);
+    expect(diff.files).toEqual(["agent.txt"]);
+    expect(diff.diffs[0].text).toContain("+second version");
+    expect(readFileSync(path.join(step.folder, "person.txt"), "utf8")).toBe("person's commit\n");
+  });
+
+  it("waits for tracked changes in the task folder without committing or losing them", async () => {
+    const { repo, worktrees } = await project();
+    const task = await openGoalWorktree(repo, worktrees, "goal", "fix");
+    write(task.folder, "person.txt", "committed\n");
+    await commitAll(task.folder, ["Person's starting point"], AGENT);
+    const step = await openWorktree(repo, worktrees, "step", "step", undefined, { start: task.branch, prefix: "shepherd-step" });
+    write(step.folder, "agent.txt", "agent\n");
+    await commitAll(step.folder, ["Agent work"], AGENT);
+    write(task.folder, "person.txt", "staged\n");
+    gitOut(task.folder, "add", "person.txt");
+    write(task.folder, "person.txt", "unstaged\n");
+    const before = gitOut(task.folder, "rev-parse", "HEAD");
+    const dirty = gitOut(task.folder, "status", "--porcelain");
+    await expect(mergeBranch(task.folder, step.branch, "Collect", task.branch)).rejects.toThrow(/Commit or stash/);
+    expect(gitOut(task.folder, "status", "--porcelain")).toBe(dirty);
+    expect(gitOut(task.folder, "rev-parse", "HEAD")).toBe(before);
+    expect(readFileSync(path.join(task.folder, "person.txt"), "utf8")).toBe("unstaged\n");
+    gitOut(task.folder, "stash", "push", "-qm", "In progress");
+    await mergeBranch(task.folder, step.branch, "Collect", task.branch);
+    expect(existsSync(path.join(task.folder, "agent.txt"))).toBe(true);
+    expect(gitOut(task.folder, "stash", "list")).toContain("In progress");
+    expect(existsSync(path.join(repo, "agent.txt"))).toBe(false);
   });
 });

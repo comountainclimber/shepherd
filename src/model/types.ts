@@ -58,9 +58,11 @@ export interface FilePreview {
 export interface TaskGit {
   branch: string;
   folder: string;
-  /** The project folder's branch, which this task merges into. */
+  /** The task branch this step merges into. */
   target: string;
   head?: string;
+  /** A human step shares the task branch, so its diff starts at this commit. */
+  diffBase?: string;
   merged?: { into: string; sha: string; at: number };
 }
 
@@ -235,6 +237,8 @@ export interface Goal {
   branch?: string;
   folder?: string;
   base?: string;
+  blocker?: string | null;
+  merged?: { into: string; sha: string; at: number };
 }
 
 export interface OrchestrationState {
@@ -301,6 +305,7 @@ export type Action =
   | { type: "createProject"; project: Project }
   | { type: "createGoal"; goal: Goal }
   | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal">> }
+  | { type: "goalRuntime"; id: string; patch: Partial<Pick<Goal, "branch" | "folder" | "base" | "blocker" | "merged">> }
   | { type: "finishGoal"; id: string }
   | { type: "archiveGoal"; id: string }
   | { type: "reopenGoal"; id: string }

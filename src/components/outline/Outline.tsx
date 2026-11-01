@@ -588,8 +588,7 @@ function PlanBar({ goalId }: { goalId: string }) {
   const working = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, allTasks, deps)).length;
   const failed = tasks.filter((task) => task.status === "failed").length;
-  const unmerged = tasks.filter((task) => task.git && !task.git.merged);
-  const target = tasks.find((task) => task.git)?.git?.target ?? "main";
+  const target = project?.base ?? "the base branch";
   const started = tasks.some((task) => task.status !== "queued" || task.git);
   const running = !!project?.running;
   const issues = tasks.reduce((count, task) => count + openIssues(task, allTasks).length, 0);
@@ -624,18 +623,24 @@ function PlanBar({ goalId }: { goalId: string }) {
           {score.done}/{score.total}
         </span>
       </div>
+      {project?.branch ? <p className="break-all text-[12px] text-muted">Task branch: <span className="font-mono">{project.branch}</span></p> : null}
+      {project?.folder ? <p className="break-all font-mono text-[11px] text-faint">{project.folder}</p> : null}
+      {project?.blocker ? <p role="status" className="text-[12px] leading-5 text-approval [overflow-wrap:anywhere]">{project.blocker}</p> : null}
       <ProgressBar percent={score.percent} tone={cx(score.complete ? "bg-completed" : "bg-running", running && "stripes")} />
       {project?.status !== "open" && !score.complete ? <p className="text-center text-[12px] text-muted">Reopen this task to run its steps.</p> : running ? (
         <Button size="lg" className="w-full" disabled={busy} onClick={() => void act(() => stopPlan(goalId))}>
           <Square size={13} /> Stop
         </Button>
       ) : score.complete ? (
-        unmerged.length ? (
-          <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => mergePlan(goalId))}>
-            <GitMerge size={15} /> {busy ? "Merging…" : `Merge the result into ${target}`}
-          </Button>
+        project?.branch ? (
+          <>
+            <Button size="lg" variant="primary" className="w-full" disabled={busy || !!project?.blocker} onClick={() => void act(() => mergePlan(goalId))}>
+              <GitMerge size={15} /> {busy ? "Merging…" : `Merge this task into ${target}`}
+            </Button>
+            {project.merged ? <p className="break-all text-center text-[12px] text-faint">Last merged into {project.merged.into} as {project.merged.sha}.</p> : null}
+          </>
         ) : (
-          <p className="text-center text-[12px] text-faint">{tasks.some((task) => task.git) ? `Merged into ${target}.` : "Nothing to merge."}</p>
+          <p className="text-center text-[12px] text-faint">Nothing to merge.</p>
         )
       ) : (
         <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => runPlan(goalId))}>

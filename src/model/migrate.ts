@@ -99,6 +99,7 @@ function taskGit(value: unknown): TaskGit | null {
   return {
     branch: raw.branch,
     folder: raw.folder,
+    ...(typeof raw.diffBase === "string" ? { diffBase: raw.diffBase } : {}),
     target: text(raw.target, "main"),
     ...(typeof raw.head === "string" ? { head: raw.head } : {}),
     ...(merged && typeof merged.sha === "string"
@@ -215,6 +216,7 @@ export function loadState(saved: unknown): OrchestrationState | null {
     ? list(raw.goals).flatMap((item) => {
         const value = record(item);
         if (!value || !projects.some((project) => project.id === value.projectId)) return [];
+        const merged = record(value.merged);
         const { outline: _empty, ...goal } = blankGoal(text(value.projectId), text(value.name), text(value.id), text(value.goal));
         return [{
           ...goal,
@@ -224,6 +226,8 @@ export function loadState(saved: unknown): OrchestrationState | null {
           ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
           ...(typeof value.folder === "string" ? { folder: value.folder } : {}),
           ...(typeof value.base === "string" ? { base: value.base } : {}),
+          ...(typeof value.blocker === "string" ? { blocker: value.blocker } : {}),
+          ...(merged && typeof merged.into === "string" && typeof merged.sha === "string" && typeof merged.at === "number" ? { merged: { into: merged.into, sha: merged.sha, at: merged.at } } : {}),
         } as Goal];
       })
     : projects.map((project) => {

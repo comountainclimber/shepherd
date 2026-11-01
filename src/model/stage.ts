@@ -68,6 +68,7 @@ export function stageHint(task: Task, stage: Stage, tasks: Task[], deps: Depende
     case "needs-you":
       return reviewPending(task) && task.status === "completed" ? "Ready for your review" : "Your task";
     case "verified": {
+      if (task.blocker) return task.blocker;
       const open = openIssues(task, tasks).length;
       const done = task.git?.merged
         ? `Merged into ${task.git.merged.into}`

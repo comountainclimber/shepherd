@@ -193,7 +193,9 @@ describe("boards before tasks", () => {
 
   it("round-trips multiple tasks and their future git fields without collapsing them", () => {
     const board = workspace(1);
-    board.goals.push({ id: "second", projectId: board.projects[0]!.id, name: "Second", goal: "Fix it", running: false, status: "archived", branch: "feature/task", folder: "/tmp/task", base: "develop", outline: [] });
+    board.goals.push({ id: "second", projectId: board.projects[0]!.id, name: "Second", goal: "Fix it", running: false, status: "archived", branch: "feature/task", folder: "/tmp/task", base: "develop", blocker: "Commit or stash the task folder changes.", merged: { into: "develop", sha: "abc123", at: 42 }, outline: [] });
+    const task = { ...schemaOneTask, projectId: board.projects[0].id, goalId: "second", git: { branch: "shepherd/task", folder: "/tmp/task", target: "shepherd/task", diffBase: "old-commit" } };
+    expect(loadState({ ...board, tasks: [task] })!.tasks[0].git?.diffBase).toBe("old-commit");
     expect(loadState(board)).toEqual(board);
   });
 });
