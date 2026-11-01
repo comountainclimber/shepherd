@@ -1,166 +1,204 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-dark.svg">
+  <img src="docs/brand/logo.svg" width="276" height="72" alt="">
+</picture>
+
 # Shepherd
 
-A local tool for outlining a multi-step coding job, seeing it as a map, and having coding agents run it step by step.
+**Long tasks. Clear next steps.**
 
-You write the steps as an indented list, or describe the goal and let Codex draft them. Each step gets a prompt and someone to do it: Codex, Claude Code, or you. Press Run and Shepherd runs the steps in order with the real `codex` and `claude` CLIs. Each step starts from the work of the steps before it, merged into its own git branch, with their reports in its prompt. The map lights up as steps start and finish. Accepted work collects in the task's own branch and folder. When every step is done, you can merge the task into its base branch.
+[![MIT license](docs/badges/license.svg)](LICENSE)
+[![CI workflow: macOS and Ubuntu](docs/badges/ci.svg)](.github/workflows/ci.yml)
+[![npm source version: 0.1.0](docs/badges/npm.svg)](package.json)
+[![PRs welcome](docs/badges/prs.svg)](CONTRIBUTING.md)
 
-## Run it
+Shepherd is a free, open-source app that runs on your machine to plan, run and check long coding-agent work with Codex and Claude Code.
 
-Install Node.js 22.12 or newer, then run:
+See what's done, what's running and what needs you. Keep the plan, progress and checks with the task.
+
+## Start Shepherd
 
 ```sh
 npx shepherd-agents
 ```
 
-Shepherd starts on `127.0.0.1:5194`, tries the next port if it is busy, prints an address with a random token, and opens it in your browser. Keep the terminal running; Ctrl+C stops it. Open the printed address to unlock each new browser. A restart makes a new token. Keep that address private: Shepherd can run shell commands as you.
+**macOS first · Node.js 22.12+ · Git** · Codex or Claude Code installed and signed in. Drafting steps, drafting checklists and checking work against a step require Codex.
 
-To install the command once:
+Shepherd opens a private token address in your browser, starting at `127.0.0.1:5194`. Keep its terminal running; Ctrl+C stops it. Keep that address private: Shepherd can run commands with your permissions.
 
-```sh
-npm install -g shepherd-agents
-shepherd
-```
+Linux should work where no Mac-only feature is needed. Windows is not supported yet. [Full setup, platform limits, launcher options and source install →](docs/setup.md)
 
-Options work with either command:
+## See the work
 
-```sh
-shepherd --port 5200 --no-open
-shepherd --data-dir ~/shepherd-data --projects-dir ~/projects
-```
+**Real app. Fictional Slice project. Run notes and results are sample data.**
 
-`--port` is the first port to try. `--no-open` leaves opening the browser to you. The board, saved steps, worktrees, screenshots and reports live in `~/.shepherd/`; new project repositories live in `~/.shepherd/projects/`. `--data-dir` changes the data folder and its default `projects/` subfolder. `--projects-dir` chooses the new-project folder separately. `SHEPHERD_DATA_DIR` and `SHEPHERD_PROJECTS_DIR` set the same defaults; command flags take priority. A workspace saved in Settings takes priority over the new-project default. Existing repository projects stay in the folders you selected. Installed runs never default to storing your work inside the npm package or the directory you launched from.
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/screenshots/task-outline-mobile.png">
+  <img src="docs/screenshots/task-map-desktop.png" width="1440" alt="Shepherd showing the Slice task: a map of eight steps on desktop, or the task outline on a phone, with completed work, running work and steps still ahead.">
+</picture>
 
-macOS is supported first. Linux works with the Codex and Claude Code CLIs and an installed Chrome or Chromium for screenshots. Opening Finder or Cursor from Shepherd is macOS-only; elsewhere, copy the task folder path and open it yourself. The ChatGPT app's bundled Codex is macOS-only; on Linux install the Codex CLI. Windows is not supported yet.
+**The map:** Eight steps. Four done, two running, review and a merge request still ahead. **The phone outline:** The plan stays visible, one step at a time.
 
-From a source checkout:
+[Open the full map](docs/screenshots/task-map-desktop.png) · [Open the phone outline](docs/screenshots/task-outline-mobile.png)
 
-```sh
-npm ci
-npm run build
-npm start                  # same launcher and per-user folders
-npm run dev                # Vite, using the printed token address
-npm test
-```
+## Why Shepherd exists
 
-Development binds to `127.0.0.1` and also starts at port 5194. It keeps the board in this checkout's `.shepherd/` and new projects in `.agent-sandbox/`, as before. The two folder environment variables also work in development. Authentication and Origin checks are the same in development and in the built app. `npm run build` builds both the page and the standalone Node server; `npm pack` includes those builds and the `shepherd` command.
+“Where exactly am I in this big agent task?”
 
-You also need `git`, and at least one of these installed and logged in on the same machine:
+A long chat makes that surprisingly hard to answer. The agent has a report. You have a goal. Somewhere between them are the steps, the checks and the part that still needs you.
 
-- `codex` (Codex CLI). Check with `codex login status`. Drafting steps from a goal uses Codex. When the ChatGPT app is installed, Shepherd runs the app's own Codex instead of the one on your `PATH`: the two share one cached model list, and Codex offers its newest models only to newer versions, so mixing them makes your default model come and go. Set `SHEPHERD_CODEX` to the path of another `codex` to choose.
-- `claude` (Claude Code). Check with `claude auth status`.
+Shepherd keeps those together. A project holds tasks. Each task has an outline, a map, a branch and a folder. Open a step to see its request, its progress and the evidence behind “done.” You can leave the browser and come back to the same place while the local server keeps working.
 
-Settings (the gear) shows which ones Shepherd can use.
+## A short tour
 
-## Using it
+### 01 / Plan it
 
-A project is a repository. Each project has tasks, and each task has its own goal, outline, steps and running flag. New projects start with one task named after the project. The project switcher groups open tasks under their project, with steps done, Running and Needs you indicators. Done and archived tasks are folded away under each project. New task asks for a name and goal, then opens the outline with that goal ready in the Codex Draft box, including Model and Thinking. The outline, map, counters, Agents and Activity follow the selected task. ⌘K (Ctrl+K elsewhere) searches tasks across projects and can start a new task. Switching tasks clears step filters and selection. Opening Activity marks only that task's notifications read.
+Write steps in the outline, or let Codex draft them from your goal. Assign each step to Codex, Claude Code or yourself. Add Done when items so the request has a clear finish.
 
-The task header shows its branch, base and folder once created, and any wait for uncommitted changes. Copy path copies the folder; Cursor opens it with `cursor <folder>` on the Mac running Shepherd, and Finder opens it there. Install the `cursor` shell command from Cursor's Command Palette if it is missing. Task actions (the three dots) edits its name and goal, marks it done, archives it, reopens it, merges it into its recorded base, or deletes it. Done and Archive stop the plan. Merging asks before updating the project checkout and requires all steps accepted. Deleting asks first and removes the task and steps from the board, stopping agents; its branch, folder, step branches, files and commits stay on disk.
+The outline sets the order; indented steps can run side by side. Use arrows on the map when a step needs a different dependency. [Outline, shortcuts and saved steps →](docs/usage.md)
 
-- **Write the outline.** The list on the left is the plan. Enter adds a step, Tab indents it, Shift+Tab outdents it, Alt+↑/↓ moves it, Backspace on an empty step deletes it, and the grip drags it. Pasting a bulleted or numbered list makes one step per line, keeping its indents. `N` adds a step from anywhere.
-- **Draft from a goal.** Type what you want done and press Draft steps. Codex reads the project folder (read-only) and suggests steps, which land at the end of the outline for you to edit. Nothing runs until you press Run.
-- **What runs when.** Steps run top to bottom. An indented step runs after the step it sits under, at the same time as the other steps indented under it. The next step at the left edge waits for all of them. The map draws exactly these arrows and lays itself out left to right.
-- **The map.** Cmd (Ctrl elsewhere) with + or − zooms it, and Cmd+0 or F fits it to the screen.
-- **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
-- **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab shows a timeline above the agent's report, then the files it changed with their diff and a merge button for that step alone. The newest run is open; earlier runs are folded. Notes have their time, adjacent commands fold into a count, and screenshots appear as thumbnails. Open commands to see their first line (up to 200 characters) and the outcome the agent's stream reported. Runs, checks, changed files, merge waits and the final report are recorded in order. Gaps over ten minutes show their duration and times, without guessing why. It loads when opened and follows board activity while work runs. Steps from before timelines still show their report with a line saying they have no timeline. The Log tab lets you send the agent an instruction.
-- **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. If your Codex settings name a model that list no longer offers, steps on Default use Codex's first current model instead, and the picker says so. "Draft steps from a goal" has its own Model and Thinking, remembered in this browser. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
-- **Saved steps.** A step you want in other projects, such as checking the page in Chrome, can be saved: "Save for reuse" at the bottom of its Step tab, or on its menu on the map. It keeps who does it, the model, the prompt and More options, and can bring along the steps under it or side by side with it. "Add a saved step" under the outline, typing `/` in an empty step, the map menu's "Add a saved step after this…", or ⌘K adds a copy. The copy belongs to the selected task: changing it, or the saved step, leaves the other alone. A changed copy offers to save its changes back. A person's checklist is left out unless you keep it, so each task gets one written from its own earlier steps. Shepherd starts you with "Check it in Chrome", "Audit the code", "Check it yourself" and "Open a merge request"; "Manage saved steps" edits, renames and deletes them, and brings back the starters.
-- **Run.** Run, at the bottom of the list, starts every step in the selected task that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses that task's agents where they are. Other tasks keep their own running state. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
-- **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
-- **Your steps.** When the steps before one of yours are accepted, your step uses the task's folder and branch, and shows the path. Try the result there. Anything you change in that folder is committed under your git name when you mark the step done. If earlier work changes after that, the folder is brought up to date and the step asks you again. "Found a problem? Send it back" reruns an earlier agent step with your note, and the folder picks up its fix.
-- **Your checklist.** If your step says nothing beyond its name when its folder is first made, Codex reads the folder and the earlier steps' prompts, reports and known issues, and writes the checklist into it: how to start the work, then the checks tests miss, such as how it looks, real clicks, reloads and links, and a narrow window. "Draft it from the earlier steps' work" under the prompt asks again at any time. The draft waits on the step, even if you look elsewhere or reload, until you use or discard it.
+<details>
+<summary>See the outline and a step's Done when progress</summary>
 
-- **Done when progress.** An agent step's map node shows how many Done when items its agent says it has met, such as "2 of 4", during and after a run. The Step tab lists the items with the agent's notes. Marks and withdrawals also appear in Output's timeline with their time. These are the agent's account; checks still decide whether the step is done. Editing or removing an item drops its mark; moving unchanged items keeps their marks. Repeated items are keyed separately by occurrence; changing their count clears their marks because which copy survived is ambiguous. A fresh agent conversation clears marks, while resuming a conversation keeps them. Steps without Done when items show no progress count or list.
+[![The desktop outline beside a running step, whose agent has marked two of four Done when items.](docs/screenshots/task-outline-desktop.png)](docs/screenshots/task-outline-desktop.png)
 
-  Agents get numbered items and `SHEPHERD_DONE`, a small script they run as `node "$SHEPHERD_DONE" 2 "Checked the page at 390px"` as soon as they confirm each item. `node "$SHEPHERD_DONE" 2 --undo` takes a mark back. Notes must be 1–500 characters. Shepherd sets `SHEPHERD_URL`, `SHEPHERD_TASK_ID`, `SHEPHERD_RUN_ID`, and `SHEPHERD_DONE_KEYS` for the script. The item snapshot keeps an old prompt from marking an edited item, and requests from stopped or superseded runs are refused.
-- **Known issues.** A problem you decide not to fix now can be kept on the step it belongs to, from its Output tab, or with "keep it as a known issue" on your step. The step stays done, the steps after it are told about it in their prompts, and the plan and the map show how many are open. "Make it a step" adds a Codex step at the end of the outline whose prompt is the issue; the issue counts as fixed once that step is done.
-- **What agents see.** Agents can look at the pages they build. A Codex step is told to use its own browser tool first, in a new tab of your Chrome, and otherwise to ask Shepherd for a screenshot: Shepherd opens the page in a headless Chrome outside the sandbox, at any width, after any clicks, typing and key presses, and hands back the PNG and any errors the page logged. Shepherd's screenshots appear in the Output timeline; the latest 12 also appear under "What it looked at". Images referenced by retained timeline entries stay available. What an agent sees in your Chrome stays in its own session.
-- **Merge.** Accepted steps merge automatically into the task's branch in its folder. Tracked changes you have not committed there hold the merge back: both the step and task say to commit or stash them, and Shepherd tries again automatically. When every step is done, "Merge this task into <base>" explicitly brings the task branch into its recorded base in the project folder. The project must still have that base checked out, with no uncommitted tracked changes. A conflict stops the merge and leaves the checkout untouched. Nothing merges into the project checkout on its own.
+</details>
 
-Add the saved **Open a merge request** step at the end of a task. Codex determines whether the remote is GitLab or GitHub, follows the repository's conventions and skills, and opens or updates a request into the task's base. It writes the title and description from all preceding steps' reports and finishes with the full request URL. Shepherd keeps the reported GitLab or GitHub link on the task header, including after reload. Authentication for the push and the agent's MR tools must already be available.
+### 02 / Run it
 
-### Optional checks
+The map shows which steps wait and which can run side by side. Each task has its own branch and folder. The timeline records progress notes, commands, checks and changed files so you can pick up where you left off.
 
-Under More options on the Step tab:
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/screenshots/step-output-mobile.png">
+  <img src="docs/screenshots/step-output-desktop.png" width="1440" alt="Handle payment retries: the timeline records progress notes, Done when marks and a completed command; the step is still running.">
+</picture>
 
-- **Check command**, such as `npm test`. It runs in the step's worktree after each run, with a 5 minute limit, and the step is done only when it exits 0. A failed check fails the step and its output goes into the next run's prompt. While the plan runs, a failed check is retried twice.
-- **Check the work against this step.** Off by default and kept in saved steps. Each check is another Codex run, fresh, read-only and in the step's folder, using your Codex default. It runs after the agent finishes and the command check passes (or straight after the agent if there is no command). It reads the goal, context, Done when items, later instructions and the diff from where the step started. Each item gets “met”, “not met” or “can't tell” with a reason. An unmet item or work against an explicit instruction fails the check; “can't tell” and changes not asked for are shown but do not fail it alone. Checks shows the verdicts, Output keeps them in the timeline, and Step puts them next to the agent's own marks. Failures go back to the agent with the verdicts, sharing the command check's two automatic retries while the plan runs; after that the step waits for you. Editing the step's request or bringing in upstream work invalidates the verdict.
-- **Ask me to review it.** The plan waits for you to accept the step's work, or send it back, before the steps after it start.
-- **Push task branch before running.** For agent steps, Shepherd pushes the task branch to the remote its base branch tracks, or `origin` if it has no tracking remote (or tracks locally). It pushes only that branch, without forcing. A missing remote or failed push fails the step with git's message before the agent starts. The agent is told the remote, source branch and base; it may create or update a merge request with `glab`, `gh` or its own tools, and must not commit or push.
-- **Judge independently.** The step sees the earlier steps' files, but not what those agents said about them. Use it for a final review or test step.
-- **Background** and **Done when** lines, which go into the agent's prompt.
+Pick up the thread in the timeline: notes, commands and changed files, in order. [Desktop](docs/screenshots/step-output-desktop.png) · [Phone](docs/screenshots/step-output-mobile.png)
+
+### 03 / Check it
+
+An agent saying “done” is a starting point. Add a command check, ask Codex to check the work against the step, or ask to review it yourself. Read the results before moving on.
+
+<a id="optional-checks"></a>
+
+**Give “done” a definition.**
+
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/screenshots/step-checks-mobile.png">
+  <img src="docs/screenshots/step-checks-desktop.png" width="1440" alt="Build the Apple Pay button: a passing command check and four verdicts from a separate Codex work check.">
+</picture>
+
+The command passed. Codex also reviewed the work against this step's four Done when items. [Desktop](docs/screenshots/step-checks-desktop.png) · [Phone](docs/screenshots/step-checks-mobile.png)
+
+Checks are optional. “Check the work against this step” uses a separate Codex run, even when Claude Code wrote the code. Agent progress marks and check results are different things. A passing check is evidence to review, not a guarantee that the work is correct. [How checks work, including retries and “can't tell” →](docs/checks.md)
+
+### 04 / Merge it
+
+Accepted steps collect in the task's branch. Add an “Open a merge request” step to prepare the handoff. Review the changes before bringing the task into its base branch.
+
+That final step is visible at the right of [the map](docs/screenshots/task-map-desktop.png). It uses your existing authentication to open or update a GitLab merge request or GitHub pull request; Shepherd keeps the reported link on the task header. Nothing merges into your project checkout automatically. [Branches, merges and conflicts →](docs/runs.md)
+
+### Keep tasks in their place
+
+Switch tasks without losing their outlines or running state. Each task has its own goal, steps, activity and branch. Search across projects with **⌘K** (**Ctrl+K** elsewhere). [Tasks and human review →](docs/usage.md)
+
+<details>
+<summary>See projects and tasks</summary>
+
+[![The project switcher groups three tasks under two fictional projects, with progress and running indicators.](docs/screenshots/projects-tasks-desktop.png)](docs/screenshots/projects-tasks-desktop.png)
+
+</details>
 
 ## How it works
 
-- **The server runs the board.** The standalone server (or Vite during development) saves the board to the data folder's `state.json` and streams it to every open tab. Runs, checks, and merges happen on the server, so they keep going with no tab open.
-- **Projects.** Choose a new folder in the workspace, or a repository you already have anywhere on this Mac. The workspace defaults to the configured new-project folder (`~/.shepherd/projects/` when installed, `.agent-sandbox/` in development), unless you change it in Settings. New workspace folders keep a relative `directory` and become repositories on their first run. Existing repositories keep an absolute `repo` path; `~` is allowed when entering it. The dialog checks the path as you type and shows its checked-out branch. A repository already used by a project is refused, with that project's name.
-- **Existing repositories.** The path must exist and be the top folder of a git repository with at least one commit. Shepherd checks this again before every run, check, draft or checklist. It never initializes or makes an initial commit in a supplied repository. Step work happens in separate worktrees on branches Shepherd creates; the project's checkout and existing branches stay untouched until you explicitly merge. A missing, nested or empty repository stops the operation with an error naming its path.
-- **Branches and worktrees.** A task first needing a folder gets a free branch named `shepherd/<task-name>`, made from the project's checked-out branch. The task records that branch as its `base`, and keeps its `branch` and `folder` under `.shepherd/worktrees/`. A detached checkout must be put on a branch first. Each agent step starts from the task branch on a separate `shepherd-step/<step-name>` branch and worktree, so parallel steps cannot overwrite each other or collide with task branch names. A person's commits in the task folder reach later steps. Before a run, Shepherd also merges the branches of the steps it waits for into its branch. The step's diff still shows only its own changes. If those branches conflict, the run stops before the agent starts and names the files.
-- **Prompts.** Agents get `SHEPHERD_TASK_BRANCH`, `SHEPHERD_TASK_FOLDER` and `SHEPHERD_TASK_BASE` in their environment, and the prompt names their task's branch. A run sends the step's name, prompt, background, "done when" lines, check command, your instructions, and for each step it waits for, what it did, which files it wrote, and its report. When the agent exits, Shepherd commits everything it changed to the step's branch, authored by the agent, and keeps its final message as the step's report.
-- **Codex's sandbox.** Codex runs with network access, so it can install packages, and with npm's cache in the temp folder, the only place outside the worktree it can write. A browser cannot start inside the sandbox. An agent sees pages through `node "$SHEPHERD_LOOK" <url> [--width 390] [--full] [--click <selector>] [--type <text>] [--press Enter] [--wait <ms>]`, which asks Shepherd for the screenshot, or through Codex's own browser tool. Browser tests belong in a check command, which runs outside the sandbox.
-- **Codex in your Chrome.** Codex's browser tool drives your real Chrome, through the ChatGPT extension, in tabs of its own that close when the run ends. Before it reads a site it asks "Allow Chrome to access …?", and nobody can answer that during a run, so a run gets only the sites you approved ahead of time. To approve every page on this machine, add this to `~/.codex/browser/config.toml`:
-
-  ```toml
-  [origins]
-  allowed = ["http://localhost:*", "http://127.0.0.1:*"]
-  ```
-
-  This applies to every Codex session, not only Shepherd's, and the steps running at the same time share your one Chrome.
-- **Screenshots.** Shepherd uses the Chrome, Chromium, Edge or Brave it finds installed, or the one `SHEPHERD_CHROME` points to, with a fresh profile each time, and only for pages on this machine. Claude Code's own Chrome tool is not turned on, so Claude steps use Shepherd's screenshots.
-
-## API
-
-Everything the UI does goes through these, so agents and scripts can use them too. They live on the local server and run agents and shell commands on your machine. Every API request, including streams, screenshots and reports, needs the startup token: the browser uses an HTTP-only, SameSite cookie set by the printed address; scripts send `Authorization: Bearer <token>`. A supplied Origin must exactly match the printed address's origin, and requests to other hostnames are refused. Every POST and PUT needs `content-type: application/json`. Shepherd gives agents `SHEPHERD_TOKEN` along with `SHEPHERD_URL`, so `SHEPHERD_LOOK` and `SHEPHERD_DONE` authenticate automatically. There are no accounts, hosted database or telemetry; only the agents you run contact their own services.
-
-- `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
-- `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "goalId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
-- `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "goalId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note. `{ "command": "checklist", "taskId": "<your step>" }` has Codex suggest a checklist, which waits on the step as `checklist` until a `settleChecklist` edit uses or discards it. `merge` collects an accepted step into its task branch; `mergePlan` is the explicit request to merge the task branch into its recorded base. A goal reports any pending merge in `blocker`, its last explicit merge in `merged`, and the merge request link reported by a push-enabled step in `mergeRequestUrl`.
-- `POST /api/draft` with `{ "goal": "<task id or name>" }`, and optionally `prompt`, `model` and `thinking`, returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them. It uses the task's saved goal text unless `prompt` is supplied.
-- `POST /api/look` with `{ "taskId": "...", "url": "http://localhost:8130/", "width": 390, "full": true, "steps": [{ "click": "#go" }, { "type": "e4" }, { "press": "Enter" }, { "wait": 300 }] }` screenshots a local page for that step and returns `{ "path", "view", "title", "url", "width", "height", "errors" }`. `GET /api/looks/<taskId>/<file>` serves it.
-- `POST /api/progress` with `{ "taskId": "...", "run": 1, "item": 2, "key": "...", "met": true, "note": "Checked at 390px" }` records an agent's Done when mark. `run` is `SHEPHERD_RUN_ID`; `item` is the item's number in its prompt; `key` is that entry in the JSON array `SHEPHERD_DONE_KEYS` (content and duplicate occurrence). Use `met: false` to withdraw it. The key must still identify an unchanged item, even if its position moved. Returns `{ "ok": true }`, or 409 with `{ "error" }` for an invalid item, note or inactive run. Only an active agent run can mark items. Marks live on the step as `acceptanceMarks`, keyed by item, with `{ "note", "at" }`; their history stays in the timeline file. Tabs cannot write marks through `/api/actions`.
-- Known issues are edits: `{ "type": "noteIssue", "id": "<step>", "text": "..." }`, `dropIssue` with an `issueId`, and `fixIssue` with an `issueId` and the new `task`.
-- `POST /api/goals/<id>/open` with `{ "app": "cursor" }` or `{ "app": "finder" }` opens only that task's saved folder on the server Mac. It runs `cursor` or `open` with the path as a single argument, without a shell. A missing task/folder, unsupported app, or launch failure returns 409 with a plain error.
-- `GET /api/goals` lists tasks as `{ "goals": [...] }`. `POST /api/goals` adds one: `{ "project": "<project id or name>", "name": "Fix timeout", "goal": "Keep checkout fast" }`. A task has status `open`, `done` or `archived`.
-- `readNotifications` accepts an optional `goalId` to mark only that task's step notifications read. Omit it to mark all read.
-- Task edits use `createGoal` with a `goal` object, `updateGoal` with an `id` and a `patch` of `name` and/or `goal`, and `finishGoal`, `archiveGoal`, `reopenGoal` or `deleteGoal` with an `id`. Deleting a task deletes its steps from the board.
-- `GET /api/tasks` lists every project, its tasks as `goals`, and its steps, with ids, status, whether each is done, its branch, and what it waits for.
-- `GET /api/tasks/<stepId>/timeline?after=<entryId>` returns `{ "entries": [...], "cursor": 42, "first": 1, "runs": [1, 25] }`. Omit `after` (or use 0) for all retained entries, then pass `cursor` to fetch only newer ones. Each entry has a monotonic `id`, its `run` id, an arrival time `at` in milliseconds and a `kind` with its data. `first` is the oldest retained id and `runs` lists retained run ids: discard cached entries below `first` or outside those runs. A missing step returns 404; an existing step without a timeline returns an empty list. Timeline data is never included in the board or its stream.
-- `POST /api/projects` adds a project: `{ "name": "My app", "summary": "...", "repo": "~/projects/my-app" }`. `repo` is optional: omit it for a new workspace folder named after the project. Use `repo` instead of `directory`; it accepts an absolute path or `~/...`, checks the repository and stores its real absolute path. Project names and repository checkouts must be unique.
-- `GET /api/projects/repo?path=<encoded path>` checks a repository without changing it. It returns `{ "repo": "<real absolute path>", "branch": "main" }`, or a 400 response with `{ "error": "..." }`. A detached checkout is shown as `detached at <commit>`.
-- `POST /api/tasks` adds one step, or several with a `tasks` list:
-
-```sh
-curl -X POST "$SHEPHERD_URL/api/tasks" -H "Authorization: Bearer $SHEPHERD_TOKEN" -H 'content-type: application/json' -d '{
-  "project": "Greeter",
-  "goal": "<task id or name>",
-  "tasks": [
-    { "name": "Wave CLI", "objective": "Create wave.mjs ...", "checkCommand": "npm test", "agent": "codex" },
-    { "name": "Try the wave", "runner": "human", "dependsOn": [{ "task": "Wave CLI", "gate": "verified" }] }
-  ]
-}'
+```mermaid
+flowchart TD
+    Plan["Plan: goal, outline and Done when"] --> Task["Task: its own branch and folder"]
+    Task --> A["Agent step A: its own branch and folder"]
+    Task --> B["Agent step B: its own branch and folder"]
+    A --> CA["Optional checks and your review"]
+    B --> CB["Optional checks and your review"]
+    CA --> Collect["Accepted work collects on the task's branch"]
+    CB --> Collect
+    Collect --> Next["Later steps use earlier work"]
+    Next --> MR["Merge request step: prepare the handoff"]
+    MR --> Review["Review, then explicitly merge into the base"]
 ```
 
-- `goal` is a task's id or name; `project` optionally scopes the lookup to a repository. For adding steps, drafting or plan commands, a request naming only a project uses its only open task. If there are several open tasks, the error lists them and asks which to use; if there are none, add or reopen one. Plan commands use `goalId` and also accept the older `projectId` when there is only one open task.
-- Each step needs a `name`. `objective` (the prompt) defaults to the name.
-- Optional fields are `description`, `acceptance` (a list of "done when" lines), `checkCommand`, `runner` (`agent` or `human`), and `agent` (`codex` or `claude`, default `codex`).
-- Agent steps also take `model` (`GET /api/models` lists the choices with your defaults, including `opus` for Claude Code) and `thinking` (`low`, `medium`, `high`, `xhigh`, `max`, or `ultra` where the model offers it). Leave them out to use your defaults.
-- Agent steps also take `workCheck: true` for the optional Codex work check (default `false`), `review: true` to wait for your review, `independent: true` to keep earlier agents' reports out of their prompt, `pushBeforeRun: true` to have Shepherd push the task branch before the agent starts, and `autoRun: true` to start on their own once what they wait for is done, without running the whole plan.
-- `dependsOn` lists steps by id or name, in the same task or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
-- A bad request gets a 400 that says what is wrong.
+The outline determines dependencies unless you set arrows by hand. Shepherd schedules up to four agents at once; each agent step gets a git worktree so parallel edits stay in separate folders. Checks gate acceptance when enabled. Failed checks can send work back to the agent. [Run lifecycle](docs/runs.md) · [Check rules](docs/checks.md) · [Limits](docs/limits.md)
 
-`GET /api/saved-steps` returns `{ steps }`, your saved steps. `PUT /api/saved-steps` with `{ steps }` replaces them all and returns what it kept; entries it cannot add to a project, such as one with no steps, are left out.
+## What you get
 
-## Where things are stored
+- **A place in the plan.** The outline, map and timeline show the work from different angles.
+- **Your real agents.** Codex and Claude Code, your model choices, your logins. Give yourself steps, too.
+- **A visible finish.** Done when progress, command checks, optional Codex work checks and human review.
+- **Separate work, collected deliberately.** A branch and folder per task; a worktree per agent step; explicit merging into the base.
+- **Steps worth keeping.** Save a useful review, browser check or merge request step for the next task.
+- **Problems that stay visible.** Keep known issues with the work, pass them to later steps or turn them into new steps.
+- **A local API.** Script the same board actions the app uses, with the startup token. [API reference →](docs/api.md)
 
-The paths below use `.shepherd/` as shorthand for the configured data folder: `~/.shepherd/` when installed, or the checkout's `.shepherd/` in development.
+## Your machine. Your agents. Your work.
 
-- Saved steps are in `.shepherd/saved-steps.json`, apart from the board, so clearing the board keeps them. Each save keeps the one before as `saved-steps.json.bak`. A file Shepherd cannot read is moved aside, not overwritten.
-- Boards saved before tasks are upgraded to schema 3: each project gets one open task named after it, holding its outline, running flag and steps. Step ids, worktree folders and git branches stay the same. A migrated task without its own branch gets one lazily when needed. Finished steps keep their original branches; accepted work is collected from those branches into the task folder. Before the server first writes the upgraded board, it keeps the exact old file beside it as `.shepherd/state.pre-tasks.json`.
-- The board is in `.shepherd/state.json`. Worktrees are in `.shepherd/worktrees/`, check evidence in `.shepherd/evidence/`, screenshots in `.shepherd/looks/`. Each step's timeline is an append-only `.shepherd/timelines/<stepId>.jsonl` file, capped at about 1 MB by removing the oldest runs first. If one run alone exceeds the cap, its oldest entries are removed. Deleting a step (including deleting its task or resetting the board) deletes its timeline. Restarted Shepherd records interrupted runs as stopped. Branches live in each project's repository.
-- Deleting a task or step, or clearing the board removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
+Shepherd runs the real Codex and Claude Code with your own logins, repositories, connectors and skills.
 
-## Limits
+Nothing goes to a Shepherd server: there is no hosted Shepherd service. No Shepherd account, hosted database or telemetry. Your agents, connectors, commands and git remotes can still contact services using your own configuration.
 
-- Shepherd pushes only for agent steps with **Push task branch before running** on. An agent creates the merge request; Shepherd keeps the link it reports. Shepherd does not resolve merge conflicts.
-- Claude Code's models are a fixed list: Opus, Sonnet and Haiku. Drafting checklists always uses your Codex default.
-- Saved steps belong to the configured data folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.
+Shepherd is free and open source under the MIT license. Agent usage follows your provider's plan.
+
+[Read the trust model](SECURITY.md). A worktree separates changes; it is not a security sandbox.
+
+## FAQ
+
+**Do I need both agents?** No. Install and sign in to Codex or Claude Code. Drafting steps, human checklists and the optional work check require Codex. Claude Code can run agent steps without Codex.
+
+**Is “2 of 4” proof the work passed?** It is the agent's own account of its Done when progress. Checks have separate results. An unchecked agent step can finish when its agent exits; add checks and review where they matter.
+
+**Does it work offline?** Shepherd has no hosted service. Your agents and tools may need their providers and network access. Your provider's usage costs still apply.
+
+**Does it push or merge for me?** Pushing is opt-in per agent step. An agent prepares the merge request using your tools. Accepted steps merge into the task branch; merging that task into the project checkout needs your explicit action. Conflicts stop the merge. [Exact rules →](docs/checks.md)
+
+**Can I use an existing repository?** Yes: select its top-level folder. It needs at least one commit and a checked-out branch. Shepherd creates separate worktrees and branches for the work. [Repository requirements →](docs/runs.md)
+
+**What happens when I close the tab?** Runs continue while the terminal's server process is running. Restarting records interrupted runs as stopped. Deleting a task removes it from the board but leaves its branches, folders and files on disk. [Storage and cleanup →](docs/storage.md)
+
+**Is the package published yet?** Publication and creation of the public repository are final launch steps. The npm badge shows the version in this checkout's `package.json`; the CI badge links to the configured workflow, not a live result. Before publication, use the [source setup](docs/setup.md).
+
+## Roadmap
+
+The next milestone is the open-source launch: assign the public repository owner, publish `shepherd-agents`, and verify the install from a clean machine. These are release steps, not actions performed by the README.
+
+After that, the direction is to refine long-task planning, checking and recovery from real use, and improve portability beyond macOS. Linux should work where Mac-only features are not needed; Windows support has no promised date. Bring concrete problems and small, reviewable improvements through [contributing](CONTRIBUTING.md).
+
+## Documentation
+
+The detailed reference is still here, with room to breathe:
+
+- <a id="run-it"></a>[Setup](docs/setup.md): install, agent logins, platforms, launcher options and source development.
+- [Settings and environment variables](docs/configuration.md): folders, models, browser helpers and precedence.
+- <a id="using-it"></a>[Using Shepherd](docs/usage.md): tasks, outline shortcuts, saved steps, progress, known issues and merge requests.
+- [How runs work](docs/runs.md): scheduling, prompts, branches, worktrees, sandbox and browser access.
+- [Optional checks](docs/checks.md): command timeout, Codex verdicts, automatic retries and review.
+- <a id="api"></a>[Local API](docs/api.md): authentication, actions, commands, tasks, progress and timelines.
+- <a id="where-things-are-stored"></a>[Storage](docs/storage.md): board migrations, backups, evidence, retention and cleanup.
+- <a id="limits"></a>[Limits](docs/limits.md): boundaries worth knowing before a big run.
+- [Screenshots and safe demo](docs/screenshots/README.md) · [Brand assets](docs/brand/README.md) · [All docs](docs/README.md).
+
+## Contributing
+
+Found a rough edge? Have a useful saved-step idea? Start with the [contributing guide](CONTRIBUTING.md), use the repository's issue and pull request templates, and keep changes focused. Follow the [Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities through [Security](SECURITY.md).
+
+From a source checkout, check your work with:
+
+```sh
+npm ci
+npx tsc -b && npx vitest run && npm run build
+node docs/check-links.mjs
+```
+
+<img src="docs/brand/mascot.svg" width="72" height="72" alt="">
+
+A little structure. A lot less herding.
+
+## License
+
+**[MIT](LICENSE) · © The Shepherd authors**

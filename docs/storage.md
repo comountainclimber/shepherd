@@ -1,0 +1,10 @@
+[← Shepherd](../README.md) · [Documentation](README.md)
+
+# Storage
+
+The paths below use `.shepherd/` as shorthand for the configured data folder: `~/.shepherd/` when installed, or the checkout's `.shepherd/` in development.
+
+- Saved steps are in `.shepherd/saved-steps.json`, apart from the board, so clearing the board keeps them. Each save keeps the one before as `saved-steps.json.bak`. A file Shepherd cannot read is moved aside, not overwritten.
+- Boards saved before tasks are upgraded to schema 3: each project gets one open task named after it, holding its outline, running flag and steps. Step ids, worktree folders and git branches stay the same. A migrated task without its own branch gets one lazily when needed. Finished steps keep their original branches; accepted work is collected from those branches into the task folder. Before the server first writes the upgraded board, it keeps the exact old file beside it as `.shepherd/state.pre-tasks.json`.
+- The board is in `.shepherd/state.json`. Worktrees are in `.shepherd/worktrees/`, check evidence in `.shepherd/evidence/`, screenshots in `.shepherd/looks/`. Each step's timeline is an append-only `.shepherd/timelines/<stepId>.jsonl` file, capped at about 1 MB by removing the oldest runs first. If one run alone exceeds the cap, its oldest entries are removed. Deleting a step (including deleting its task or resetting the board) deletes its timeline. Restarted Shepherd records interrupted runs as stopped. Branches live in each project's repository.
+- Deleting a task or step, or clearing the board removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
