@@ -7,6 +7,7 @@ import type { Action, OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
 import { formatDuration } from "../src/model/format";
 import { commandLine } from "../src/runner/timeline";
+import { acceptanceItems } from "../src/model/acceptance";
 import { createTimelines, type Timelines } from "./timelines";
 
 /** Edits a tab may send. Run lifecycle actions (running, checks, merges) only come from the server. */
@@ -101,6 +102,11 @@ export function createEngine(file: string, clock: () => number = () => Date.now(
       const next = reducer(input, action);
       if (next === input) return state;
       for (const task of state.tasks) if (!next.tasks.some((item) => item.id === task.id)) timelines.delete(task.id);
+      if (action.type === "markAcceptance") {
+        const task = next.tasks.find((item) => item.id === action.id)!;
+        const item = acceptanceItems(task.acceptance).find((item) => item.key === action.key)!;
+        timelines.append(task.id, { kind: "acceptance", item: item.number, text: item.text, met: action.note !== null, note: task.acceptanceMarks?.[action.key]?.note });
+      }
       if (action.type === "startCheck") {
         const task = next.tasks.find((item) => item.id === action.taskId);
         if (task) checkRuns.set(task.id, timelines.append(task.id, { kind: "check_started", text: commandLine(task.checkCommand ?? "Check") }).run);
@@ -186,7 +192,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
           : action.type === "fixIssue"
             ? [action.task]
             : [];
-  if (created.some((task) => !task || task.git || task.status === "running" || !Array.isArray(task.verification) || task.verification.some((check) => check.state !== "pending"))) {
+  if (created.some((task) => !task || task.git || task.acceptanceMarks || task.status === "running" || !Array.isArray(task.verification) || task.verification.some((check) => check.state !== "pending"))) {
     return { error: "A new task starts unverified, with no branch." };
   }
   if (created.some((task) => !state.goals.some((goal) => goal.id === task.goalId && goal.projectId === task.projectId))) {

@@ -13,6 +13,7 @@ import { notify } from "../shell/Toasts";
 import { Avatar, Button, Select, TextArea, TextInput } from "../ui";
 import { useModels } from "../useModels";
 import { ModelPicker } from "./ModelPicker";
+import { AcceptanceProgress } from "./AcceptanceProgress";
 import { useSelectedTask } from "./useSelectedTask";
 
 const PICKABLE = [...AGENTS].sort((a, b) => (a.provider === "codex" ? -1 : b.provider === "codex" ? 1 : 0));
@@ -68,6 +69,7 @@ function StepFields({ task }: { task: Task }) {
   return (
     <div className="space-y-4 pb-2">
       <SavedOrigin task={task} />
+      <AcceptanceProgress task={task} />
       <section>
         <div className="mb-1.5 text-[12px] font-medium text-muted">Who does it</div>
         <WhoDoesIt task={task} />

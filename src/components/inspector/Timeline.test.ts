@@ -16,6 +16,8 @@ it("opens the newest run, folds earlier runs and commands, and shows checks and 
     { id: 9, run: 3, at: 9, kind: "command_end", commandId: "5", text: "Exited 0" },
     { id: 10, run: 3, at: 10, kind: "screenshot", look: { file: "page.png", url: "http://localhost:5192", width: 390, height: 800, errors: [], at: 10 } },
     { id: 11, run: 3, at: 700_000, kind: "check_ended", ok: false, text: "npm test: Exited 1" },
+    { id: 12, run: 3, at: 700_001, kind: "acceptance", item: 2, text: "Mobile works", met: true, note: "Opened at 390px" },
+    { id: 13, run: 3, at: 700_002, kind: "acceptance", item: 2, text: "Mobile works", met: false },
   ];
   const html = renderToStaticMarkup(createElement(TimelineRuns, { entries, task, now: 700_000 }));
   expect(html.match(/data-timeline-run=/g)).toHaveLength(2);
@@ -27,4 +29,7 @@ it("opens the newest run, folds earlier runs and commands, and shows checks and 
   expect(html).toContain("npm test: Exited 1");
   expect(html).toContain("Nothing for 11 minutes");
   expect(html).toContain('/api/looks/step/page.png');
+  expect(html).toContain("Agent says: met Done when 2");
+  expect(html).toContain("Agent says: took back Done when 2");
+  expect(html).toContain("Opened at 390px");
 });

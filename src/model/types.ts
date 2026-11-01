@@ -66,6 +66,11 @@ export interface TaskGit {
   merged?: { into: string; sha: string; at: number };
 }
 
+export interface AcceptanceMark {
+  note: string;
+  at: number;
+}
+
 /** A Task is a step in the UI; Goal is the task that holds those steps. */
 export interface Task {
   id: string;
@@ -75,6 +80,8 @@ export interface Task {
   objective: string;
   description: string;
   acceptance: string[];
+  /** What the agent says it has met, keyed by item content and occurrence. Checks still decide completion. */
+  acceptanceMarks?: Record<string, AcceptanceMark>;
   status: TaskStatus;
   runner: Runner;
   sessionId?: string | null;
@@ -344,6 +351,7 @@ export type Action =
       keepReview: boolean;
     }
   | { type: "looked"; id: string; look: Look }
+  | { type: "markAcceptance"; id: string; key: string; note: string | null }
   | { type: "noteIssue"; id: string; text: string }
   | { type: "dropIssue"; id: string; issueId: string }
   /** Adds `task` at the end of the outline to fix the issue, and links the two. */

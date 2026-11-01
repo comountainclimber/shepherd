@@ -1,4 +1,5 @@
 import { blankGoal, commandCheck, reviewCheck } from "./factory";
+import { acceptanceItems, keptMarks } from "./acceptance";
 import { EFFORT_LABEL, isEffort, isModelId } from "./models";
 import { layoutGoal, normalize, outlineOf, syncOutlines } from "./outline";
 import { agentById, projectDirectory, workspace } from "./workspace";
@@ -198,6 +199,15 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return refreshed(state, action);
     case "looked":
       return looked(state, action.id, action.look);
+    case "markAcceptance": {
+      const task = state.tasks.find((item) => item.id === action.id);
+      if (!task || task.runner !== "agent" || task.status !== "running" || !acceptanceItems(task.acceptance).some((item) => item.key === action.key)) return state;
+      const marks = { ...task.acceptanceMarks };
+      if (action.note === null) delete marks[action.key];
+      else if (action.note.trim()) marks[action.key] = { note: action.note.trim().slice(0, 500), at: state.now };
+      else return state;
+      return updateTask(state, task.id, { acceptanceMarks: marks });
+    }
     case "noteIssue":
       return noteIssue(state, action.id, action.text);
     case "dropIssue":
@@ -467,7 +477,9 @@ function updateTask(state: OrchestrationState, id: string, patch: Partial<Task>)
   delete nextPatch.status;
   delete nextPatch.agentId;
   delete nextPatch.checkCommand;
-  return { ...state, tasks: replaceTask(state.tasks, { ...task, ...nextPatch }) };
+  const next = { ...task, ...nextPatch };
+  next.acceptanceMarks = keptMarks(next.acceptance, next.acceptanceMarks, task.acceptance);
+  return { ...state, tasks: replaceTask(state.tasks, next) };
 }
 
 function setStatus(state: OrchestrationState, id: string, status: TaskStatus): OrchestrationState {

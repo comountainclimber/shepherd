@@ -12,6 +12,7 @@ import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
+import { markProgress } from "./progress";
 import { openTaskFolder } from "./openTaskFolder";
 import { availableRepo } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
@@ -43,6 +44,7 @@ export function shepherdApi(): Plugin {
         evidence,
         gate: path.resolve(root, "gates/shepherd-gate.mjs"),
         look: { script: path.resolve(root, "server/look-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
+        done: { script: path.resolve(root, "server/done-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
         checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
       });
       // Vite rebuilds this plugin in the same process when a server file changes, so the old
@@ -119,6 +121,11 @@ async function route(
 ): Promise<boolean> {
   const { pathname } = url;
   const method = req.method ?? "GET";
+  if (pathname === "/api/progress" && method === "POST") {
+    const result = markProgress(engine, await readJson(req));
+    sendJson(res, "error" in result ? 409 : 200, result);
+    return true;
+  }
   if (pathname === "/api/state" && method === "GET") {
     sendJson(res, 200, { ...envelope(engine.get()), revision: engine.version() });
     return true;

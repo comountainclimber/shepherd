@@ -1,5 +1,6 @@
 import { mergeRequestUrl } from "./mergeRequest";
 import { blankGoal } from "./factory";
+import { keptMarks } from "./acceptance";
 import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
 import type {
@@ -128,6 +129,10 @@ function task(raw: Raw): Task {
   const status = STATUSES.has(raw.status as TaskStatus) ? (raw.status as TaskStatus) : "queued";
   const checkCommand = text(raw.checkCommand);
   const git = taskGit(raw.git);
+  const acceptance = list(raw.acceptance)
+    .map((item) => (typeof item === "string" ? item : text(record(item)?.text)))
+    .filter((item) => item && item !== "The objective is met");
+  const acceptanceMarks = keptMarks(acceptance, raw.acceptanceMarks);
   return {
     id,
     projectId: text(raw.projectId),
@@ -135,9 +140,8 @@ function task(raw: Raw): Task {
     name: text(raw.name),
     objective: text(raw.objective),
     description: text(raw.description),
-    acceptance: list(raw.acceptance)
-      .map((item) => (typeof item === "string" ? item : text(record(item)?.text)))
-      .filter((item) => item && item !== "The objective is met"),
+    acceptance,
+    ...(acceptanceMarks ? { acceptanceMarks } : {}),
     status,
     runner: raw.runner === "human" ? "human" : "agent",
     sessionId: typeof raw.sessionId === "string" ? raw.sessionId : null,

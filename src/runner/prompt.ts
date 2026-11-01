@@ -1,4 +1,5 @@
 import { openIssues } from "../model/stage";
+import { acceptanceItems } from "../model/acceptance";
 import { dependencyOrder } from "../model/outline";
 import type { OrchestrationState, Task } from "../model/types";
 
@@ -14,6 +15,7 @@ export interface UpstreamContext {
 export interface PromptOptions {
   /** The agent can ask Shepherd for screenshots with $SHEPHERD_LOOK. */
   look?: boolean;
+  done?: boolean;
   taskBranch?: string;
   pushed?: { remote: string; branch: string; base: string };
 }
@@ -110,7 +112,11 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     `Task: ${task.name}`,
     `Objective: ${task.objective || task.name}`,
     task.description && task.description !== task.objective ? `Context: ${task.description}` : "",
-    task.acceptance.length ? ["", "Done when:", ...task.acceptance.map((line) => `- ${line}`)].join("\n") : "",
+    task.acceptance.length ? ["", "Done when:", ...acceptanceItems(task.acceptance).map((item) => `${item.number}. ${item.text}${options.done && task.acceptanceMarks?.[item.key] ? ` (You previously marked this as met: ${task.acceptanceMarks[item.key].note})` : ""}`)].join("\n") : "",
+    options.done && task.acceptance.length ? [
+      'As soon as you confirm each Done when item, run node "$SHEPHERD_DONE" ITEM "Short note on how you know", using its number above and a note of at most 500 characters. Mark items as you confirm them, not all at the end.',
+      'If a mark is no longer true, take it back with node "$SHEPHERD_DONE" ITEM --undo. These marks show what you say you have met; Shepherd still decides whether the step is done from its checks.',
+    ].join("\n") : "",
     ...checkLines,
     ...(options.look ? LOOK_LINES : []),
     "",

@@ -12,6 +12,7 @@ import { isFullyVerified, unmetDependencies } from "../src/model/verify";
 import { agentById } from "../src/model/workspace";
 import { createTimelineParser, parseAgentLine } from "../src/runner/parse";
 import { taskPrompt, upstreamContext, upstreamTasks } from "../src/runner/prompt";
+import { acceptanceItems } from "../src/model/acceptance";
 import type { Engine } from "./engine";
 import {
   changes,
@@ -68,6 +69,8 @@ export interface RunnerOptions {
   loggedIn?: (provider: AgentCli) => Promise<boolean>;
   /** Lets agents and checks ask for screenshots: the script they run, and Shepherd's address once it listens. */
   look?: { script: string; server: () => string | null };
+  /** Lets agents report which Done when items they have confirmed. */
+  done?: { script: string; server: () => string | null };
   /** Writes the checklist for a step a person does, from the work of the steps before it. */
     checklist?: (board: OrchestrationState, task: Task, signal: AbortSignal) => Promise<{ text: string } | { error: string }>;
 }
@@ -187,6 +190,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const timelineRun = engine.timelines.append(taskId, { kind: "run_started", text: failedCheck ? "Resumed after a failed check" : task.sessionId ? "Resumed" : "Started" }).run;
     const attempt: Attempt = { timelineRun, stopped: false, child: null, scheduled: !manual };
     runs.set(taskId, attempt);
+    if (!task.sessionId) dispatch({ type: "updateTask", id: taskId, patch: { acceptanceMarks: undefined } });
     try {
       // Refuse a missing remote before collecting work or creating any git branches.
       let pushRemote: string | undefined;
@@ -265,10 +269,24 @@ export function createRunner(options: RunnerOptions): Runner {
     const latest = find(taskId)!;
     const runStartHead = await head(tree.folder);
     if (attempt.stopped || !find(taskId)) return null;
-    const tools = lookEnv(taskId);
+    const doneServer = options.done?.server();
+    const tools: NodeJS.ProcessEnv = {
+      SHEPHERD_DONE: undefined,
+      SHEPHERD_RUN_ID: undefined,
+      SHEPHERD_DONE_KEYS: undefined,
+      ...lookEnv(taskId),
+      ...(options.done && doneServer && latest.acceptance.length ? {
+        SHEPHERD_DONE: options.done.script,
+        SHEPHERD_URL: doneServer,
+        SHEPHERD_TASK_ID: taskId,
+        SHEPHERD_RUN_ID: String(attempt.timelineRun),
+        SHEPHERD_DONE_KEYS: JSON.stringify(acceptanceItems(latest.acceptance).map((item) => item.key)),
+      } : {}),
+    };
     const goal = state().goals.find((item) => item.id === latest.goalId)!;
     const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), {
       look: !!tools.SHEPHERD_LOOK,
+      done: !!tools.SHEPHERD_DONE,
       taskBranch: goal.branch,
       ...(pushRemote ? { pushed: { remote: pushRemote, branch: goal.branch!, base: goal.base! } } : {}),
     });

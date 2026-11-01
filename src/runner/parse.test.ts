@@ -61,7 +61,7 @@ describe("task prompt", () => {
     const prompt = taskPrompt(task);
     expect(prompt).toContain("Task: Write the parser");
     expect(prompt).toContain("Objective: Parse RELAY lines");
-    expect(prompt).toContain("Done when:\n- Handles empty lines");
+    expect(prompt).toContain("Done when:\n1. Handles empty lines");
     expect(prompt).toContain("this step's own git worktree");
     expect(prompt).toContain("Do not commit, push, or switch branches yourself.");
     expect(prompt).toContain("- Keep it small");

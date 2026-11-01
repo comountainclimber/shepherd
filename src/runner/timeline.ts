@@ -8,6 +8,7 @@ export type TimelineEvent =
   | { kind: "command_end"; commandId: string; text: string }
   | { kind: "files"; files: string[] }
   | { kind: "screenshot"; look: Look }
+  | { kind: "acceptance"; item: number; text: string; met: boolean; note?: string }
   | { kind: "check_started"; text: string }
   | { kind: "check_ended"; text: string; ok: boolean; detail?: string };
 

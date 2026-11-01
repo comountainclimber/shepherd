@@ -5,6 +5,7 @@ import { assigneeFor, needsYou, nextStep, openIssues, STEP_LABEL, stageHint, sta
 import { useShepherd } from "../../store";
 import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
+import { AcceptanceCount } from "../inspector/AcceptanceProgress";
 import { Avatar, CheckDots, StageBadge, stageBg, stageBorder } from "../ui";
 
 export type TaskNodeData = { taskId: string; dimmed: boolean };
@@ -42,8 +43,9 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
         <Avatar kind={assigneeFor(task).kind} size={28} />
         <div className="min-w-0 flex-1">
           <div className={cx("truncate text-[14px] font-semibold leading-tight", stage === "waiting" ? "text-muted" : "text-text")}>{task.name}</div>
-          <div className="mt-1">
+          <div className="mt-1 flex items-center justify-between gap-2">
             <StageBadge stage={stage} />
+            <AcceptanceCount task={task} />
           </div>
         </div>
       </div>

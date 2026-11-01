@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import { createLooks } from "./looks";
 import { createRunner, type Runner } from "./runner";
 import { createSavedSteps } from "./savedSteps";
 import { apiHandler, writeChecklist } from "./shepherdApi";
+import { acceptanceItems } from "../src/model/acceptance";
 
 const cleanup: (() => Promise<void> | void)[] = [];
 afterEach(async () => {
@@ -35,7 +37,7 @@ async function server() {
     const response = await fetch(`${base}/api/${route}`, body === undefined ? undefined : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     return { status: response.status, body: await response.json() };
   }
-  return { request, engine, runner, root, sandbox };
+  return { request, engine, runner, root, sandbox, base };
 }
 
 async function close(http: Server, runner: Runner, engine: Engine) {
@@ -46,6 +48,29 @@ async function close(http: Server, runner: Runner, engine: Engine) {
 }
 
 describe("goal API", () => {
+  it("lets an agent use SHEPHERD_DONE to mark and withdraw, and refuses edited items and ended runs", async () => {
+    const { request, engine, base } = await server();
+    const created = await request("tasks", { goal: "goal-proj-local", name: "Build", agent: "codex", acceptance: ["Page loads", "Works on mobile"] });
+    expect(created.status).toBe(201);
+    const id = created.body.tasks[0].id;
+    engine.dispatch({ type: "setStatus", id, status: "running" });
+    const task = () => engine.get().tasks.find((task) => task.id === id)!;
+    const run = engine.timelines.append(id, { kind: "run_started", text: "Started" }).run;
+    const env = { ...process.env, SHEPHERD_URL: base, SHEPHERD_TASK_ID: id, SHEPHERD_RUN_ID: String(run), SHEPHERD_DONE_KEYS: JSON.stringify(acceptanceItems(task().acceptance).map((item) => item.key)) };
+    const cli = (...args: string[]) => promisify(execFile)(process.execPath, [path.resolve("server/done-cli.mjs"), ...args], { env });
+    expect((await cli("2", "Checked at 390px")).stdout).toContain("marked as met");
+    expect(Object.values(task().acceptanceMarks!)).toEqual([{ at: expect.any(Number), note: "Checked at 390px" }]);
+    const timeline = await request(`tasks/${id}/timeline?after=${run}`);
+    expect(timeline.body.entries).toEqual([expect.objectContaining({ kind: "acceptance", item: 2, met: true, note: "Checked at 390px" })]);
+    expect((await cli("2", "--undo")).stdout).toContain("mark taken back");
+    expect(task().acceptanceMarks).toBeUndefined();
+    await expect(cli("3", "No such item")).rejects.toThrow("no Done when item");
+    await expect(cli("1")).rejects.toThrow("Usage:");
+    await request("actions", { action: { type: "updateTask", id, patch: { acceptance: ["Page loads", "Mobile links work"] } } });
+    await expect(cli("2", "Old prompt")).rejects.toThrow("changed or was removed");
+    engine.timelines.append(id, { kind: "run_ended", text: "Agent finished", outcome: "completed" });
+    await expect(cli("1", "Too late")).rejects.toThrow("no longer active");
+  });
   it("serves a step timeline incrementally and removes it with the step", async () => {
     const { request, engine, root } = await server();
     const created = await request("tasks", { goal: "goal-proj-local", name: "Timeline", runner: "human" });

@@ -11,6 +11,7 @@ import { WORKSPACE_PROJECT_ID, workspace } from "../src/model/workspace";
 import { createEngine, envelope } from "./engine";
 import { commitAll, ensureRepo, openWorktree } from "./git";
 import { createRunner, type RunnerOptions } from "./runner";
+import { acceptanceItems } from "../src/model/acceptance";
 
 function gitOut(cwd: string, ...args: string[]) {
   return execFileSync("git", ["-c", "user.name=Person", "-c", "user.email=person@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
@@ -22,14 +23,14 @@ import { appendFileSync, writeFileSync } from "node:fs";
 const [log, prompt] = process.argv.slice(2);
 const name = /Objective: Do (\\w+)/.exec(prompt)[1].toLowerCase();
 writeFileSync(name + ".txt", name + "\\n");
-appendFileSync(log, JSON.stringify({ name, prompt, env: { branch: process.env.SHEPHERD_TASK_BRANCH, folder: process.env.SHEPHERD_TASK_FOLDER, base: process.env.SHEPHERD_TASK_BASE } }) + "\\n");
+appendFileSync(log, JSON.stringify({ name, prompt, env: { branch: process.env.SHEPHERD_TASK_BRANCH, folder: process.env.SHEPHERD_TASK_FOLDER, base: process.env.SHEPHERD_TASK_BASE, done: process.env.SHEPHERD_DONE, keys: process.env.SHEPHERD_DONE_KEYS, run: process.env.SHEPHERD_RUN_ID, taskId: process.env.SHEPHERD_TASK_ID } }) + "\\n");
 const say = (event) => console.log(JSON.stringify(event));
 say({ type: "thread.started", thread_id: "thread-" + name });
 say({ type: "item.completed", item: { type: "agent_message", text: "Report from " + name + ": wrote " + name + ".txt" } });
 say({ type: "turn.completed" });
 `;
 
-function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT) {
+function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT, tools: Pick<RunnerOptions, "done"> = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
   const sandbox = path.join(root, "sandbox");
   mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
@@ -48,12 +49,13 @@ function planServer(board: OrchestrationState, checklist?: RunnerOptions["checkl
     loggedIn: async () => true,
     command: (_provider, prompt) => ({ cmd: process.execPath, args: [agent, log, prompt] }),
     checklist,
+    ...tools,
   });
   const prompts = () =>
     readFileSync(log, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { name: string; prompt: string; env: { branch: string; folder: string; base: string } });
+      .map((line) => JSON.parse(line) as { name: string; prompt: string; env: { branch: string; folder: string; base: string; done?: string; keys?: string; run?: string; taskId?: string } });
   return { engine, runner, prompts, project: path.join(sandbox, "workspace") };
 }
 
@@ -100,6 +102,27 @@ function finishedTask(): Task {
 }
 
 describe("scheduler", () => {
+  it("gives Codex the marking script and item snapshot, clearing marks only for a fresh conversation", async () => {
+    for (const sessionId of [null, "existing-thread"]) {
+      const board = outlined("Build");
+      const acceptance = ["Page loads", "Works on mobile"];
+      const key = acceptanceItems(acceptance)[0].key;
+      board.tasks[0] = { ...board.tasks[0], acceptance, sessionId, acceptanceMarks: { [key]: { at: 1, note: "Previously opened the page" } } };
+      const { engine, runner, prompts } = planServer(board, undefined, FAKE_AGENT, { done: { script: "/tools/done.mjs", server: () => "http://127.0.0.1:5192" } });
+      try {
+        await runner.handle({ command: "run", taskId: board.tasks[0].id });
+        await runner.idle();
+        const sent = prompts()[0];
+        expect(sent.env.done).toBe("/tools/done.mjs");
+        expect(sent.env.taskId).toBe(board.tasks[0].id);
+        expect(JSON.parse(sent.env.keys!)).toEqual(acceptanceItems(acceptance).map((item) => item.key));
+        expect(Number(sent.env.run)).toBe(engine.timelines.read(board.tasks[0].id).entries[0].run);
+        expect(sent.prompt).toContain("not all at the end");
+        expect(engine.get().tasks[0].acceptanceMarks).toEqual(sessionId ? board.tasks[0].acceptanceMarks : undefined);
+        expect(sent.prompt.includes("You previously marked this as met")).toBe(!!sessionId);
+      } finally { runner.close(); engine.close(); }
+    }
+  });
   it("records a stopped run without losing its progress notes", async () => {
     const board = outlined("Build");
     const id = board.tasks[0].id;
@@ -514,7 +537,7 @@ describe("task work collection", () => {
       expect(existsSync(path.join(project, "build.txt"))).toBe(false);
       const prompt = prompts().find((item) => item.name === "next")!;
       expect(prompt.prompt).toContain(`task branch ${goal.branch}`);
-      expect(prompt.env).toEqual({ branch: goal.branch, folder: goal.folder, base: goal.base });
+      expect(prompt.env).toMatchObject({ branch: goal.branch, folder: goal.folder, base: goal.base });
     } finally { runner.close(); engine.close(); }
   }, 30_000);
 
