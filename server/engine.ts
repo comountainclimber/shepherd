@@ -66,8 +66,8 @@ const WRITE_DELAY_MS = 150;
 const BACKUP_EVERY_MS = 60_000;
 const BACKUP_LIMIT = 30;
 
-export function createEngine(file: string, clock: () => number = () => Date.now()): Engine {
-  let state = interruptWork(load(file));
+export function createEngine(file: string, clock: () => number = () => Date.now(), initial = workspace()): Engine {
+  let state = interruptWork(load(file, initial));
   const timelines = createTimelines(path.join(path.dirname(file), "timelines"), clock);
   const checkRuns = new Map<string, number>();
   for (const task of state.tasks) {
@@ -227,8 +227,8 @@ export function envelope(state: OrchestrationState) {
   return { state: { state }, version: 3 };
 }
 
-function load(file: string): OrchestrationState {
-  if (!existsSync(file)) return workspace();
+function load(file: string, initial: OrchestrationState): OrchestrationState {
+  if (!existsSync(file)) return initial;
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));

@@ -41,7 +41,7 @@ function statExists(file: string) {
   try { return statSync(file).isFile(); } catch { return false; }
 }
 
-export async function startServer(options: Omit<AppOptions, "origin"> & { port: number; distDir?: string }) {
+export async function startServer(options: Omit<AppOptions, "origin"> & { port: number; distDir?: string; strictPort?: boolean }) {
   const dist = options.distDir ?? fileURLToPath(new URL("../dist/", import.meta.url));
   if (!statExists(path.join(dist, "index.html"))) throw new Error("The built page is missing. Run npm run build first.");
   const http = createServer((req, res) => app.handle(req, res, () => staticPage(dist, req, res)));
@@ -60,7 +60,7 @@ export async function startServer(options: Omit<AppOptions, "origin"> & { port: 
         });
         break;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE" || port === 65535) throw error;
+        if (options.strictPort || (error as NodeJS.ErrnoException).code !== "EADDRINUSE" || port === 65535) throw error;
         port += 1;
       }
     }

@@ -7,7 +7,8 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { resolveGoal } from "../src/model/goals";
-import { agentChoice, isEffort, isModelId } from "../src/model/models";
+import { workspace } from "../src/model/workspace";
+import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
 import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
@@ -34,6 +35,8 @@ export interface AppOptions {
   projectsDir: string;
   helpersDir?: string;
   origin: () => string | null;
+  /** Demo boards never create a runner or read the person's agent settings. */
+  demo?: { models: ModelCatalog };
 }
 
 /** Both launchers use the same board, runner, routes and authentication boundary. */
@@ -43,10 +46,13 @@ export function createApp(options: AppOptions) {
   mkdirSync(shepherd, { recursive: true, mode: 0o700 });
   mkdirSync(sandbox, { recursive: true, mode: 0o700 });
   const security = createSecurity(options.origin);
-  const engine = createEngine(path.join(shepherd, "state.json"));
+  const engine = createEngine(path.join(shepherd, "state.json"), undefined, options.demo ? { ...workspace(), projects: [], goals: [] } : undefined);
   const evidence = path.join(shepherd, "evidence");
   const looks = path.join(shepherd, "looks");
-  const runner = createRunner({
+  const runner: Runner = options.demo ? {
+    handle: async () => ({ error: "This is a demo. Agent runs and commands are disabled." }),
+    cancel() {}, cancelAll() {}, close() {}, schedule() {}, async idle() {},
+  } : createRunner({
     engine,
     sandbox,
     worktrees: path.join(shepherd, "worktrees"),
@@ -58,7 +64,7 @@ export function createApp(options: AppOptions) {
     checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
   });
   const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
-  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved });
+  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo });
   const stop = () => {
     runner.close();
     engine.close();
@@ -69,7 +75,18 @@ export function createApp(options: AppOptions) {
     security,
     stop,
     handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
-      if (security.allow(req, res)) void handle(req, res, next);
+      if (!security.allow(req, res)) return;
+      if (options.demo) {
+        const url = new URL(req.url ?? "/", "http://shepherd.local");
+        if (url.pathname === "/api/models") return sendJson(res, 200, options.demo.models);
+        if (url.pathname === "/api/agents") return sendJson(res, 200, { codex: true, claude: true, git: true, workspace: "Demo workspace" });
+        if (url.pathname.startsWith("/api/") && ![
+          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps",
+        ].includes(url.pathname) && !/^\/api\/tasks\/[\w.-]+\/timeline$/.test(url.pathname) && url.pathname !== "/api/actions" && url.pathname !== "/api/progress") {
+          return sendJson(res, 409, { error: "This is a demo. Agent runs, drafts and external actions are disabled." });
+        }
+      }
+      void handle(req, res, next);
     },
   };
 }
@@ -126,6 +143,7 @@ interface Context {
   looks: string;
   look: ReturnType<typeof createLooks>;
   saved: SavedSteps;
+  demo?: boolean;
 }
 
 export function apiHandler(context: Context) {
@@ -153,7 +171,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence, looks, look, saved }: Context,
+  { engine, runner, sandbox, evidence, looks, look, saved, demo }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -191,6 +209,7 @@ async function route(
         continue;
       }
       if (action.type === "createProject" && action.project.repo !== undefined) {
+        if (demo) { errors.push("Demo projects use throwaway folders only."); continue; }
         try {
           action.project.repo = (await availableRepo(action.project.repo, engine.get, sandbox)).repo;
         } catch (error) {

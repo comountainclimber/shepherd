@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node bin/check-node.mjs && vite",
+    "demo": "npm run build && node scripts/demo.mjs",
     "typecheck": "tsc -b",
     "build": "tsc --noEmit && vite build && node scripts/build-server.mjs",
     "test": "vitest run",
