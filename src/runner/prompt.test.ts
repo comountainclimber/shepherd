@@ -41,8 +41,15 @@ describe("prompts", () => {
     const task = get(board(), "b");
     expect(taskPrompt(task)).not.toContain("SHEPHERD_LOOK");
     const prompt = taskPrompt(task, undefined, [], { look: true });
-    expect(prompt).toContain("Your own browser tool, if you have one");
-    expect(prompt).toContain("open a new tab for your page and leave their other tabs alone");
+    expect(prompt).toContain("First use your own browser tool, if you have one");
+    expect(prompt).toContain("open a new tab for your page (without asking for it to be visible, which their Chrome cannot do) and leave their other tabs alone");
     expect(prompt).toContain('node "$SHEPHERD_LOOK" http://localhost:PORT/path');
+  });
+
+  it("asks an agent running a step again to do the work again, not repeat its last answer", () => {
+    const task = get(board(), "b");
+    const again = "You have worked on this step before in this conversation. Do the work again now";
+    expect(taskPrompt(task)).not.toContain(again);
+    expect(taskPrompt({ ...task, sessionId: "chat-1" })).toContain(again);
   });
 });

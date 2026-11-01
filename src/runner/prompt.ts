@@ -43,9 +43,9 @@ export function upstreamContext(state: OrchestrationState, task: Task): Upstream
 
 const LOOK_LINES = [
   "",
-  "If the work has a page, look at it before you finish, at a wide and a narrow width and after the clicks that matter, and judge it the way a person would. Tests that pass do not prove it looks right. Two ways to see a page once its server is running:",
-  "- Your own browser tool, if you have one (such as browser use). It works in the user's own Chrome: open a new tab for your page and leave their other tabs alone. If it is missing, or refuses the page or a site you need, do not retry it; use Shepherd's screenshots for the rest of this step.",
-  '- Shepherd\'s screenshots, since a browser cannot start in your sandbox: node "$SHEPHERD_LOOK" http://localhost:PORT/path [--width 390] [--full] [--click "CSS selector"] [--type "text"] [--press Enter] [--wait 500]',
+  "If the work has a page, look at it before you finish, at a wide and a narrow width and after the clicks that matter, and judge it the way a person would. Tests that pass do not prove it looks right. Once its server is running:",
+  "- First use your own browser tool, if you have one (such as the Chrome or browser use plugin), even though a command line tool is offered next: the user wants to see you working in their browser. It works in the user's own Chrome: open a new tab for your page (without asking for it to be visible, which their Chrome cannot do) and leave their other tabs alone. If it is missing, or refuses the page or a site you need, do not retry it; use Shepherd's screenshots for the rest of this step.",
+  '- Otherwise use Shepherd\'s screenshots, since a browser cannot start in your sandbox: node "$SHEPHERD_LOOK" http://localhost:PORT/path [--width 390] [--full] [--click "CSS selector"] [--type "text"] [--press Enter] [--wait 500]',
   "  Clicks, typing and key presses happen in the order given, before the screenshot. It prints the PNG's path and any errors the page logged; open the PNG with your image viewing tool.",
   '  Start the server in the same command, for example: PORT=8130 node server.mjs & sleep 1; node "$SHEPHERD_LOOK" http://localhost:8130/; kill $!',
 ];
@@ -103,6 +103,9 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
       : "",
     earlier.length ? ["Earlier instructions:", ...earlier.map((line) => `- ${line}`)].join("\n") : "",
     followUp ? `\nNew instruction:\n${followUp}\n` : "",
+    task.sessionId
+      ? "You have worked on this step before in this conversation. Do the work again now, with your commands and tools, instead of repeating earlier results: the files, the pages and the tools may have changed since then."
+      : "",
     "When you finish, summarize what changed and how to verify it.",
   ]
     .filter((line) => line !== "")
