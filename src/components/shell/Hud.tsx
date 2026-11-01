@@ -340,23 +340,62 @@ function MenuLink({ label, onClick, danger = false }: { label: string; onClick: 
   );
 }
 
+/** Matches the length of the walk in index.css: five steps of half a second. */
+const WALK_MS = 2_500;
+
+/** Now and then, and when you point at it, the sheep takes a few steps. */
+function useWalking(): [boolean, () => void] {
+  const [walking, setWalking] = useState(false);
+  const walk = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    let timer = 0;
+    let busy = false;
+    const rest = () => {
+      timer = window.setTimeout(() => walk.current(), 20_000 + Math.random() * 40_000);
+    };
+    walk.current = () => {
+      if (busy) return;
+      window.clearTimeout(timer);
+      if (document.hidden) return rest();
+      busy = true;
+      setWalking(true);
+      timer = window.setTimeout(() => {
+        busy = false;
+        setWalking(false);
+        rest();
+      }, WALK_MS);
+    };
+    rest();
+    return () => window.clearTimeout(timer);
+  }, []);
+  return [walking, () => walk.current()];
+}
+
 /** Shepherd's logo. */
 export function Sheep({ size = 34 }: { size?: number }) {
+  const [walking, walk] = useWalking();
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <rect x="10.5" y="21" width="2.6" height="6" rx="1.2" fill="#3a404c" />
-      <rect x="18" y="21" width="2.6" height="6" rx="1.2" fill="#3a404c" />
-      <g fill="#e9ebf0">
-        <circle cx="11" cy="15" r="6" />
-        <circle cx="17" cy="12.5" r="6" />
-        <circle cx="21.5" cy="17" r="5" />
-        <circle cx="15" cy="19" r="5" />
-        <circle cx="7.5" cy="18.5" r="4" />
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden className={cx("sheep", walking && "walking")} onMouseEnter={walk}>
+      <rect className="leg leg-a" x="18" y="21" width="2.6" height="6" rx="1.2" fill="#2a2f38" />
+      <rect className="leg leg-b" x="10.5" y="21" width="2.6" height="6" rx="1.2" fill="#2a2f38" />
+      <rect className="leg leg-a" x="10.5" y="21" width="2.6" height="6" rx="1.2" fill="#3a404c" />
+      <rect className="leg leg-b" x="18" y="21" width="2.6" height="6" rx="1.2" fill="#3a404c" />
+      <g className="sheep-body">
+        <g fill="#e9ebf0">
+          <circle cx="11" cy="15" r="6" />
+          <circle cx="17" cy="12.5" r="6" />
+          <circle cx="21.5" cy="17" r="5" />
+          <circle cx="15" cy="19" r="5" />
+          <circle cx="7.5" cy="18.5" r="4" />
+        </g>
+        <g className="sheep-head">
+          <ellipse cx="25.5" cy="12.5" rx="4.2" ry="3.6" fill="#3a404c" />
+          <ellipse cx="23" cy="9.8" rx="1.8" ry="1" fill="#3a404c" transform="rotate(-30 23 9.8)" />
+          <circle cx="26.7" cy="11.8" r="1" fill="#fff" />
+          <circle cx="27" cy="11.6" r="0.45" fill="#0f1115" />
+        </g>
       </g>
-      <ellipse cx="25.5" cy="12.5" rx="4.2" ry="3.6" fill="#3a404c" />
-      <ellipse cx="23" cy="9.8" rx="1.8" ry="1" fill="#3a404c" transform="rotate(-30 23 9.8)" />
-      <circle cx="26.7" cy="11.8" r="1" fill="#fff" />
-      <circle cx="27" cy="11.6" r="0.45" fill="#0f1115" />
     </svg>
   );
 }

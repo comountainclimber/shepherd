@@ -91,9 +91,73 @@ body {
   animation: enter 0.16s ease-out both;
 }
 
+/* The sheep's walk lasts five steps of 0.5s, the same 2.5s as WALK_MS in Hud.tsx. */
+@keyframes sheep-step {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(20deg);
+  }
+  75% {
+    transform: rotate(-20deg);
+  }
+}
+
+@keyframes sheep-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-0.9px);
+  }
+}
+
+@keyframes sheep-nod {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+}
+
+.sheep .leg,
+.sheep .sheep-head {
+  transform-box: fill-box;
+}
+
+.sheep .leg {
+  transform-origin: 50% 0;
+}
+
+.sheep .sheep-head {
+  transform-origin: 15% 80%;
+}
+
+.sheep.walking .leg-a {
+  animation: sheep-step 0.5s ease-in-out 5;
+}
+
+.sheep.walking .leg-b {
+  animation: sheep-step 0.5s ease-in-out 5 reverse;
+}
+
+.sheep.walking .sheep-body {
+  animation: sheep-bob 0.25s ease-in-out 10;
+}
+
+.sheep.walking .sheep-head {
+  animation: sheep-nod 0.5s ease-in-out 5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .stripes,
-  .enter {
+  .enter,
+  .sheep.walking * {
     animation: none;
   }
 }
