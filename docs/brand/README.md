@@ -10,18 +10,13 @@ For light surfaces:
 
 For dark surfaces, use [logo-dark.svg](logo-dark.svg). Both have transparent backgrounds and fixed vector wordmarks; they do not load fonts. Use the lockup at 144px wide or larger. Keep clear space of at least half the sheep badge's width on each side. Do not stretch, recolor, rotate or retype the lockup.
 
-The README can select its logo without scripts or external requests:
+A logo used alone as a home link needs the accessible name “Shepherd”.
 
-```html
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-dark.svg">
-  <img src="docs/brand/logo.svg" width="276" height="72" alt="">
-</picture>
+## README header
 
-# Shepherd
-```
+<img src="hero.svg" width="440" alt="The Shepherd sheep walks past four steps, Plan it, Run it, Check it and Merge it, and each one turns from waiting to done.">
 
-The empty image alt avoids repeating the adjacent heading. A logo used alone as a home link needs the accessible name “Shepherd”.
+[hero.svg](hero.svg) opens the README: the sheep walks past Plan it, Run it, Check it and Merge it, and each card turns from waiting to done. It illustrates the workflow; it is not a record of a run. Its own Field background keeps it readable on GitHub's light and dark themes, and it shows the finished state without motion when the viewer prefers reduced motion. GitHub plays its CSS animation in an ordinary image tag, with no scripts or external requests. Its text uses system fonts.
 
 ## Mark and mascot
 
@@ -33,7 +28,7 @@ The empty image alt avoids repeating the adjacent heading. A logo used alone as 
 
 These are the same sheep, derived from the app's `Sheep` component in [Hud.tsx](../../src/components/shell/Hud.tsx), with wool and sage colors. Keep the five-circle fleece, two visible legs, tilted ear and one eye. No separate provider mascots, clothing, crook, landscape or second hero. Decorative sheep use empty alt text. Do not use a mascot as the sole signal of success or progress.
 
-The launch assets are static. An illustration must not imply that a task ran, a check passed or drift was caught. Follow the real screenshot disclosure and motion rules in the brief.
+Apart from the README header, the launch assets are static. An illustration must not imply that a real task ran, a check passed or drift was caught. Follow the real screenshot disclosure and motion rules in the brief.
 
 ## Palette and typography
 

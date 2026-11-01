@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="280" viewBox="0 0 880 280" role="img" aria-labelledby="title desc">
+<title id="title">Shepherd: plan it, run it, check it, merge it</title>
+<desc id="desc">The Shepherd sheep walks past four steps, Plan it, Run it, Check it and Merge it, and each one turns from waiting to done.</desc>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .walk { animation: walk 10s linear infinite; }
+  .bob { animation: bob .5s ease-in-out infinite; }
+  .on { opacity: 0; }
+  .on1 { animation: on1 10s linear infinite; }
+  .on2 { animation: on2 10s linear infinite; }
+  .on3 { animation: on3 10s linear infinite; }
+  .on4 { animation: on4 10s linear infinite; }
+  .off1 { animation: off1 10s linear infinite; }
+  .off2 { animation: off2 10s linear infinite; }
+  .off3 { animation: off3 10s linear infinite; }
+  .off4 { animation: off4 10s linear infinite; }
+  .swap { animation-timing-function: steps(1, end); }
+  @keyframes walk {
+    0% { transform: translateX(0); opacity: 0; }
+    4% { opacity: 1; }
+    80% { transform: translateX(700px); opacity: 1; }
+    88%, 100% { transform: translateX(700px); opacity: 0; }
+  }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  @keyframes on1 { 0%, 8% { opacity: 0; } 10%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+  @keyframes on2 { 0%, 31% { opacity: 0; } 33%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+  @keyframes on3 { 0%, 54% { opacity: 0; } 56%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+  @keyframes on4 { 0%, 77% { opacity: 0; } 79%, 92% { opacity: 1; } 97%, 100% { opacity: 0; } }
+  @keyframes off1 { 0%, 8% { opacity: 1; } 10%, 92% { opacity: 0; } 97%, 100% { opacity: 1; } }
+  @keyframes off2 { 0%, 31% { opacity: 1; } 33%, 92% { opacity: 0; } 97%, 100% { opacity: 1; } }
+  @keyframes off3 { 0%, 54% { opacity: 1; } 56%, 92% { opacity: 0; } 97%, 100% { opacity: 1; } }
+  @keyframes off4 { 0%, 77% { opacity: 1; } 79%, 92% { opacity: 0; } 97%, 100% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .walk, .bob, .on1, .on2, .on3, .on4, .off1, .off2, .off3, .off4 { animation: none; }
+    .walk { transform: translateX(700px); }
+    .on { opacity: 1; }
+    .off { opacity: 0; }
+  }
+</style>
+<defs>
+  <g id="sheep">
+    <g fill="#98C4A2" stroke="#243E34" stroke-width=".45">
+      <rect x="18" y="21" width="2.6" height="6" rx="1.2"/>
+      <rect x="10.5" y="21" width="2.6" height="6" rx="1.2"/>
+    </g>
+    <g fill="#F3F0E5" stroke="#243E34" stroke-width=".9"><circle cx="11" cy="15" r="6"/><circle cx="17" cy="12.5" r="6"/><circle cx="21.5" cy="17" r="5"/><circle cx="15" cy="19" r="5"/><circle cx="7.5" cy="18.5" r="4"/></g>
+    <g fill="#F3F0E5"><circle cx="11" cy="15" r="6"/><circle cx="17" cy="12.5" r="6"/><circle cx="21.5" cy="17" r="5"/><circle cx="15" cy="19" r="5"/><circle cx="7.5" cy="18.5" r="4"/></g>
+    <g fill="#98C4A2" stroke="#243E34" stroke-width=".45">
+      <ellipse cx="23" cy="9.8" rx="1.8" ry="1" transform="rotate(-30 23 9.8)"/>
+      <ellipse cx="25.5" cy="12.5" rx="4.2" ry="3.6"/>
+    </g>
+    <circle cx="26.7" cy="11.8" r="1" fill="#F3F0E5"/>
+    <circle cx="27" cy="11.6" r=".45" fill="#101412"/>
+  </g>
+  <g id="tick"><circle r="11" fill="#98C4A2"/><path d="M-5 0.5 L-1.5 4 L5.5 -3.5" fill="none" stroke="#101412" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g id="waiting"><circle cx="5" cy="-4" r="4.5" fill="none" stroke="#708775" stroke-width="1.5"/><text x="16" y="0" font-size="12" fill="#708775">waiting</text></g>
+  <g id="done"><text x="0" y="0" font-size="12" font-weight="600" fill="#98C4A2">done</text></g>
+</defs>
+
+<rect width="880" height="280" rx="24" fill="#101412"/>
+<rect x="1" y="1" width="878" height="278" rx="23" fill="none" stroke="#39473e"/>
+
+<g stroke="#39473e" stroke-width="2" stroke-dasharray="2 8" stroke-linecap="round" fill="none">
+  <path d="M232 104 H248"/><path d="M432 104 H448"/><path d="M632 104 H648"/>
+  <path d="M52 236 H828"/>
+</g>
+
+<g transform="translate(52 40)">
+  <rect width="176" height="128" rx="14" fill="#181e1a" stroke="#39473e"/>
+  <rect class="on on1" width="176" height="128" rx="14" fill="none" stroke="#98C4A2" stroke-width="2"/>
+  <text x="18" y="32" class="mono" font-size="12" fill="#abb7ae">01</text>
+  <text x="18" y="62" font-size="22" font-weight="700" fill="#F3F0E5">Plan it</text>
+  <text x="18" y="84" font-size="13" fill="#abb7ae">Outline + Done when</text>
+  <use class="off off1 swap" href="#waiting" x="18" y="112"/>
+  <use class="on on1 swap" href="#done" x="18" y="112"/>
+  <use class="on on1" href="#tick" x="152" y="28"/>
+</g>
+<g transform="translate(252 40)">
+  <rect width="176" height="128" rx="14" fill="#181e1a" stroke="#39473e"/>
+  <rect class="on on2" width="176" height="128" rx="14" fill="none" stroke="#98C4A2" stroke-width="2"/>
+  <text x="18" y="32" class="mono" font-size="12" fill="#abb7ae">02</text>
+  <text x="18" y="62" font-size="22" font-weight="700" fill="#F3F0E5">Run it</text>
+  <text x="18" y="84" font-size="13" fill="#abb7ae">Agents side by side</text>
+  <use class="off off2 swap" href="#waiting" x="18" y="112"/>
+  <use class="on on2 swap" href="#done" x="18" y="112"/>
+  <use class="on on2" href="#tick" x="152" y="28"/>
+</g>
+<g transform="translate(452 40)">
+  <rect width="176" height="128" rx="14" fill="#181e1a" stroke="#39473e"/>
+  <rect class="on on3" width="176" height="128" rx="14" fill="none" stroke="#98C4A2" stroke-width="2"/>
+  <text x="18" y="32" class="mono" font-size="12" fill="#abb7ae">03</text>
+  <text x="18" y="62" font-size="22" font-weight="700" fill="#F3F0E5">Check it</text>
+  <text x="18" y="84" font-size="13" fill="#abb7ae">Commands, Codex, you</text>
+  <use class="off off3 swap" href="#waiting" x="18" y="112"/>
+  <use class="on on3 swap" href="#done" x="18" y="112"/>
+  <use class="on on3" href="#tick" x="152" y="28"/>
+</g>
+<g transform="translate(652 40)">
+  <rect width="176" height="128" rx="14" fill="#181e1a" stroke="#39473e"/>
+  <rect class="on on4" width="176" height="128" rx="14" fill="none" stroke="#98C4A2" stroke-width="2"/>
+  <text x="18" y="32" class="mono" font-size="12" fill="#abb7ae">04</text>
+  <text x="18" y="62" font-size="22" font-weight="700" fill="#F3F0E5">Merge it</text>
+  <text x="18" y="84" font-size="13" fill="#abb7ae">You make the call</text>
+  <use class="off off4 swap" href="#waiting" x="18" y="112"/>
+  <use class="on on4 swap" href="#done" x="18" y="112"/>
+  <use class="on on4" href="#tick" x="152" y="28"/>
+</g>
+
+<text x="52" y="262" font-size="12" fill="#708775">A little structure. A lot less herding.</text>
+<text x="828" y="262" class="mono" font-size="12" fill="#abb7ae" text-anchor="end">$ npx shepherd-agents</text>
+
+<g class="walk">
+  <g class="bob">
+    <use href="#sheep" transform="translate(52 175) scale(2.2)"/>
+  </g>
+</g>
+</svg>
