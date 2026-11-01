@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+<title id="title">Shepherd</title>
+<desc id="desc">A wool sheep with a sage face on a dark square.</desc>
+<rect width="64" height="64" rx="16" fill="#101412"/>
+<g transform="scale(2)"><g fill="#98C4A2" stroke="#243E34" stroke-width=".45">
+  <rect x="18" y="21" width="2.6" height="6" rx="1.2"/>
+  <rect x="10.5" y="21" width="2.6" height="6" rx="1.2"/>
+</g>
+<g fill="#F3F0E5" stroke="#243E34" stroke-width=".9"><circle cx="11" cy="15" r="6"/><circle cx="17" cy="12.5" r="6"/><circle cx="21.5" cy="17" r="5"/><circle cx="15" cy="19" r="5"/><circle cx="7.5" cy="18.5" r="4"/></g>
+<g fill="#F3F0E5"><circle cx="11" cy="15" r="6"/><circle cx="17" cy="12.5" r="6"/><circle cx="21.5" cy="17" r="5"/><circle cx="15" cy="19" r="5"/><circle cx="7.5" cy="18.5" r="4"/></g>
+<g fill="#98C4A2" stroke="#243E34" stroke-width=".45">
+  <ellipse cx="23" cy="9.8" rx="1.8" ry="1" transform="rotate(-30 23 9.8)"/>
+  <ellipse cx="25.5" cy="12.5" rx="4.2" ry="3.6"/>
+</g>
+<circle cx="26.7" cy="11.8" r="1" fill="#F3F0E5"/>
+<circle cx="27" cy="11.6" r=".45" fill="#101412"/></g>
+</svg>
