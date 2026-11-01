@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { workspace } from "../src/model/workspace";
-import { openTaskFolder } from "./openTaskFolder";
+import { openTaskFolder as openFolder } from "./openTaskFolder";
+
+const openTaskFolder = (...args: Parameters<typeof openFolder>) => openFolder(args[0], args[1], args[2], args[3], "darwin");
 
 const folder = mkdtempSync(path.join(tmpdir(), "shepherd-folder with spaces-"));
 const board = workspace(1);
@@ -12,6 +14,12 @@ board.goals[0] = { ...board.goals[0]!, folder };
 afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
 describe("opening a task folder", () => {
+  it("explains macOS-only actions on Linux without launching anything", async () => {
+    const launch = vi.fn();
+    expect(await openFolder(board, id, "finder", launch, "linux")).toEqual({ error: expect.stringContaining("only available on macOS") });
+    expect(await openFolder(board, id, "cursor", launch, "linux")).toEqual({ error: expect.stringContaining("Copy the task folder path") });
+    expect(launch).not.toHaveBeenCalled();
+  });
   it("passes the saved path as one argument to Cursor or Finder without a shell", async () => {
     const launch = vi.fn().mockResolvedValue(undefined);
     expect(await openTaskFolder(board, id, "cursor", launch)).toEqual({ ok: true });

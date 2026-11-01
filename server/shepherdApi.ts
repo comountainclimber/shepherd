@@ -1,3 +1,6 @@
+import { fileURLToPath } from "node:url";
+import { createSecurity } from "./security";
+import { startupWarnings } from "./startup";
 import { createReadStream, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -26,37 +29,74 @@ const STREAM_THROTTLE_MS = 250;
 
 class BadRequest extends Error {}
 
+export interface AppOptions {
+  dataDir: string;
+  projectsDir: string;
+  helpersDir?: string;
+  origin: () => string | null;
+}
+
+/** Both launchers use the same board, runner, routes and authentication boundary. */
+export function createApp(options: AppOptions) {
+  const { dataDir: shepherd, projectsDir: sandbox } = options;
+  const helpers = options.helpersDir ?? path.dirname(fileURLToPath(import.meta.url));
+  mkdirSync(shepherd, { recursive: true, mode: 0o700 });
+  mkdirSync(sandbox, { recursive: true, mode: 0o700 });
+  const security = createSecurity(options.origin);
+  const engine = createEngine(path.join(shepherd, "state.json"));
+  const evidence = path.join(shepherd, "evidence");
+  const looks = path.join(shepherd, "looks");
+  const runner = createRunner({
+    engine,
+    sandbox,
+    worktrees: path.join(shepherd, "worktrees"),
+    evidence,
+    gate: path.join(helpers, "../gates/shepherd-gate.mjs"),
+    authToken: security.token,
+    look: { script: path.join(helpers, "look-cli.mjs"), server: options.origin },
+    done: { script: path.join(helpers, "done-cli.mjs"), server: options.origin },
+    checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
+  });
+  const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
+  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved });
+  const stop = () => {
+    runner.close();
+    engine.close();
+  };
+  return {
+    engine,
+    runner,
+    security,
+    stop,
+    handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
+      if (security.allow(req, res)) void handle(req, res, next);
+    },
+  };
+}
+
 export function shepherdApi(): Plugin {
-  const root = process.cwd();
-  const sandbox = path.resolve(root, ".agent-sandbox");
-  const shepherd = path.resolve(root, ".shepherd");
   return {
     name: "shepherd-api",
     configureServer(server) {
-      mkdirSync(sandbox, { recursive: true });
-      const engine = createEngine(path.join(shepherd, "state.json"));
-      const evidence = path.join(shepherd, "evidence");
-      const looks = path.join(shepherd, "looks");
-      const runner = createRunner({
-        engine,
-        sandbox,
-        worktrees: path.join(shepherd, "worktrees"),
-        evidence,
-        gate: path.resolve(root, "gates/shepherd-gate.mjs"),
-        look: { script: path.resolve(root, "server/look-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
-        done: { script: path.resolve(root, "server/done-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
-        checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
+      const root = server.config.root;
+      const app = createApp({
+        dataDir: path.resolve(process.env.SHEPHERD_DATA_DIR || path.join(root, ".shepherd")),
+        projectsDir: path.resolve(process.env.SHEPHERD_PROJECTS_DIR || path.join(root, ".agent-sandbox")),
+        helpersDir: path.join(root, "server"),
+        origin: () => serverUrl(server.httpServer?.address()),
       });
-      // Vite rebuilds this plugin in the same process when a server file changes, so the old
-      // runner and engine must stop for good or they keep running agents and writing the board.
+      server.middlewares.use(app.handle);
+      // Vite replaces this plugin on edits; the previous runner must never write again.
       const stop = () => {
-        runner.close();
-        engine.close();
+        app.stop();
+        process.removeListener("exit", stop);
       };
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
-      const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
-      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved }));
+      server.httpServer?.once("listening", () => {
+        console.log(`\nShepherd: ${app.security.address()}\nOpen this address to unlock the board.\n`);
+        void startupWarnings().then((warnings) => warnings.forEach((warning) => console.warn(warning)));
+      });
     },
   };
 }

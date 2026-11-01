@@ -13,7 +13,7 @@ async function main() {
   const met = note !== "--undo";
   const response = await fetch(new URL("/api/progress", server), {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(process.env.SHEPHERD_TOKEN ? { authorization: `Bearer ${process.env.SHEPHERD_TOKEN}` } : {}) },
     body: JSON.stringify({ taskId, run: Number(run), item, key, met, ...(met ? { note } : {}) }),
   });
   const body = await response.json().catch(() => ({}));

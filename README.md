@@ -6,11 +6,43 @@ You write the steps as an indented list, or describe the goal and let Codex draf
 
 ## Run it
 
+Install Node.js 22.12 or newer, then run:
+
 ```sh
-npm install
-npm run dev     # http://localhost:5173
+npx shepherd-agents
+```
+
+Shepherd starts on `127.0.0.1:5194`, tries the next port if it is busy, prints an address with a random token, and opens it in your browser. Keep the terminal running; Ctrl+C stops it. Open the printed address to unlock each new browser. A restart makes a new token. Keep that address private: Shepherd can run shell commands as you.
+
+To install the command once:
+
+```sh
+npm install -g shepherd-agents
+shepherd
+```
+
+Options work with either command:
+
+```sh
+shepherd --port 5200 --no-open
+shepherd --data-dir ~/shepherd-data --projects-dir ~/projects
+```
+
+`--port` is the first port to try. `--no-open` leaves opening the browser to you. The board, saved steps, worktrees, screenshots and reports live in `~/.shepherd/`; new project repositories live in `~/.shepherd/projects/`. `--data-dir` changes the data folder and its default `projects/` subfolder. `--projects-dir` chooses the new-project folder separately. `SHEPHERD_DATA_DIR` and `SHEPHERD_PROJECTS_DIR` set the same defaults; command flags take priority. A workspace saved in Settings takes priority over the new-project default. Existing repository projects stay in the folders you selected. Installed runs never default to storing your work inside the npm package or the directory you launched from.
+
+macOS is supported first. Linux works with the Codex and Claude Code CLIs and an installed Chrome or Chromium for screenshots. Opening Finder or Cursor from Shepherd is macOS-only; elsewhere, copy the task folder path and open it yourself. The ChatGPT app's bundled Codex is macOS-only; on Linux install the Codex CLI. Windows is not supported yet.
+
+From a source checkout:
+
+```sh
+npm ci
+npm run build
+npm start                  # same launcher and per-user folders
+npm run dev                # Vite, using the printed token address
 npm test
 ```
+
+Development binds to `127.0.0.1` and also starts at port 5194. It keeps the board in this checkout's `.shepherd/` and new projects in `.agent-sandbox/`, as before. The two folder environment variables also work in development. Authentication and Origin checks are the same in development and in the built app. `npm run build` builds both the page and the standalone Node server; `npm pack` includes those builds and the `shepherd` command.
 
 You also need `git`, and at least one of these installed and logged in on the same machine:
 
@@ -60,8 +92,8 @@ Under More options on the Step tab:
 
 ## How it works
 
-- **The server runs the board.** The board lives in the Vite dev server, which saves it to `.shepherd/state.json` and streams it to every open tab. Runs, checks, and merges happen on the server, so they keep going with no tab open.
-- **Projects.** Choose a new folder in the workspace, or a repository you already have anywhere on this Mac. The workspace is `.agent-sandbox/` unless you change it in Settings. New workspace folders keep a relative `directory` and become repositories on their first run. Existing repositories keep an absolute `repo` path; `~` is allowed when entering it. The dialog checks the path as you type and shows its checked-out branch. A repository already used by a project is refused, with that project's name.
+- **The server runs the board.** The standalone server (or Vite during development) saves the board to the data folder's `state.json` and streams it to every open tab. Runs, checks, and merges happen on the server, so they keep going with no tab open.
+- **Projects.** Choose a new folder in the workspace, or a repository you already have anywhere on this Mac. The workspace defaults to the configured new-project folder (`~/.shepherd/projects/` when installed, `.agent-sandbox/` in development), unless you change it in Settings. New workspace folders keep a relative `directory` and become repositories on their first run. Existing repositories keep an absolute `repo` path; `~` is allowed when entering it. The dialog checks the path as you type and shows its checked-out branch. A repository already used by a project is refused, with that project's name.
 - **Existing repositories.** The path must exist and be the top folder of a git repository with at least one commit. Shepherd checks this again before every run, check, draft or checklist. It never initializes or makes an initial commit in a supplied repository. Step work happens in separate worktrees on branches Shepherd creates; the project's checkout and existing branches stay untouched until you explicitly merge. A missing, nested or empty repository stops the operation with an error naming its path.
 - **Branches and worktrees.** A task first needing a folder gets a free branch named `shepherd/<task-name>`, made from the project's checked-out branch. The task records that branch as its `base`, and keeps its `branch` and `folder` under `.shepherd/worktrees/`. A detached checkout must be put on a branch first. Each agent step starts from the task branch on a separate `shepherd-step/<step-name>` branch and worktree, so parallel steps cannot overwrite each other or collide with task branch names. A person's commits in the task folder reach later steps. Before a run, Shepherd also merges the branches of the steps it waits for into its branch. The step's diff still shows only its own changes. If those branches conflict, the run stops before the agent starts and names the files.
 - **Prompts.** Agents get `SHEPHERD_TASK_BRANCH`, `SHEPHERD_TASK_FOLDER` and `SHEPHERD_TASK_BASE` in their environment, and the prompt names their task's branch. A run sends the step's name, prompt, background, "done when" lines, check command, your instructions, and for each step it waits for, what it did, which files it wrote, and its report. When the agent exits, Shepherd commits everything it changed to the step's branch, authored by the agent, and keeps its final message as the step's report.
@@ -78,7 +110,7 @@ Under More options on the Step tab:
 
 ## API
 
-Everything the UI does goes through these, so agents and scripts can use them too. They live on the dev server and run agents and shell commands on your machine, so keep it bound to localhost. Every POST needs `content-type: application/json`.
+Everything the UI does goes through these, so agents and scripts can use them too. They live on the local server and run agents and shell commands on your machine. Every API request, including streams, screenshots and reports, needs the startup token: the browser uses an HTTP-only, SameSite cookie set by the printed address; scripts send `Authorization: Bearer <token>`. A supplied Origin must exactly match the printed address's origin, and requests to other hostnames are refused. Every POST and PUT needs `content-type: application/json`. Shepherd gives agents `SHEPHERD_TOKEN` along with `SHEPHERD_URL`, so `SHEPHERD_LOOK` and `SHEPHERD_DONE` authenticate automatically. There are no accounts, hosted database or telemetry; only the agents you run contact their own services.
 
 - `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
 - `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "goalId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
@@ -93,12 +125,12 @@ Everything the UI does goes through these, so agents and scripts can use them to
 - Task edits use `createGoal` with a `goal` object, `updateGoal` with an `id` and a `patch` of `name` and/or `goal`, and `finishGoal`, `archiveGoal`, `reopenGoal` or `deleteGoal` with an `id`. Deleting a task deletes its steps from the board.
 - `GET /api/tasks` lists every project, its tasks as `goals`, and its steps, with ids, status, whether each is done, its branch, and what it waits for.
 - `GET /api/tasks/<stepId>/timeline?after=<entryId>` returns `{ "entries": [...], "cursor": 42, "first": 1, "runs": [1, 25] }`. Omit `after` (or use 0) for all retained entries, then pass `cursor` to fetch only newer ones. Each entry has a monotonic `id`, its `run` id, an arrival time `at` in milliseconds and a `kind` with its data. `first` is the oldest retained id and `runs` lists retained run ids: discard cached entries below `first` or outside those runs. A missing step returns 404; an existing step without a timeline returns an empty list. Timeline data is never included in the board or its stream.
-- `POST /api/projects` adds a project: `{ "name": "My app", "summary": "...", "repo": "/Users/me/projects/my-app" }`. `repo` is optional: omit it for a new workspace folder named after the project. Use `repo` instead of `directory`; it accepts an absolute path or `~/...`, checks the repository and stores its real absolute path. Project names and repository checkouts must be unique.
+- `POST /api/projects` adds a project: `{ "name": "My app", "summary": "...", "repo": "~/projects/my-app" }`. `repo` is optional: omit it for a new workspace folder named after the project. Use `repo` instead of `directory`; it accepts an absolute path or `~/...`, checks the repository and stores its real absolute path. Project names and repository checkouts must be unique.
 - `GET /api/projects/repo?path=<encoded path>` checks a repository without changing it. It returns `{ "repo": "<real absolute path>", "branch": "main" }`, or a 400 response with `{ "error": "..." }`. A detached checkout is shown as `detached at <commit>`.
 - `POST /api/tasks` adds one step, or several with a `tasks` list:
 
 ```sh
-curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json' -d '{
+curl -X POST "$SHEPHERD_URL/api/tasks" -H "Authorization: Bearer $SHEPHERD_TOKEN" -H 'content-type: application/json' -d '{
   "project": "Greeter",
   "goal": "<task id or name>",
   "tasks": [
@@ -120,6 +152,8 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 
 ## Where things are stored
 
+The paths below use `.shepherd/` as shorthand for the configured data folder: `~/.shepherd/` when installed, or the checkout's `.shepherd/` in development.
+
 - Saved steps are in `.shepherd/saved-steps.json`, apart from the board, so clearing the board keeps them. Each save keeps the one before as `saved-steps.json.bak`. A file Shepherd cannot read is moved aside, not overwritten.
 - Boards saved before tasks are upgraded to schema 3: each project gets one open task named after it, holding its outline, running flag and steps. Step ids, worktree folders and git branches stay the same. A migrated task without its own branch gets one lazily when needed. Finished steps keep their original branches; accepted work is collected from those branches into the task folder. Before the server first writes the upgraded board, it keeps the exact old file beside it as `.shepherd/state.pre-tasks.json`.
 - The board is in `.shepherd/state.json`. Worktrees are in `.shepherd/worktrees/`, check evidence in `.shepherd/evidence/`, screenshots in `.shepherd/looks/`. Each step's timeline is an append-only `.shepherd/timelines/<stepId>.jsonl` file, capped at about 1 MB by removing the oldest runs first. If one run alone exceeds the cap, its oldest entries are removed. Deleting a step (including deleting its task or resetting the board) deletes its timeline. Restarted Shepherd records interrupted runs as stopped. Branches live in each project's repository.
@@ -128,6 +162,5 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 ## Limits
 
 - Shepherd pushes only for agent steps with **Push task branch before running** on. An agent creates the merge request; Shepherd keeps the link it reports. Shepherd does not resolve merge conflicts.
-- `npm run dev` is the only way to run Shepherd, because the server is part of the Vite dev server.
 - Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting checklists always uses your Codex default.
-- Saved steps belong to this Shepherd folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.
+- Saved steps belong to the configured data folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.

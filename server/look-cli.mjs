@@ -39,7 +39,7 @@ async function main() {
   try {
     response = await fetch(new URL("/api/look", server), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(process.env.SHEPHERD_TOKEN ? { authorization: `Bearer ${process.env.SHEPHERD_TOKEN}` } : {}) },
       body: JSON.stringify({ ...request, taskId }),
     });
   } catch (error) {

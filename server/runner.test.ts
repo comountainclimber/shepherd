@@ -26,14 +26,14 @@ import { appendFileSync, writeFileSync } from "node:fs";
 const [log, prompt] = process.argv.slice(2);
 const name = /Objective: Do (\\w+)/.exec(prompt)[1].toLowerCase();
 writeFileSync(name + ".txt", name + "\\n");
-appendFileSync(log, JSON.stringify({ name, prompt, env: { branch: process.env.SHEPHERD_TASK_BRANCH, folder: process.env.SHEPHERD_TASK_FOLDER, base: process.env.SHEPHERD_TASK_BASE, done: process.env.SHEPHERD_DONE, keys: process.env.SHEPHERD_DONE_KEYS, run: process.env.SHEPHERD_RUN_ID, taskId: process.env.SHEPHERD_TASK_ID } }) + "\\n");
+appendFileSync(log, JSON.stringify({ name, prompt, env: { branch: process.env.SHEPHERD_TASK_BRANCH, folder: process.env.SHEPHERD_TASK_FOLDER, base: process.env.SHEPHERD_TASK_BASE, done: process.env.SHEPHERD_DONE, keys: process.env.SHEPHERD_DONE_KEYS, run: process.env.SHEPHERD_RUN_ID, taskId: process.env.SHEPHERD_TASK_ID, token: process.env.SHEPHERD_TOKEN, look: process.env.SHEPHERD_LOOK, url: process.env.SHEPHERD_URL } }) + "\\n");
 const say = (event) => console.log(JSON.stringify(event));
 say({ type: "thread.started", thread_id: "thread-" + name });
 say({ type: "item.completed", item: { type: "agent_message", text: "Report from " + name + ": wrote " + name + ".txt" } });
 say({ type: "turn.completed" });
 `;
 
-function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT, tools: Pick<RunnerOptions, "done" | "workCheck"> = {}) {
+function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT, tools: Pick<RunnerOptions, "done" | "workCheck" | "authToken" | "look"> = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
   const sandbox = path.join(root, "sandbox");
   mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
@@ -58,7 +58,7 @@ function planServer(board: OrchestrationState, checklist?: RunnerOptions["checkl
     readFileSync(log, "utf8")
       .trim()
       .split("\n")
-      .map((line) => JSON.parse(line) as { name: string; prompt: string; env: { branch: string; folder: string; base: string; done?: string; keys?: string; run?: string; taskId?: string } });
+      .map((line) => JSON.parse(line) as { name: string; prompt: string; env: { branch: string; folder: string; base: string; done?: string; keys?: string; run?: string; taskId?: string; token?: string; look?: string; url?: string } });
   return { engine, runner, prompts, project: path.join(sandbox, "workspace") };
 }
 
@@ -111,12 +111,15 @@ describe("scheduler", () => {
       const acceptance = ["Page loads", "Works on mobile"];
       const key = acceptanceItems(acceptance)[0].key;
       board.tasks[0] = { ...board.tasks[0], acceptance, sessionId, acceptanceMarks: { [key]: { at: 1, note: "Previously opened the page" } } };
-      const { engine, runner, prompts } = planServer(board, undefined, FAKE_AGENT, { done: { script: "/tools/done.mjs", server: () => "http://127.0.0.1:5192" } });
+      const { engine, runner, prompts } = planServer(board, undefined, FAKE_AGENT, { authToken: "test-token", look: { script: "/tools/look.mjs", server: () => "http://127.0.0.1:5199" }, done: { script: "/tools/done.mjs", server: () => "http://127.0.0.1:5199" } });
       try {
         await runner.handle({ command: "run", taskId: board.tasks[0].id });
         await runner.idle();
         const sent = prompts()[0];
         expect(sent.env.done).toBe("/tools/done.mjs");
+        expect(sent.env.token).toBe("test-token");
+        expect(sent.env.look).toBe("/tools/look.mjs");
+        expect(sent.env.url).toBe("http://127.0.0.1:5199");
         expect(sent.env.taskId).toBe(board.tasks[0].id);
         expect(JSON.parse(sent.env.keys!)).toEqual(acceptanceItems(acceptance).map((item) => item.key));
         expect(Number(sent.env.run)).toBe(engine.timelines.read(board.tasks[0].id).entries[0].run);

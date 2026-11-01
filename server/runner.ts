@@ -64,6 +64,7 @@ export interface RunnerOptions {
   evidence: string;
   /** Shepherd's gate script, given to checks and agents as SHEPHERD_GATE. */
   gate: string;
+  authToken?: string;
   checkTimeoutMs?: number;
   command?: (provider: AgentCli, prompt: string, resumeId: string | null, choice: Pick<Task, "model" | "effort">) => { cmd: string; args: string[] };
   /** What the agents offer, read when each run starts. */
@@ -139,7 +140,7 @@ export function createRunner(options: RunnerOptions): Runner {
   /** What an agent or check needs in its environment to ask Shepherd for a screenshot. */
   function lookEnv(taskId: string): Record<string, string> {
     const server = options.look?.server();
-    return options.look && server ? { SHEPHERD_LOOK: options.look.script, SHEPHERD_URL: server, SHEPHERD_TASK_ID: taskId } : {};
+    return options.look && server ? { SHEPHERD_LOOK: options.look.script, SHEPHERD_URL: server, SHEPHERD_TASK_ID: taskId, ...(options.authToken ? { SHEPHERD_TOKEN: options.authToken } : {}) } : {};
   }
 
   function finish(taskId: string, summary: string) {
@@ -281,6 +282,7 @@ export function createRunner(options: RunnerOptions): Runner {
     if (attempt.stopped || !find(taskId)) return null;
     const doneServer = options.done?.server();
     const tools: NodeJS.ProcessEnv = {
+      SHEPHERD_TOKEN: options.authToken,
       SHEPHERD_DONE: undefined,
       SHEPHERD_RUN_ID: undefined,
       SHEPHERD_DONE_KEYS: undefined,
@@ -1250,10 +1252,10 @@ export const APP_CODEX = ["Applications", "ChatGPT.app", "Contents", "Resources"
  * The app's Codex and another version share one cached model list and overwrite it, and Codex offers
  * its newest models only to newer versions, so running the app's keeps the list and the models in step.
  */
-export function codexBin(env: NodeJS.ProcessEnv = process.env, exists: (file: string) => boolean = existsSync): string {
+export function codexBin(env: NodeJS.ProcessEnv = process.env, exists: (file: string) => boolean = existsSync, platform: NodeJS.Platform = process.platform): string {
   const chosen = env.SHEPHERD_CODEX?.trim();
   if (chosen) return chosen;
-  return [path.join("/", ...APP_CODEX), path.join(homedir(), ...APP_CODEX)].find(exists) ?? "codex";
+  return platform === "darwin" ? [path.join("/", ...APP_CODEX), path.join(homedir(), ...APP_CODEX)].find(exists) ?? "codex" : "codex";
 }
 
 /** Codex's flags for a model and thinking level. Nothing leaves it to Codex's own settings. */

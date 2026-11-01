@@ -6,6 +6,8 @@ import { shepherdApi } from "./server/shepherdApi";
 export default defineConfig({
   plugins: [react(), tailwindcss(), shepherdApi()],
   server: {
+    host: "127.0.0.1",
+    port: 5194,
     watch: { ignored: ["**/.shepherd/**", "**/.agent-sandbox/**"] },
   },
   test: {
