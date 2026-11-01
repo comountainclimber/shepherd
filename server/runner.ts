@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { slugify } from "../src/model/factory";
-import { isEffort, isModelId } from "../src/model/models";
+import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
 import { dependencyOrder } from "../src/model/outline";
 import type { Action, CheckRun, GateStep, OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified, unmetDependencies } from "../src/model/verify";
@@ -26,6 +26,7 @@ import {
   type Author,
   type Changes,
 } from "./git";
+import { modelCatalog } from "./models";
 
 export type AgentCli = "claude" | "codex";
 
@@ -52,6 +53,8 @@ export interface RunnerOptions {
   gate: string;
   checkTimeoutMs?: number;
   command?: (provider: AgentCli, prompt: string, resumeId: string | null, choice: Pick<Task, "model" | "effort">) => { cmd: string; args: string[] };
+  /** What the agents offer, read when each run starts. */
+  models?: () => ModelCatalog;
   loggedIn?: (provider: AgentCli) => Promise<boolean>;
   /** Lets agents and checks ask for screenshots: the script they run, and Shepherd's address once it listens. */
   look?: { script: string; server: () => string | null };
@@ -80,6 +83,7 @@ interface Attempt {
 export function createRunner(options: RunnerOptions): Runner {
   const { engine, sandbox, worktrees, evidence, gate } = options;
   const command = options.command ?? agentCommand;
+  const models = options.models ?? modelCatalog;
   const loggedIn = options.loggedIn ?? cachedLogin();
   const runs = new Map<string, Attempt>();
   const checks = new Set<string>();
@@ -189,7 +193,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const latest = find(taskId)!;
     const tools = lookEnv(taskId);
     const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK });
-    const spec = command(provider, prompt, latest.sessionId ?? null, { model: latest.model, effort: latest.effort });
+    const spec = command(provider, prompt, latest.sessionId ?? null, agentChoice({ model: latest.model, effort: latest.effort }, models()[provider].default));
     const child = spawn(spec.cmd, spec.args, {
       cwd: tree.folder,
       env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate, ...tools }),
@@ -1017,8 +1021,7 @@ export function agentCommand(
   if (provider === "codex") {
     // Without network the sandbox cannot install packages; agents install, build and test like a developer would.
     const shared = [
-      ...(model ? ["-m", model] : []),
-      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+      ...codexModelArgs(choice),
       "--json",
       "--skip-git-repo-check",
       "-c",
@@ -1027,11 +1030,11 @@ export function agentCommand(
     if (resumeId) {
       // `codex exec resume` has no --sandbox flag; the config override is equivalent.
       return {
-        cmd: "codex",
+        cmd: codexBin(),
         args: ["exec", "resume", resumeId, ...shared, "-c", 'sandbox_mode="workspace-write"', prompt],
       };
     }
-    return { cmd: "codex", args: ["exec", ...shared, "--sandbox", "workspace-write", prompt] };
+    return { cmd: codexBin(), args: ["exec", ...shared, "--sandbox", "workspace-write", prompt] };
   }
   const args = ["-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "acceptEdits"];
   if (model) args.push("--model", model);
@@ -1039,6 +1042,28 @@ export function agentCommand(
   if (resumeId) args.push("--resume", resumeId);
   args.push(prompt);
   return { cmd: "claude", args };
+}
+
+/** Where the ChatGPT app keeps its own Codex. */
+export const APP_CODEX = ["Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "CodexCLI.app", "Contents", "MacOS", "codex"];
+
+/**
+ * The Codex to run: SHEPHERD_CODEX, else the ChatGPT app's own, else the one on the PATH.
+ * The app's Codex and another version share one cached model list and overwrite it, and Codex offers
+ * its newest models only to newer versions, so running the app's keeps the list and the models in step.
+ */
+export function codexBin(env: NodeJS.ProcessEnv = process.env, exists: (file: string) => boolean = existsSync): string {
+  const chosen = env.SHEPHERD_CODEX?.trim();
+  if (chosen) return chosen;
+  return [path.join("/", ...APP_CODEX), path.join(homedir(), ...APP_CODEX)].find(exists) ?? "codex";
+}
+
+/** Codex's flags for a model and thinking level. Nothing leaves it to Codex's own settings. */
+export function codexModelArgs(choice: Pick<Task, "model" | "effort">): string[] {
+  return [
+    ...(isModelId(choice.model) ? ["-m", choice.model] : []),
+    ...(isEffort(choice.effort) ? ["-c", `model_reasoning_effort="${choice.effort}"`] : []),
+  ];
 }
 
 /** Codex's sandbox can only write to the worktree and the temp folder, so npm's cache moves to the temp folder. */
@@ -1055,7 +1080,7 @@ export function agentStatus(): Promise<{ claude: boolean; codex: boolean }> {
 function loginStatus(provider: AgentCli): Promise<boolean> {
   return provider === "claude"
     ? commandSucceeds("claude", ["auth", "status"], (text) => /"loggedIn"\s*:\s*true/.test(text))
-    : commandSucceeds("codex", ["login", "status"], (text) => /Logged in/.test(text));
+    : commandSucceeds(codexBin(), ["login", "status"], (text) => /Logged in/.test(text));
 }
 
 /** Asking the CLI takes a moment, so a yes is trusted for a minute. A no is asked again every time. */

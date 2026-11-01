@@ -14,7 +14,7 @@ npm test
 
 You also need `git`, and at least one of these installed and logged in on the same machine:
 
-- `codex` (Codex CLI). Check with `codex login status`. Drafting steps from a goal uses Codex.
+- `codex` (Codex CLI). Check with `codex login status`. Drafting steps from a goal uses Codex. When the ChatGPT app is installed, Shepherd runs the app's own Codex instead of the one on your `PATH`: the two share one cached model list, and Codex offers its newest models only to newer versions, so mixing them makes your default model come and go. Set `SHEPHERD_CODEX` to the path of another `codex` to choose.
 - `claude` (Claude Code). Check with `claude auth status`.
 
 Settings (the gear) shows which ones Shepherd can use.
@@ -27,7 +27,7 @@ Settings (the gear) shows which ones Shepherd can use.
 - **The map.** Cmd (Ctrl elsewhere) with + or − zooms it, and Cmd+0 or F fits it to the screen.
 - **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
 - **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab has the agent's report, the files it changed with their diff, and a merge button for that step alone. The Log tab lets you send the agent an instruction.
-- **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
+- **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. If your Codex settings name a model that list no longer offers, steps on Default use Codex's first current model instead, and the picker says so. "Draft steps from a goal" has its own Model and Thinking, remembered in this browser. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
 - **Saved steps.** A step you want in other projects, such as checking the page in Chrome, can be saved: "Save for reuse" at the bottom of its Step tab, or on its menu on the map. It keeps who does it, the model, the prompt and More options, and can bring along the steps under it or side by side with it. "Add a saved step" under the outline, typing `/` in an empty step, the map menu's "Add a saved step after this…", or ⌘K adds a copy. The copy is that project's own: changing it, or the saved step, leaves the other alone. A changed copy offers to save its changes back. A person's checklist is left out unless you keep it, so each project gets one written from its own earlier steps. Shepherd starts you with "Check it in Chrome", "Audit the code" and "Check it yourself"; "Manage saved steps" edits, renames and deletes them, and brings back the starters.
 - **Run.** Run, at the bottom of the list, starts every step that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses the agents where they are. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
 - **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
@@ -70,7 +70,7 @@ Everything the UI does goes through these, so agents and scripts can use them to
 - `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
 - `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "projectId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
 - `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "projectId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note. `{ "command": "checklist", "taskId": "<your step>" }` has Codex suggest a checklist, which waits on the step as `checklist` until a `settleChecklist` edit uses or discards it.
-- `POST /api/draft` with `{ "projectId": "...", "goal": "..." }` returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them.
+- `POST /api/draft` with `{ "projectId": "...", "goal": "..." }`, and optionally `model` and `thinking`, returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them.
 - `POST /api/look` with `{ "taskId": "...", "url": "http://localhost:8130/", "width": 390, "full": true, "steps": [{ "click": "#go" }, { "type": "e4" }, { "press": "Enter" }, { "wait": 300 }] }` screenshots a local page for that step and returns `{ "path", "view", "title", "url", "width", "height", "errors" }`. `GET /api/looks/<taskId>/<file>` serves it.
 - Known issues are edits: `{ "type": "noteIssue", "id": "<step>", "text": "..." }`, `dropIssue` with an `issueId`, and `fixIssue` with an `issueId` and the new `task`.
 - `GET /api/tasks` lists every project and its steps, with ids, status, whether each is done, its branch, and what it waits for.
@@ -106,5 +106,5 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 
 - Shepherd does not push, open pull requests, or resolve merge conflicts. Merges happen locally.
 - `npm run dev` is the only way to run Shepherd, because the server is part of the Vite dev server.
-- Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting steps and checklists always uses your Codex default.
+- Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting checklists always uses your Codex default.
 - Saved steps belong to this Shepherd folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.

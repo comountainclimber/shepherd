@@ -45,7 +45,9 @@ export function ModelPicker({
       ? picked.hint
       : model
         ? `${model} is not offered here, so ${AGENT_NAME[provider]} may refuse it.`
-        : `From your ${AGENT_NAME[provider]} settings. It changes if you change them.`);
+        : own.unavailable && own.model
+          ? `Your ${AGENT_NAME[provider]} settings say ${own.unavailable}, which ${AGENT_NAME[provider]} no longer offers you, so Shepherd uses ${modelName(own.model, catalog, provider)}.`
+          : `From your ${AGENT_NAME[provider]} settings. It changes if you change them.`);
 
   return (
     <div className="mt-2 space-y-1">

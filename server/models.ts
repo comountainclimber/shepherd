@@ -1,17 +1,26 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import { CLAUDE_MODELS, isEffort, isModelId, type ModelCatalog, type ModelChoice } from "../src/model/models";
+import { CLAUDE_MODELS, isEffort, isModelId, type AgentDefault, type ModelCatalog, type ModelChoice } from "../src/model/models";
 import type { Effort } from "../src/model/types";
 
 /** What Codex and Claude Code can use on this machine, read from their own files each time. */
 export function modelCatalog(env: NodeJS.ProcessEnv = process.env): ModelCatalog {
   const codexHome = env.CODEX_HOME || path.join(homedir(), ".codex");
   const claudeHome = env.CLAUDE_CONFIG_DIR || path.join(homedir(), ".claude");
+  const codex = codexModels(read(path.join(codexHome, "models_cache.json")));
   return {
-    codex: { models: codexModels(read(path.join(codexHome, "models_cache.json"))), default: codexDefault(read(path.join(codexHome, "config.toml"))) },
+    codex: { models: codex, default: standIn(codexDefault(read(path.join(codexHome, "config.toml"))), codex) },
     claude: { models: CLAUDE_MODELS, default: claudeDefault(read(path.join(claudeHome, "settings.json"))) },
   };
+}
+
+/** Codex refuses a model it stopped offering, so a default it no longer lists gives way to its first current model. */
+export function standIn(own: AgentDefault, models: ModelChoice[]): AgentDefault {
+  if (!own.model || !models.length || models.some((model) => model.id === own.model)) return own;
+  const model = models.find((item) => !item.older) ?? models[0]!;
+  const keeps = own.effort && (!model.efforts.length || model.efforts.includes(own.effort));
+  return { model: model.id, effort: keeps ? own.effort : (model.defaultEffort ?? null), unavailable: own.model };
 }
 
 function read(file: string): string {

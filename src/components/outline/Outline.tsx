@@ -2,13 +2,14 @@ import { BookmarkPlus, ChevronRight, GitMerge, GripVertical, LoaderCircle, Play,
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
 import { cx } from "../../model/format";
-import { modelName, providerOf } from "../../model/models";
+import { isEffort, isModelId, modelName, providerOf } from "../../model/models";
 import { indent, moveBlock, moveDown, moveUp, outdent, outlineOf, parseList, subtreeEnd } from "../../model/outline";
 import { STAGE_LABEL, STEP_LABEL, assigneeFor, needsYou, nextStep, openIssues, progress, stageHint, stageOf } from "../../model/stage";
-import type { OutlineItem, Task } from "../../model/types";
+import type { Effort, OutlineItem, Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftSteps, mergePlan, runPlan, stopPlan } from "../../runner/live";
 import { useShepherd } from "../../store";
+import { ModelPicker } from "../inspector/ModelPicker";
 import { placeFor } from "../saved/addSaved";
 import { SavedPicker } from "../saved/SavedPicker";
 import { useModels } from "../useModels";
@@ -439,11 +440,25 @@ function Start({ projectId, onWrite }: { projectId: string; onWrite: () => void 
   );
 }
 
+const DRAFT_KEY = "shepherd.draftModel";
+
+/** The model and thinking the last draft used, so the next one starts there. */
+function lastDraftChoice(): Pick<Task, "model" | "effort"> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(DRAFT_KEY) ?? "{}") as Record<string, unknown>;
+    return { ...(isModelId(saved.model) ? { model: saved.model } : {}), ...(isEffort(saved.effort) ? { effort: saved.effort } : {}) };
+  } catch {
+    return {};
+  }
+}
+
 /** Asks Codex to break a goal into steps, then adds them to the end of the outline. */
 function Draft({ projectId, big }: { projectId: string; big: boolean }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const draftToken = useShepherd((store) => store.ui.draftToken);
   const requestFit = useShepherd((store) => store.requestFit);
+  const catalog = useModels();
+  const [choice, setChoice] = useState(lastDraftChoice);
   const [open, setOpen] = useState(big);
   const [goal, setGoal] = useState("");
   const [started, setStarted] = useState<number | null>(null);
@@ -474,7 +489,7 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
     setNow(Date.now());
     const controller = new AbortController();
     abort.current = controller;
-    const result = await draftSteps(projectId, text, controller.signal);
+    const result = await draftSteps(projectId, text, choice, controller.signal);
     abort.current = null;
     setStarted(null);
     if (!Array.isArray(result)) {
@@ -487,6 +502,11 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
     setGoal("");
     if (!big) setOpen(false);
     requestFit();
+  };
+  const pick = (model: string | null, effort: Effort | null) => {
+    const next = { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
+    setChoice(next);
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
   };
 
   if (!open) {
@@ -521,6 +541,7 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
         placeholder={big ? "Add a dark mode toggle to the settings page, with tests" : "Another goal to break into steps"}
         className="min-h-24 w-full resize-y rounded-lg border border-line-strong bg-black/20 px-3 py-2 text-[13px] leading-5 text-text outline-none placeholder:text-faint focus:border-brass disabled:opacity-60"
       />
+      <ModelPicker provider="codex" catalog={catalog} model={choice.model} effort={choice.effort} disabled={busy} onChange={pick} />
       {error ? <p className="text-[12px] leading-5 text-failed">{error}</p> : null}
       <div className="flex items-center gap-2">
         {busy ? (

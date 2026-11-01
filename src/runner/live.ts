@@ -120,12 +120,17 @@ export interface DraftStep {
 }
 
 /** Asks Codex to break a goal into steps. It can read the project folder but changes nothing. */
-export async function draftSteps(projectId: string, goal: string, signal?: AbortSignal): Promise<DraftStep[] | { error: string }> {
+export async function draftSteps(
+  projectId: string,
+  goal: string,
+  choice: Pick<Task, "model" | "effort">,
+  signal?: AbortSignal,
+): Promise<DraftStep[] | { error: string }> {
   try {
     const response = await fetch("/api/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId, goal }),
+      body: JSON.stringify({ projectId, goal, model: choice.model ?? null, thinking: choice.effort ?? null }),
       signal,
     });
     const body = (await response.json()) as { steps?: DraftStep[]; error?: string };

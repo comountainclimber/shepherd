@@ -5,7 +5,13 @@ import path from "node:path";
 import { dependencyOrder } from "../src/model/outline";
 import { openIssues } from "../src/model/stage";
 import type { OrchestrationState, Task } from "../src/model/types";
-import { agentEnv } from "./runner";
+import { agentEnv, codexBin, codexModelArgs } from "./runner";
+
+/** The model and thinking to ask Codex with. Unset leaves it to Codex's settings. */
+type Choice = Pick<Task, "model" | "effort">;
+
+/** Why Codex gave no answer, and whether it was because it refused the model. */
+type NoAnswer = { error: string; refusedModel?: boolean };
 
 export interface DraftStep {
   name: string;
@@ -63,9 +69,10 @@ export function parseDraft(reply: string): DraftStep[] | { error: string } {
 }
 
 /** Asks Codex, which may read the project folder but not change it, to break a goal into steps. */
-export async function draftSteps(goal: string, folder: string, signal?: AbortSignal): Promise<DraftStep[] | { error: string }> {
-  const answer = await askCodex(draftPrompt(goal), folder, signal, "steps");
-  return "error" in answer ? answer : parseDraft(answer.reply);
+export async function draftSteps(goal: string, folder: string, choice: Choice, signal?: AbortSignal): Promise<DraftStep[] | { error: string }> {
+  const answer = await askCodex(draftPrompt(goal), folder, choice, signal, "steps");
+  if ("error" in answer) return { error: answer.refusedModel ? `${answer.error} Pick another model and try again.` : answer.error };
+  return parseDraft(answer.reply);
 }
 
 export interface ChecklistInput {
@@ -166,20 +173,42 @@ export function parseChecklist(reply: string): string | { error: string } {
 }
 
 /** Asks Codex, which may read the folder but not change it, for a person's checklist. */
-export async function draftChecklist(input: ChecklistInput, folder: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
-  const answer = await askCodex(checklistPrompt(input), folder, signal, "a checklist");
-  if ("error" in answer) return answer;
+export async function draftChecklist(input: ChecklistInput, folder: string, choice: Choice, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
+  const answer = await askCodex(checklistPrompt(input), folder, choice, signal, "a checklist");
+  if ("error" in answer) return { error: answer.error };
   const text = parseChecklist(answer.reply);
   return typeof text === "string" ? { text } : text;
 }
 
+/** The last thing Codex said on stderr, with an API error's JSON reduced to its message. */
+export function codexError(stderr: string): { text: string; refusedModel: boolean } {
+  const last =
+    stderr
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !/^\d{4}-\d{2}-\d{2}T/.test(line))
+      .at(-1) ?? "";
+  try {
+    const body = JSON.parse(last.slice(last.indexOf("{"))) as { error?: { message?: unknown; code?: unknown } };
+    if (typeof body.error?.message === "string") return { text: body.error.message, refusedModel: body.error.code === "model_not_found" };
+  } catch {
+    // Not JSON, so the line is already plain text.
+  }
+  return { text: last, refusedModel: false };
+}
+
+/** Codex's command for a read-only, ephemeral answer written to a file. */
+export function askArgs(prompt: string, answer: string, choice: Choice): string[] {
+  return ["exec", ...codexModelArgs(choice), "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never", "-o", answer, prompt];
+}
+
 /** Runs Codex read-only and ephemeral in the folder, and returns its final message. */
-function askCodex(prompt: string, folder: string, signal: AbortSignal | undefined, what: string): Promise<{ reply: string } | { error: string }> {
+function askCodex(prompt: string, folder: string, choice: Choice, signal: AbortSignal | undefined, what: string): Promise<{ reply: string } | NoAnswer> {
   const scratch = mkdtempSync(path.join(tmpdir(), "shepherd-draft-"));
   const answer = path.join(scratch, "answer.txt");
-  const args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never", "-o", answer, prompt];
+  const args = askArgs(prompt, answer, choice);
   return new Promise((resolve) => {
-    const child = spawn("codex", args, { cwd: folder, env: agentEnv("codex", process.env), stdio: ["ignore", "ignore", "pipe"], detached: true });
+    const child = spawn(codexBin(), args, { cwd: folder, env: agentEnv("codex", process.env), stdio: ["ignore", "ignore", "pipe"], detached: true });
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr = `${stderr}${chunk.toString("utf8")}`.slice(-4000);
@@ -193,7 +222,7 @@ function askCodex(prompt: string, folder: string, signal: AbortSignal | undefine
     };
     const timer = setTimeout(stop, DRAFT_TIMEOUT_MS);
     signal?.addEventListener("abort", stop, { once: true });
-    const finish = (result: { reply: string } | { error: string }) => {
+    const finish = (result: { reply: string } | NoAnswer) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", stop);
       rmSync(scratch, { recursive: true, force: true });
@@ -208,12 +237,9 @@ function askCodex(prompt: string, folder: string, signal: AbortSignal | undefine
         // No answer file means Codex stopped before it replied.
       }
       if (reply.trim()) return finish({ reply });
-      const last = stderr
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line && !/^\d{4}-\d{2}-\d{2}T/.test(line))
-        .at(-1);
-      finish({ error: code === null ? "Drafting took too long and was stopped." : `Codex could not draft ${what}${last ? `: ${last}` : "."}` });
+      if (code === null) return finish({ error: "Drafting took too long and was stopped." });
+      const why = codexError(stderr);
+      finish({ error: `Codex could not draft ${what}${why.text ? `: ${why.text}` : "."}`, ...(why.refusedModel ? { refusedModel: true } : {}) });
     });
   });
 }

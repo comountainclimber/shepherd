@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { codexDefault, codexModels } from "./models";
+import { agentChoice, type ModelChoice } from "../src/model/models";
+import { codexDefault, codexModels, standIn } from "./models";
 import { agentCommand } from "./runner";
 
 describe("codexModels", () => {
@@ -39,6 +40,34 @@ describe("codexDefault", () => {
     const toml = ['model = "gpt-6.1-sol"', "model_reasoning_effort = 'high'", "", "[profiles.fast]", 'model = "gpt-6-luna"'].join("\n");
     expect(codexDefault(toml)).toEqual({ model: "gpt-6.1-sol", effort: "high" });
     expect(codexDefault('[profiles.fast]\nmodel = "gpt-6-luna"')).toEqual({ model: null, effort: null });
+  });
+});
+
+describe("standIn", () => {
+  const models: ModelChoice[] = [
+    { id: "gpt-old", name: "GPT-Old", hint: "Older.", efforts: ["low"], older: true },
+    { id: "gpt-6-astra", name: "GPT-6-Astra", hint: "", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+  ];
+
+  it("keeps a default Codex still offers, or one Shepherd cannot check", () => {
+    expect(standIn({ model: "gpt-6-astra", effort: "high" }, models)).toEqual({ model: "gpt-6-astra", effort: "high" });
+    expect(standIn({ model: null, effort: "high" }, models)).toEqual({ model: null, effort: "high" });
+    expect(standIn({ model: "gpt-6.1-sol", effort: "high" }, [])).toEqual({ model: "gpt-6.1-sol", effort: "high" });
+  });
+
+  it("puts the first current model in place of one Codex stopped offering, and keeps its thinking when it can", () => {
+    expect(standIn({ model: "gpt-6.1-sol", effort: "high" }, models)).toEqual({ model: "gpt-6-astra", effort: "high", unavailable: "gpt-6.1-sol" });
+    expect(standIn({ model: "gpt-6.1-sol", effort: "ultra" }, models)).toEqual({ model: "gpt-6-astra", effort: "medium", unavailable: "gpt-6.1-sol" });
+  });
+});
+
+describe("agentChoice", () => {
+  it("names the stand-in only for steps on the default", () => {
+    const own = { model: "gpt-6-astra", effort: "high" as const, unavailable: "gpt-6.1-sol" };
+    expect(agentChoice({}, own)).toEqual({ model: "gpt-6-astra", effort: "high" });
+    expect(agentChoice({ effort: "low" }, own)).toEqual({ model: "gpt-6-astra", effort: "low" });
+    expect(agentChoice({ model: "gpt-6-luna" }, own)).toEqual({ model: "gpt-6-luna" });
+    expect(agentChoice({}, { model: "gpt-6-astra", effort: "high" })).toEqual({});
   });
 });
 

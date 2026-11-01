@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { agentCommand, agentEnv, exitError, inside, runCheckCommand, withoutLogLines } from "./runner";
+import { agentCommand, agentEnv, codexBin, exitError, inside, runCheckCommand, withoutLogLines } from "./runner";
 
 describe("check commands", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "shepherd-check-"));
@@ -32,11 +32,17 @@ describe("check commands", () => {
 describe("agent commands", () => {
   it("starts Codex in a writable sandbox", () => {
     const { cmd, args } = agentCommand("codex", "Do it", null);
-    expect(cmd).toBe("codex");
+    expect(cmd).toBe(codexBin());
     expect(args.slice(0, 1)).toEqual(["exec"]);
     expect(args).toContain("--sandbox");
     expect(args).toContain("sandbox_workspace_write.network_access=true");
     expect(args.at(-1)).toBe("Do it");
+  });
+
+  it("runs SHEPHERD_CODEX, else the ChatGPT app's Codex, else the one on the PATH", () => {
+    expect(codexBin({ SHEPHERD_CODEX: " /opt/codex " }, () => true)).toBe("/opt/codex");
+    expect(codexBin({}, (file) => file.startsWith("/Applications/ChatGPT.app/"))).toBe("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    expect(codexBin({}, () => false)).toBe("codex");
   });
 
   it("gives Codex an npm cache its sandbox can write to, and leaves Claude's environment alone", () => {

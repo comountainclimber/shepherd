@@ -13,10 +13,17 @@ export interface ModelChoice {
   older?: boolean;
 }
 
+export interface AgentDefault {
+  model: string | null;
+  effort: Effort | null;
+  /** The model the agent's settings name when the agent no longer offers it, so `model` stands in for it. */
+  unavailable?: string;
+}
+
 /** What each agent can use here, and what it uses when a step does not say. */
 export interface ModelCatalog {
-  codex: { models: ModelChoice[]; default: { model: string | null; effort: Effort | null } };
-  claude: { models: ModelChoice[]; default: { model: string | null; effort: Effort | null } };
+  codex: { models: ModelChoice[]; default: AgentDefault };
+  claude: { models: ModelChoice[]; default: AgentDefault };
 }
 
 export const EFFORT_LABEL: Record<Effort, string> = {
@@ -50,6 +57,12 @@ export function providerOf(task: Pick<Task, "runner" | "agentId">): "codex" | "c
   if (task.runner !== "agent") return null;
   const provider = agentById(task.agentId)?.provider;
   return provider === "codex" ? "codex" : provider === "claude-code" ? "claude" : null;
+}
+
+/** The model and thinking to name to an agent: the step's own, or the stand-in for a default the agent no longer offers. */
+export function agentChoice(choice: Pick<Task, "model" | "effort">, own: AgentDefault): Pick<Task, "model" | "effort"> {
+  if (choice.model || !own.unavailable || !own.model) return choice;
+  return { model: own.model, ...(choice.effort || own.effort ? { effort: choice.effort ?? own.effort! } : {}) };
 }
 
 export function modelName(id: string, catalog: ModelCatalog | null, provider: "codex" | "claude"): string {

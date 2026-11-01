@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Plugin } from "vite";
-import type { Action, OrchestrationState, Task } from "../src/model/types";
+import { agentChoice, isEffort, isModelId } from "../src/model/models";
+import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
@@ -68,7 +69,7 @@ function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, 
   const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : projectFolder(board.workspace, project?.directory, sandbox);
   if ("error" in folder) return Promise.resolve(folder);
   mkdirSync(folder.path, { recursive: true });
-  return draftChecklist(checklistInput(board, task), folder.path, signal);
+  return draftChecklist(checklistInput(board, task), folder.path, agentChoice({}, modelCatalog().codex.default), signal);
 }
 
 interface Context {
@@ -176,13 +177,17 @@ async function route(
     return true;
   }
   if (pathname === "/api/draft" && method === "POST") {
-    const body = (await readJson(req)) as { projectId?: unknown; goal?: unknown };
+    const body = (await readJson(req)) as { projectId?: unknown; goal?: unknown; model?: unknown; thinking?: unknown };
     const board = engine.get();
     const project = board.projects.find((item) => item.id === body.projectId);
     const goal = typeof body.goal === "string" ? body.goal.trim() : "";
     if (!project) throw new BadRequest("Say which project, as projectId.");
     if (!goal) throw new BadRequest("Say what you want done, as goal.");
     if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
+    const { model = null, thinking = null } = body;
+    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
+    if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
+    const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
     const folder = projectFolder(board.workspace, project.directory, sandbox);
     if ("error" in folder) {
       sendJson(res, 409, { error: folder.error });
@@ -193,7 +198,7 @@ async function route(
     res.on("close", () => {
       if (!res.writableEnded) abandon.abort();
     });
-    const result = await draftSteps(goal, folder.path, abandon.signal);
+    const result = await draftSteps(goal, folder.path, choice, abandon.signal);
     if (!res.destroyed) sendJson(res, Array.isArray(result) ? 200 : 409, Array.isArray(result) ? { steps: result } : result);
     return true;
   }

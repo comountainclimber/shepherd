@@ -27,7 +27,8 @@ function defaults(catalog: ModelCatalog | null, provider: "codex" | "claude"): s
   const own = catalog?.[provider].default;
   if (!own?.model) return "your default model";
   const effort = own.effort ? ` at ${EFFORT_LABEL[own.effort]}` : "";
-  return `your default, ${modelName(own.model, catalog, provider)}${effort}`;
+  const instead = own.unavailable ? `, since ${own.unavailable} is no longer offered` : "";
+  return `your default, ${modelName(own.model, catalog, provider)}${effort}${instead}`;
 }
 
 /** Who can take steps, what each is doing in this project, and how much of it is done. */

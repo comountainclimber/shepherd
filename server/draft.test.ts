@@ -3,7 +3,7 @@ import { blankTask } from "../src/model/factory";
 import { reducer } from "../src/model/reducer";
 import type { Action, OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
-import { MAX_DRAFT_STEPS, checklistInput, checklistPrompt, parseChecklist, parseDraft } from "./draft";
+import { MAX_DRAFT_STEPS, askArgs, checklistInput, codexError, checklistPrompt, parseChecklist, parseDraft } from "./draft";
 
 describe("parseDraft", () => {
   it("reads the steps out of a reply with prose and a code fence around them", () => {
@@ -31,6 +31,28 @@ describe("parseDraft", () => {
     expect(parseDraft("I could not do that.")).toEqual({ error: "The agent did not reply with a plan." });
     expect(parseDraft("{nope}")).toEqual({ error: "The agent's plan was not valid JSON." });
     expect(parseDraft('{"steps":[]}')).toEqual({ error: "The agent's plan had no usable steps." });
+  });
+});
+
+describe("codexError", () => {
+  it("says what the API said, and whether it refused the model", () => {
+    const stderr = [
+      "2026-11-01T04:27:00.000Z ERROR codex_core: stream failed",
+      'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}',
+    ].join("\n");
+    expect(codexError(stderr)).toEqual({ text: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.", refusedModel: true });
+    expect(codexError("Not logged in\n")).toEqual({ text: "Not logged in", refusedModel: false });
+    expect(codexError("")).toEqual({ text: "", refusedModel: false });
+  });
+});
+
+describe("askArgs", () => {
+  it("asks read-only with the chosen model and thinking, or Codex's own default when there is none", () => {
+    const picked = askArgs("Plan it", "/tmp/answer.txt", { model: "gpt-6-luna", effort: "low" });
+    expect(picked.slice(0, 5)).toEqual(["exec", "-m", "gpt-6-luna", "-c", 'model_reasoning_effort="low"']);
+    expect(picked).toEqual(expect.arrayContaining(["--sandbox", "read-only", "--ephemeral", "-o", "/tmp/answer.txt"]));
+    expect(picked.at(-1)).toBe("Plan it");
+    expect(askArgs("Plan it", "/tmp/answer.txt", {})).not.toContain("-m");
   });
 });
 
