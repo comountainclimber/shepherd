@@ -13,6 +13,7 @@ import { notify } from "../shell/Toasts";
 import { Avatar, Button, Select, TextArea, TextInput } from "../ui";
 import { useModels } from "../useModels";
 import { ModelPicker } from "./ModelPicker";
+import { AcceptanceProgress } from "./AcceptanceProgress";
 import { useSelectedTask } from "./useSelectedTask";
 
 const PICKABLE = [...AGENTS].sort((a, b) => (a.provider === "codex" ? -1 : b.provider === "codex" ? 1 : 0));
@@ -68,6 +69,7 @@ function StepFields({ task }: { task: Task }) {
   return (
     <div className="space-y-4 pb-2">
       <SavedOrigin task={task} />
+      <AcceptanceProgress task={task} />
       <section>
         <div className="mb-1.5 text-[12px] font-medium text-muted">Who does it</div>
         <WhoDoesIt task={task} />
@@ -260,7 +262,7 @@ function StepModel({ task }: { task: Task }) {
 function Order({ task }: { task: Task }) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
-  const project = useShepherd((store) => store.state.projects.find((item) => item.id === task.projectId));
+  const project = useShepherd((store) => store.state.goals.find((item) => item.id === task.goalId));
   const dispatch = useShepherd((store) => store.dispatch);
   const [adding, setAdding] = useState("");
   const name = (id: string) => tasks.find((item) => item.id === id)?.name || "Untitled step";
@@ -268,7 +270,7 @@ function Order({ task }: { task: Task }) {
   const after = outgoing(task.id, deps);
   const byHand = !!project?.outline && (!!task.wired || before.some((dep) => !dep.outline));
   const candidates = tasks
-    .filter((item) => item.projectId === task.projectId && item.id !== task.id)
+    .filter((item) => item.goalId === task.goalId && item.id !== task.id)
     .filter((item) => !before.some((dep) => dep.source === item.id))
     .filter((item) => !hasCycle([...deps, { source: item.id, target: task.id }]));
 
@@ -336,7 +338,8 @@ function MoreOptions({ task }: { task: Task }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const agent = task.runner === "agent";
   const review = task.verification.some((check) => check.kind === "review");
-  const extras = task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent;
+  const workCheck = task.verification.some((check) => check.kind === "work");
+  const extras = workCheck || task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent || !!task.pushBeforeRun;
   const [open, setOpen] = useState(extras);
   const [checkCommand, setCheckCommand] = useState(task.checkCommand ?? "");
   useEffect(() => setCheckCommand(task.checkCommand ?? ""), [task.checkCommand]);
@@ -386,11 +389,25 @@ function MoreOptions({ task }: { task: Task }) {
           {agent ? (
             <>
               <Toggle
+                checked={workCheck}
+                disabled={task.status === "running" || task.verification.some((check) => check.running)}
+                onChange={(on) => dispatch({ type: "setWorkCheck", id: task.id, on })}
+                label="Check the work against this step"
+                hint="Each check is another Codex run. It reads the work after the command check passes and checks each Done when item."
+              />
+              <Toggle
                 checked={review}
                 disabled={task.status === "running"}
                 onChange={(on) => dispatch({ type: "setReview", id: task.id, on })}
                 label="Ask me to review it"
                 hint="The plan waits for you to accept the work before the next steps start."
+              />
+              <Toggle
+                checked={!!task.pushBeforeRun}
+                disabled={task.status === "running"}
+                onChange={(pushBeforeRun) => dispatch({ type: "updateTask", id: task.id, patch: { pushBeforeRun } })}
+                label="Push task branch before running"
+                hint="Shepherd pushes to the remote the base branch tracks, or origin. If the push fails, this step stops before the agent starts."
               />
               <Toggle
                 checked={!!task.independent}

@@ -13,7 +13,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { hasCycle, isTaskDimmed, taskMatches, tasksForProject, waitingOn } from "../../model/selectors";
+import { hasCycle, isTaskDimmed, taskMatches, tasksForGoal, waitingOn } from "../../model/selectors";
 import { dependencySatisfied } from "../../model/verify";
 import { AGENTS } from "../../model/workspace";
 import { initialFilters, useShepherd } from "../../store";
@@ -47,8 +47,8 @@ function CanvasInner() {
   const [dragging, setDragging] = useState<Record<string, { x: number; y: number }>>({});
 
   const projectTasks = useMemo(
-    () => tasksForProject(state, ui.projectId),
-    [state.tasks, ui.projectId],
+    () => tasksForGoal(state, ui.goalId),
+    [state.tasks, ui.goalId],
   );
   const visibleCount = projectTasks.filter((task) => taskMatches(task, ui.filters, state.tasks, state.dependencies)).length;
   const layoutKey = projectTasks
@@ -106,7 +106,7 @@ function CanvasInner() {
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: stroke },
         };
       });
-  }, [projectTasks, state.dependencies, state.tasks, ui.filters, ui.projectId, ui.selectedTaskId, ui.selectedEdgeId]);
+  }, [projectTasks, state.dependencies, state.tasks, ui.filters, ui.goalId, ui.selectedTaskId, ui.selectedEdgeId]);
 
   const selectedEdge = useMemo(() => {
     const dep = state.dependencies.find((item) => item.id === ui.selectedEdgeId);
@@ -140,15 +140,15 @@ function CanvasInner() {
   nodesRef.current = nodes;
   const fitViewRef = useRef(fitView);
   fitViewRef.current = fitView;
-  const shape = state.projects
-    .find((project) => project.id === ui.projectId)
+  const shape = state.goals
+    .find((project) => project.id === ui.goalId)
     ?.outline?.map((item) => `${item.id}:${item.depth}`)
     .join("|");
 
   useEffect(() => {
     const id = window.setTimeout(() => fitViewRef.current({ padding: 0.2, duration: 200 }), 80);
     return () => window.clearTimeout(id);
-  }, [ui.projectId, ui.fitToken, shape]);
+  }, [ui.goalId, ui.fitToken, shape]);
 
   useEffect(() => {
     const search = ui.filters.search.trim();
@@ -355,7 +355,7 @@ function TaskMenu() {
           />
         </div>
       ) : null}
-      <MenuItem label="Add a saved step after this…" onClick={() => setAddSaved(placeFor(task.projectId, task.id))} />
+      <MenuItem label="Add a saved step after this…" onClick={() => setAddSaved(placeFor(task.goalId, task.id))} />
       {task.name.trim() ? <MenuItem label="Save for reuse…" onClick={() => setSaveFor(task.id)} /> : null}
       <MenuItem
         label="Delete"

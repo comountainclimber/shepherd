@@ -9,6 +9,7 @@ import { workspace, WORKSPACE_PROJECT_ID } from "./workspace";
 
 const NOW = 1_000_000;
 const P = WORKSPACE_PROJECT_ID;
+const G = `goal-${P}`;
 
 function step(id: string) {
   return { ...newStep(P, `Do ${id}`), id, worktree: id };
@@ -20,7 +21,7 @@ function build(spec: string): OrchestrationState {
     .trim()
     .split("\n")
     .map((line) => ({ id: line.trim(), depth: (line.length - line.trimStart().length) / 2 }));
-  return reducer(workspace(NOW), { type: "addSteps", projectId: P, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
+  return reducer(workspace(NOW), { type: "addSteps", goalId: G, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
 }
 
 function task(state: OrchestrationState, id: string) {
@@ -71,6 +72,21 @@ describe("readSavedSteps", () => {
 
   it("accepts the starters as they are", () => {
     expect(readSavedSteps(STARTERS)).toEqual(STARTERS);
+  });
+
+  it("offers a Codex merge request step and preserves its push option through saving and copying", () => {
+    const saved = STARTERS.find((step) => step.id === "starter-merge-request")!;
+    expect(saved.name).toBe("Open a merge request");
+    expect(saved.steps[0]).toMatchObject({ runner: "agent", agentId: "agent-codex", pushBeforeRun: true });
+    expect(saved.steps[0]!.objective).toContain("GitLab or GitHub");
+    expect(saved.steps[0]!.objective).toContain("earlier steps' reports");
+    expect(saved.steps[0]!.objective).toContain("conventions, templates");
+    const copy = fromSaved(readSavedSteps([saved])[0]!, P, 0, catalog, () => "mr").steps[0]!.task;
+    expect(copy.pushBeforeRun).toBe(true);
+    expect(toSavedItem(copy, 0).pushBeforeRun).toBe(true);
+    expect(changedFrom({ ...copy, pushBeforeRun: false }, saved)).toBe(true);
+    expect(toSavedItem({ ...copy, runner: "human" }, 0).pushBeforeRun).toBeUndefined();
+    expect(readSavedSteps([{ ...saved, steps: [{ ...saved.steps[0], runner: "human" }] }])[0]!.steps[0]!.pushBeforeRun).toBeUndefined();
   });
 });
 
@@ -155,13 +171,13 @@ a
 e`);
 
   it("adds past a step's own sub-steps, at its indent", () => {
-    expect(placeAfter(state, P, "b")).toEqual({ after: "b1", depth: 1 });
-    expect(placeAfter(state, P, "a")).toEqual({ after: "b1", depth: 0 });
+    expect(placeAfter(state, G, "b")).toEqual({ after: "b1", depth: 1 });
+    expect(placeAfter(state, G, "a")).toEqual({ after: "b1", depth: 0 });
   });
 
   it("adds at the end when there is no step to add after", () => {
-    expect(placeAfter(state, P, null)).toEqual({ after: "e", depth: 0 });
-    expect(placeAfter(state, P, "gone")).toEqual({ after: "e", depth: 0 });
+    expect(placeAfter(state, G, null)).toEqual({ after: "e", depth: 0 });
+    expect(placeAfter(state, G, "gone")).toEqual({ after: "e", depth: 0 });
     expect(placeAfter(workspace(NOW), P, null)).toEqual({ after: null, depth: 0 });
   });
 });
@@ -193,6 +209,16 @@ describe("fromSaved", () => {
     expect(unavailable).toEqual(["gpt-elsewhere"]);
   });
 
+  it("keeps public Claude choices and falls back for an unavailable saved model", () => {
+    const claude: SavedStep = {
+      ...saved,
+      steps: ["opus", "sonnet", "haiku", "example-claude-private"].map((model) => ({ ...saved.steps[0]!, agentId: "agent-claude", model })),
+    };
+    const { steps, unavailable } = fromSaved(claude, P, 0, catalog, (index) => `new-${index}`);
+    expect(steps.map((entry) => entry.task.model)).toEqual(["opus", "sonnet", "haiku", undefined]);
+    expect(unavailable).toEqual(["example-claude-private"]);
+  });
+
   it("indents the block from where it is added, no deeper than the outline goes", () => {
     const { steps } = fromSaved(saved, P, 1, catalog, (index) => `new-${index}`);
     expect(steps.map((entry) => entry.depth)).toEqual([1, 2, 2]);
@@ -203,10 +229,10 @@ describe("fromSaved", () => {
 a
   b
 e`);
-    const place = placeAfter(state, P, "a");
+    const place = placeAfter(state, G, "a");
     const { steps } = fromSaved(saved, P, place.depth, catalog, (index) => `new-${index}`);
-    const next = reducer(state, { type: "addSteps", projectId: P, after: place.after, steps });
-    expect(outlineOf(next, P).map((item) => `${"  ".repeat(item.depth)}${item.id}`)).toEqual(["a", "  b", "new-0", "  new-1", "    new-2", "e"]);
+    const next = reducer(state, { type: "addSteps", goalId: G, after: place.after, steps });
+    expect(outlineOf(next, G).map((item) => `${"  ".repeat(item.depth)}${item.id}`)).toEqual(["a", "  b", "new-0", "  new-1", "    new-2", "e"]);
   });
 });
 
@@ -238,7 +264,7 @@ describe("upsertSaved and withStarters", () => {
   it("brings back only the starters you deleted", () => {
     const edited = upsertSaved([STARTERS[0]!], { ...STARTERS[0]!, name: "Mine now" }, 5);
     const back = withStarters(edited);
-    expect(back.map((entry) => entry.id)).toEqual(["starter-chrome", "starter-audit", "starter-yourself"]);
+    expect(back.map((entry) => entry.id)).toEqual(STARTERS.map((entry) => entry.id));
     expect(back[0]!.name).toBe("Mine now");
   });
 });

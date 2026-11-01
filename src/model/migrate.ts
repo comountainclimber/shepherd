@@ -1,7 +1,11 @@
+import { mergeRequestUrl } from "./mergeRequest";
+import { blankGoal } from "./factory";
+import { keptMarks } from "./acceptance";
 import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
 import type {
   Dependency,
+  Goal,
   ExecutionEvent,
   FilePreview,
   Issue,
@@ -33,24 +37,17 @@ function text(value: unknown, fallback = ""): string {
 
 function project(raw: Raw): Project {
   const directory = text(raw.directory);
-  const outline = Array.isArray(raw.outline)
-    ? raw.outline.flatMap((item) => {
-        const step = record(item);
-        return step && typeof step.id === "string" ? [{ id: step.id, depth: Number.isInteger(step.depth) ? (step.depth as number) : 0 }] : [];
-      })
-    : null;
   return {
     id: text(raw.id),
     name: text(raw.name),
     summary: text(raw.summary),
     ...(directory ? { directory } : {}),
-    ...(outline ? { outline } : {}),
-    ...(raw.running === true ? { running: true } : {}),
+    ...(text(raw.repo) ? { repo: text(raw.repo) } : {}),
   };
 }
 
 function check(raw: Raw): VerificationCheck | null {
-  if (raw.kind !== "command" && raw.kind !== "review") return null;
+  if (raw.kind !== "command" && raw.kind !== "review" && raw.kind !== "work") return null;
   if (raw.state !== "pending" && raw.state !== "passed" && raw.state !== "failed") return null;
   const out: VerificationCheck = {
     id: text(raw.id),
@@ -64,6 +61,18 @@ function check(raw: Raw): VerificationCheck | null {
   if (typeof raw.output === "string") out.output = raw.output;
   if (typeof raw.durationMs === "number") out.durationMs = raw.durationMs;
   if (raw.running === true) out.running = true;
+  const result = record(raw.result);
+  if (raw.kind === "work" && result && Array.isArray(result.items) && Array.isArray(result.unrequested) && Array.isArray(result.violations)) {
+    out.result = {
+      items: result.items.flatMap((value) => {
+        const item = record(value);
+        return item && typeof item.key === "string" && typeof item.item === "number" && (item.verdict === "met" || item.verdict === "not met" || item.verdict === "can't tell") && typeof item.reason === "string"
+          ? [{ key: item.key, item: item.item, verdict: item.verdict, reason: item.reason.slice(0, 1500) }] : [];
+      }),
+      unrequested: result.unrequested.filter((text): text is string => typeof text === "string").slice(0, 20).map((text) => text.slice(0, 1500)),
+      violations: result.violations.filter((text): text is string => typeof text === "string").slice(0, 20).map((text) => text.slice(0, 1500)),
+    };
+  }
   const steps = list(raw.steps).flatMap((item) => {
     const step = record(item);
     return step && typeof step.name === "string" && typeof step.ok === "boolean"
@@ -104,6 +113,7 @@ function taskGit(value: unknown): TaskGit | null {
   return {
     branch: raw.branch,
     folder: raw.folder,
+    ...(typeof raw.diffBase === "string" ? { diffBase: raw.diffBase } : {}),
     target: text(raw.target, "main"),
     ...(typeof raw.head === "string" ? { head: raw.head } : {}),
     ...(merged && typeof merged.sha === "string"
@@ -131,15 +141,19 @@ function task(raw: Raw): Task {
   const status = STATUSES.has(raw.status as TaskStatus) ? (raw.status as TaskStatus) : "queued";
   const checkCommand = text(raw.checkCommand);
   const git = taskGit(raw.git);
+  const acceptance = list(raw.acceptance)
+    .map((item) => (typeof item === "string" ? item : text(record(item)?.text)))
+    .filter((item) => item && item !== "The objective is met");
+  const acceptanceMarks = keptMarks(acceptance, raw.acceptanceMarks);
   return {
     id,
     projectId: text(raw.projectId),
+    goalId: text(raw.goalId),
     name: text(raw.name),
     objective: text(raw.objective),
     description: text(raw.description),
-    acceptance: list(raw.acceptance)
-      .map((item) => (typeof item === "string" ? item : text(record(item)?.text)))
-      .filter((item) => item && item !== "The objective is met"),
+    acceptance,
+    ...(acceptanceMarks ? { acceptanceMarks } : {}),
     status,
     runner: raw.runner === "human" ? "human" : "agent",
     sessionId: typeof raw.sessionId === "string" ? raw.sessionId : null,
@@ -164,6 +178,7 @@ function task(raw: Raw): Task {
     ...(git ? { git } : {}),
     ...(raw.autoRun === true ? { autoRun: true } : {}),
     ...(raw.independent === true ? { independent: true } : {}),
+    ...(raw.runner !== "human" && raw.pushBeforeRun === true ? { pushBeforeRun: true } : {}),
     ...(typeof raw.outdated === "string" && raw.outdated ? { outdated: raw.outdated } : {}),
     ...(typeof raw.retries === "number" && raw.retries > 0 ? { retries: raw.retries } : {}),
     ...(typeof raw.output === "string" && raw.output ? { output: raw.output } : {}),
@@ -210,15 +225,42 @@ function issue(value: unknown): Issue[] {
 /** Reads a saved board from any earlier schema. Returns null when there is nothing worth keeping. */
 export function loadState(saved: unknown): OrchestrationState | null {
   const raw = record(saved);
-  if (!raw || (raw.schema !== 1 && raw.schema !== 2) || isDemoState(raw)) return null;
+  if (!raw || (raw.schema !== 1 && raw.schema !== 2 && raw.schema !== 3) || isDemoState(raw)) return null;
   const projects = list(raw.projects).flatMap((item) => (record(item) ? [project(item as Raw)] : []));
   if (!projects.length) return null;
   // The workspace folder holds every project, so it cannot be one project's repository.
-  for (const item of projects) item.directory ||= projectDirectory(item.name, projects);
+  for (const item of projects) if (!item.repo) item.directory ||= projectDirectory(item.name, projects);
+  const goals: Goal[] = raw.schema === 3
+    ? list(raw.goals).flatMap((item) => {
+        const value = record(item);
+        if (!value || !projects.some((project) => project.id === value.projectId)) return [];
+        const merged = record(value.merged);
+        const { outline: _empty, ...goal } = blankGoal(text(value.projectId), text(value.name), text(value.id), text(value.goal));
+        return [{
+          ...goal,
+          ...parseOutline(value),
+          running: value.running === true,
+          status: value.status === "done" || value.status === "archived" ? value.status : "open",
+          ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
+          ...(typeof value.folder === "string" ? { folder: value.folder } : {}),
+          ...(typeof value.base === "string" ? { base: value.base } : {}),
+          ...(mergeRequestUrl(value.mergeRequestUrl) ? { mergeRequestUrl: mergeRequestUrl(value.mergeRequestUrl)! } : {}),
+          ...(typeof value.blocker === "string" ? { blocker: value.blocker } : {}),
+          ...(merged && typeof merged.into === "string" && typeof merged.sha === "string" && typeof merged.at === "number" ? { merged: { into: merged.into, sha: merged.sha, at: merged.at } } : {}),
+        } as Goal];
+      })
+    : projects.map((project) => {
+        const value = list(raw.projects).map(record).find((item) => item?.id === project.id)!;
+        const { outline: _empty, ...goal } = blankGoal(project.id, project.name);
+        return { ...goal, ...parseOutline(value), running: value.running === true };
+      });
+  const tasks = list(raw.tasks).flatMap((item) => (record(item) ? [task(item as Raw)] : []));
+  if (raw.schema !== 3) for (const task of tasks) task.goalId = goals.find((goal) => goal.projectId === task.projectId)?.id ?? "";
   return {
-    schema: 2,
+    schema: 3,
+    goals,
     projects,
-    tasks: list(raw.tasks).flatMap((item) => (record(item) ? [task(item as Raw)] : [])),
+    tasks,
     dependencies: list(raw.dependencies) as Dependency[],
     events: list(raw.events) as ExecutionEvent[],
     notifications: list(raw.notifications) as Notification[],
@@ -226,4 +268,11 @@ export function loadState(saved: unknown): OrchestrationState | null {
     seq: typeof raw.seq === "number" ? raw.seq : 1,
     ...(typeof raw.workspace === "string" && raw.workspace.trim() ? { workspace: raw.workspace.trim() } : {}),
   };
+}
+
+function parseOutline(raw: Raw): Pick<Goal, "outline"> {
+  return Array.isArray(raw.outline) ? { outline: raw.outline.flatMap((item) => {
+    const step = record(item);
+    return step && typeof step.id === "string" ? [{ id: step.id, depth: Number.isInteger(step.depth) ? step.depth as number : 0 }] : [];
+  }) } : {};
 }

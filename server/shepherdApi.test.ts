@@ -41,12 +41,13 @@ describe("agent commands", () => {
 
   it("runs SHEPHERD_CODEX, else the ChatGPT app's Codex, else the one on the PATH", () => {
     expect(codexBin({ SHEPHERD_CODEX: " /opt/codex " }, () => true)).toBe("/opt/codex");
-    expect(codexBin({}, (file) => file.startsWith("/Applications/ChatGPT.app/"))).toBe("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    expect(codexBin({}, (file) => file.startsWith("/Applications/ChatGPT.app/"), "darwin")).toBe("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex");
+    expect(codexBin({}, () => true, "linux")).toBe("codex");
     expect(codexBin({}, () => false)).toBe("codex");
   });
 
   it("gives Codex an npm cache its sandbox can write to, and leaves Claude's environment alone", () => {
-    const env = { PATH: "/bin", NPM_CONFIG_CACHE: "/home/me/.npm" };
+    const env = { PATH: "/bin", NPM_CONFIG_CACHE: "/example/cache/npm" };
     const codex = agentEnv("codex", env);
     expect(codex.NPM_CONFIG_CACHE).toBeUndefined();
     expect(codex.npm_config_cache).toBe(path.join(tmpdir(), "shepherd-npm-cache"));

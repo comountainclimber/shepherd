@@ -6,9 +6,9 @@ import { useShepherd } from "../../store";
 import { notify } from "../shell/Toasts";
 
 /** Where a saved step goes when added after a step, or at the end of the outline when there is none. */
-export function placeFor(projectId: string, taskId: string | null): SavedPlace {
+export function placeFor(goalId: string, taskId: string | null): SavedPlace {
   const { state } = useShepherd.getState();
-  const place = placeAfter(state, projectId, taskId);
+  const place = placeAfter(state, goalId, taskId);
   const name = taskId ? state.tasks.find((task) => task.id === taskId)?.name : undefined;
   return { ...place, label: taskId ? `Adds after “${name || "Untitled step"}”` : "Adds at the end" };
 }
@@ -17,12 +17,13 @@ export function placeFor(projectId: string, taskId: string | null): SavedPlace {
 export async function addSaved(saved: SavedStep, place: SavedPlace) {
   const store = useShepherd.getState();
   const projectId = store.ui.projectId;
+  const goalId = store.ui.goalId;
   const catalog = await modelCatalog();
   const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   const { steps, unavailable } = fromSaved(saved, projectId, place.depth, catalog, (index) => `step-${stamp}-${index}`);
   const replaced = place.replace ? store.state.tasks.find((task) => task.id === place.replace) : undefined;
   if (replaced && !replaced.name.trim() && replaced.status === "queued" && !replaced.git) store.dispatch({ type: "deleteTask", id: replaced.id });
-  store.dispatch({ type: "addSteps", projectId, after: place.after, steps });
+  store.dispatch({ type: "addSteps", goalId, after: place.after, steps: steps.map((step) => ({ ...step, task: { ...step.task, goalId } })) });
   store.setAddSaved(null);
   const first = steps[0]?.task;
   if (first) store.focusTask(first.id);

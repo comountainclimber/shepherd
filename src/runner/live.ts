@@ -84,7 +84,7 @@ export function draftChecklist(taskId: string): Promise<string | null> {
   return command({ command: "checklist", taskId });
 }
 
-/** Merges a verified task's branch into the project folder's branch. Returns an error to show, or null. */
+/** Adds an accepted step's branch to its task branch. Returns an error to show, or null. */
 export function mergeTask(taskId: string): Promise<string | null> {
   return command({ command: "merge", taskId });
 }
@@ -100,17 +100,17 @@ export function sendBack(taskId: string, to: string, text: string): Promise<stri
 }
 
 /** Runs every step that is not done, each as soon as the steps before it are done. */
-export function runPlan(projectId: string) {
-  return command({ command: "runPlan", projectId });
+export function runPlan(goalId: string) {
+  return command({ command: "runPlan", goalId });
 }
 
-export function stopPlan(projectId: string) {
-  return command({ command: "stopPlan", projectId });
+export function stopPlan(goalId: string) {
+  return command({ command: "stopPlan", goalId });
 }
 
-/** Merges the finished plan's branches into the project folder's branch. */
-export function mergePlan(projectId: string) {
-  return command({ command: "mergePlan", projectId });
+/** Explicitly merges the task branch into its recorded base in the project checkout. */
+export function mergePlan(goalId: string) {
+  return command({ command: "mergePlan", goalId });
 }
 
 export interface DraftStep {
@@ -121,7 +121,7 @@ export interface DraftStep {
 
 /** Asks Codex to break a goal into steps. It can read the project folder but changes nothing. */
 export async function draftSteps(
-  projectId: string,
+  goalId: string,
   goal: string,
   choice: Pick<Task, "model" | "effort">,
   signal?: AbortSignal,
@@ -130,7 +130,7 @@ export async function draftSteps(
     const response = await fetch("/api/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId, goal, model: choice.model ?? null, thinking: choice.effort ?? null }),
+      body: JSON.stringify({ goal: goalId, prompt: goal, model: choice.model ?? null, thinking: choice.effort ?? null }),
       signal,
     });
     const body = (await response.json()) as { steps?: DraftStep[]; error?: string };
@@ -159,4 +159,22 @@ export function evidenceUrl(taskId: string, file: string): string {
 /** Where a screenshot Shepherd took for a step's agent is served. */
 export function lookUrl(taskId: string, file: string): string {
   return `/api/looks/${encodeURIComponent(taskId)}/${encodeURIComponent(file)}`;
+}
+
+/** Opens the saved task folder on the Mac running Shepherd. */
+export async function openTaskFolder(goalId: string, app: "cursor" | "finder"): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/goals/${encodeURIComponent(goalId)}/open`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ app }),
+    });
+    const body = await response.json() as { error?: string };
+    if (response.ok) return null;
+    const error = body.error ?? "Could not open the task folder.";
+    useShepherd.getState().setProblem(error);
+    return error;
+  } catch {
+    const error = "Could not reach the Shepherd server.";
+    useShepherd.getState().setProblem(error);
+    return error;
+  }
 }

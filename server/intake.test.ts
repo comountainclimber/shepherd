@@ -53,7 +53,7 @@ describe("planTasks", () => {
   it("explains what is wrong with a request", () => {
     const state = apply(board(), { project: "Greeter", tasks: [{ name: "Same" }, { name: "Same" }] });
     const error = (body: unknown) => (planTasks(state, body, ids) as { error: string }).error;
-    expect(error({ name: "X" })).toBe("Say which project, by id or name. Projects: Workspace (proj-local), Greeter (proj-2).");
+    expect(error({ name: "X" })).toBe("Say which task, as goal, or which project.");
     expect(error({ project: "Nope", name: "X" })).toMatch(/^There is no project Nope\./);
     expect(error({ project: "Greeter", tasks: [] })).toBe("There are no tasks to add.");
     expect(error({ project: "Greeter", tasks: [{ objective: "no name" }] })).toBe("tasks[0] needs a name.");
@@ -61,13 +61,15 @@ describe("planTasks", () => {
     expect(error({ project: "Greeter", tasks: [{ name: "X", checkCommand: ["npm", "test"] }] })).toBe("tasks[0].checkCommand must be a string.");
     expect(error({ project: "Greeter", name: "X", agent: "gpt" })).toBe("agent must be one of: codex, claude.");
     expect(error({ project: "Greeter", name: "X", runner: "robot" })).toBe('runner must be "agent" or "human".');
-    expect(error({ project: "Greeter", name: "X", dependsOn: ["Missing"] })).toBe("The task depends on Missing, which is not a task in this project.");
+    expect(error({ project: "Greeter", name: "X", dependsOn: ["Missing"] })).toBe("The task depends on Missing, which is not a step in this task.");
     expect(error({ project: "Greeter", name: "X", dependsOn: ["Same"] })).toBe("The task depends on Same, but more than one task has that name. Use its id.");
     expect(error({ project: "Greeter", name: "X", dependsOn: [{ task: "api-1", gate: "soon" }] })).toBe(
       'A dependsOn gate must be "completed" or "verified".',
     );
-    expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a task in this project/);
+    expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a step in this task/);
     expect(error({ project: "Greeter", name: "X", autoRun: "yes" })).toBe("autoRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", pushBeforeRun: "yes" })).toBe("pushBeforeRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", runner: "human", pushBeforeRun: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", review: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", autoRun: true })).toMatch(/done by a person/);
   });
@@ -77,20 +79,20 @@ describe("planTasks", () => {
       project: "Greeter",
       tasks: [
         { name: "Build", checkCommand: "npm run build", autoRun: true },
-        { name: "Test", checkCommand: "npm test", independent: true, review: true, autoRun: true, dependsOn: ["Build"] },
+        { name: "Test", checkCommand: "npm test", independent: true, review: true, autoRun: true, pushBeforeRun: true, dependsOn: ["Build"] },
       ],
     });
     const [build, test] = state.tasks;
     expect(build).toMatchObject({ autoRun: true });
     expect(build!.independent).toBeUndefined();
     expect(build!.verification.map((check) => check.kind)).toEqual(["command"]);
-    expect(test).toMatchObject({ autoRun: true, independent: true });
+    expect(test).toMatchObject({ autoRun: true, independent: true, pushBeforeRun: true });
     expect(test!.verification.map((check) => check.kind)).toEqual(["command", "review"]);
   });
 
   it("gives a step the model and thinking asked for, and only to an agent", () => {
-    const state = apply(board(), { project: "Greeter", tasks: [{ name: "Audit", model: "gpt-6-astra", thinking: "max" }, { name: "Plain" }] });
-    expect(state.tasks[0]).toMatchObject({ model: "gpt-6-astra", effort: "max" });
+    const state = apply(board(), { project: "Greeter", tasks: [{ name: "Audit", model: "example-codex-current", thinking: "max" }, { name: "Plain" }] });
+    expect(state.tasks[0]).toMatchObject({ model: "example-codex-current", effort: "max" });
     expect(state.tasks[1]!.model).toBeUndefined();
     const error = (body: unknown) => (planTasks(board(), body, ids) as { error: string }).error;
     expect(error({ project: "Greeter", name: "X", model: "--yolo" })).toMatch(/^model is not a model name/);
@@ -106,7 +108,9 @@ describe("planProject", () => {
     const error = (body: unknown) => (planProject(board(), body, "proj-api-1") as { error: string }).error;
     expect(error({})).toBe("The project needs a name.");
     expect(error({ name: "greeter" })).toBe("There is already a project named Greeter (proj-2).");
-    expect(error({ name: "Elsewhere", directory: "../outside" })).toMatch(/inside the workspace/);
+    expect(error({ name: "Elsewhere", directory: "../outside" })).toMatch(/Use repo/);
+    expect(error({ name: "Elsewhere", repo: "relative/path" })).toMatch(/must be absolute/);
+    expect(planProject(board(), { name: "Elsewhere", repo: "/tmp/my-repo" }, "proj-api-1")).toMatchObject({ project: { repo: "/tmp/my-repo" } });
   });
 });
 
@@ -118,4 +122,11 @@ describe("boardSummary", () => {
       { id: "api-2", name: "B", dependsOn: [{ task: "api-1", gate: "verified" }] },
     ]);
   });
+});
+
+it("accepts the optional work check through POST task planning and rejects invalid or human options", () => {
+  const state = apply(board(), { project: "Greeter", name: "Build", acceptance: ["Works"], workCheck: true });
+  expect(state.tasks[0].verification).toMatchObject([{ kind: "work", state: "pending" }]);
+  expect(planTasks(board(), { project: "Greeter", name: "Build", workCheck: "yes" }, ids)).toEqual({ error: "workCheck must be true or false." });
+  expect(planTasks(board(), { project: "Greeter", name: "Build", runner: "human", workCheck: true }, ids)).toHaveProperty("error");
 });

@@ -1,0 +1,57 @@
+name: Publish launch page
+
+# Repository settings: enable Actions, then under Settings → Pages → Build and
+# deployment choose GitHub Actions as the source. Allow this workflow to deploy
+# to the github-pages environment (and main in its deployment branch rules).
+# No npm install or build is needed; this publishes the checked-in static page.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        id: pages
+      - name: Refresh repository links
+        run: node site/scripts/sync-repository.mjs
+      - name: Stage the static site
+        env:
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/launch-page"
+          rsync -a --exclude='concepts/' --exclude='review/' --exclude='shots/' --exclude='scripts/' --exclude='tests/' --exclude='BRIEF.md' --exclude='README.md' site/ "$RUNNER_TEMP/launch-page/"
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          index = Path(os.environ['RUNNER_TEMP']) / 'launch-page' / 'index.html'
+          base = os.environ['PAGES_BASE_URL'].rstrip('/')
+          html = index.read_text().replace('content="./open-graph.png"', f'content="{base}/open-graph.png"')
+          html = html.replace('<meta property="og:type"', f'<link rel="canonical" href="{base}/">\n  <meta property="og:url" content="{base}/">\n  <meta property="og:type"')
+          index.write_text(html)
+          size = sum(p.stat().st_size for p in index.parent.rglob('*') if p.is_file())
+          if size >= 2_000_000:
+              raise SystemExit(f'Launch site exceeds 2 MB: {size} bytes')
+          print(f'Static launch site: {size:,} bytes')
+          PYTHON
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/launch-page
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

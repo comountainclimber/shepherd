@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export class GitError extends Error {}
+export class DirtyWorktreeError extends GitError {}
 
 export interface Author {
   name: string;
@@ -14,7 +15,7 @@ export interface Worktree {
   repo: string;
   branch: string;
   folder: string;
-  /** The branch checked out in the project folder, which the task merges into. */
+  /** The branch this worktree starts from and merges into. */
   target: string;
 }
 
@@ -34,7 +35,7 @@ const SHEPHERD: Author = { name: "Shepherd", email: "shepherd@localhost" };
 // Shepherd's own commits must not run the repository's hooks or wait on a signing prompt.
 const BASE_ARGS = ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "core.quotepath=false"];
 const NAME = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
-const BRANCH = /^shepherd\/[a-z0-9][a-z0-9._-]{0,90}$/i;
+const BRANCH = /^(shepherd|shepherd-step)\/[a-z0-9][a-z0-9._-]{0,90}$/i;
 const FILE_LIMIT = 12_000;
 const TOTAL_LIMIT = 80_000;
 const MAX_FILES = 40;
@@ -45,6 +46,25 @@ export function isTaskName(name: string): boolean {
 
 export function isTaskBranch(branch: string): boolean {
   return BRANCH.test(branch);
+}
+
+/** A local tracking branch (remote ".") cannot receive a hosted merge request. */
+export async function taskPushRemote(repo: string, base?: string): Promise<string> {
+  const tracked = base ? await git(repo, ["config", "--get", `branch.${base}.remote`]) : null;
+  const name = tracked?.code === 0 ? tracked.stdout.trim() : "";
+  const remote = name && name !== "." ? name : "origin";
+  const result = await git(repo, ["remote", "get-url", "--push", "--", remote]);
+  if (result.code !== 0) {
+    throw new GitError(`Cannot push the task branch: remote ${remote} is not available. Add it or set the base branch's tracking remote.\n${(result.stderr || result.stdout).trim()}`);
+  }
+  return remote;
+}
+
+/** Explicit refs keep push.default and custom push refspecs from pushing other branches. */
+export async function pushTaskBranch(repo: string, branch: string, remote: string): Promise<void> {
+  if (!isTaskBranch(branch)) throw new GitError(`Not a Shepherd task branch: ${branch}`);
+  const result = await git(repo, ["push", "--", remote, `refs/heads/${branch}:refs/heads/${branch}`]);
+  if (result.code !== 0) throw new GitError(`Could not push ${branch} to ${remote}:\n${(result.stderr || result.stdout).trim()}`);
 }
 
 export function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<Result> {
@@ -113,6 +133,27 @@ export async function gitAvailable(): Promise<boolean> {
   return (await git(process.cwd(), ["--version"])).code === 0;
 }
 
+/** Read-only: a supplied repository must already have a checkout and a commit. */
+export async function inspectRepo(dir: string): Promise<{ repo: string; branch: string }> {
+  let real: string;
+  try {
+    if (!statSync(dir).isDirectory()) throw new Error();
+    real = realpathSync(dir);
+  } catch {
+    throw new GitError(`The repository path ${dir} does not exist or is not a folder.`);
+  }
+  const top = await git(real, ["rev-parse", "--show-toplevel"]);
+  if (top.code !== 0) throw new GitError(`${dir} is not a git repository. Choose a repository with at least one commit.`);
+  if (realpathSync(top.stdout.trim()) !== real) {
+    throw new GitError(`${dir} is inside a git repository. Use its top folder, ${top.stdout.trim()}.`);
+  }
+  if ((await git(real, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])).code !== 0) {
+    throw new GitError(`${dir} has no commits. Make a first commit before adding it to Shepherd.`);
+  }
+  const branch = (await currentBranch(real)) ?? `detached at ${await must(real, ["rev-parse", "--short", "HEAD"])}`;
+  return { repo: real, branch };
+}
+
 /** Makes `dir` the top of a git repository with at least one commit, and returns its real path. */
 export async function ensureRepo(dir: string): Promise<string> {
   mkdirSync(dir, { recursive: true });
@@ -136,7 +177,8 @@ export async function ensureRepo(dir: string): Promise<string> {
 
 export function worktreeFolder(root: string, repo: string, branch: string): string {
   const key = `${path.basename(repo)}-${createHash("sha1").update(repo).digest("hex").slice(0, 8)}`;
-  return path.join(root, key, branch.replace(/^shepherd\//, ""));
+  const folder = branch.startsWith("shepherd-step/") ? branch.replace(/^shepherd-step\//, "step-") : branch.replace(/^shepherd\//, "");
+  return path.join(root, key, folder);
 }
 
 function baseRef(branch: string): string {
@@ -170,40 +212,51 @@ async function conflicts(cwd: string): Promise<string[]> {
  * Finds or creates the task's branch and worktree. A task keeps its branch across runs, and a new
  * task never inherits a branch another task (or an earlier board) left behind.
  */
-export async function openWorktree(repo: string, root: string, taskId: string, name: string, branch?: string): Promise<Worktree> {
+export async function openWorktree(
+  repo: string, root: string, taskId: string, name: string, branch?: string,
+  options: { start?: string; prefix?: "shepherd" | "shepherd-step" } = {},
+): Promise<Worktree> {
   if (!NAME.test(name)) throw new GitError(`Not a usable folder name: ${name}`);
-  const target = (await currentBranch(repo)) ?? "HEAD";
+  const target = options.start ?? (await currentBranch(repo)) ?? "HEAD";
+  const prefix = options.prefix ?? "shepherd";
+  if (await exists(repo, `refs/heads/${prefix}`)) throw new GitError(`The branch ${prefix} prevents creating ${prefix}/ branches. Rename it first.`);
   let chosen: string | null = null;
   if (branch && BRANCH.test(branch) && (await exists(repo, `refs/heads/${branch}`)) && (await ownerOf(repo, branch)) === taskId) {
     chosen = branch;
   }
   for (let index = 1; !chosen; index += 1) {
-    const candidate = index === 1 ? `shepherd/${name}` : `shepherd/${name}-${index}`;
-    if (!(await exists(repo, `refs/heads/${candidate}`))) {
+    const candidate = index === 1 ? `${prefix}/${name}` : `${prefix}/${name}-${index}`;
+    if (!(await exists(repo, `refs/heads/${candidate}`)) && !(await must(repo, ["for-each-ref", "--format=%(refname)", `refs/heads/${candidate}/`])) && !existsSync(worktreeFolder(root, repo, candidate))) {
       const folder = worktreeFolder(root, repo, candidate);
       await must(repo, ["worktree", "prune"]);
       mkdirSync(path.dirname(folder), { recursive: true });
-      await must(repo, ["worktree", "add", "-q", "-b", candidate, folder, "HEAD"]);
+      await must(repo, ["worktree", "add", "-q", "-b", candidate, folder, target]);
       await must(repo, ["config", `branch.${candidate}.shepherdtask`, taskId]);
-      await must(repo, ["update-ref", baseRef(candidate), "HEAD"]);
+      await must(repo, ["update-ref", baseRef(candidate), target]);
       return { repo, branch: candidate, folder, target };
     }
     if ((await ownerOf(repo, candidate)) === taskId) chosen = candidate;
   }
   const folder = worktreeFolder(root, repo, chosen);
+  if ((await currentBranch(repo)) === chosen) throw new GitError(`${repo} has ${chosen} checked out. Switch the project checkout to another branch before running this step.`);
   if (!existsSync(path.join(folder, ".git"))) {
     await must(repo, ["worktree", "prune"]);
     mkdirSync(path.dirname(folder), { recursive: true });
     await must(repo, ["worktree", "add", "-q", folder, chosen]);
   }
   if (!(await exists(repo, baseRef(chosen)))) {
-    await must(repo, ["update-ref", baseRef(chosen), await must(repo, ["merge-base", "HEAD", chosen])]);
+    await must(repo, ["update-ref", baseRef(chosen), await must(repo, ["merge-base", target, chosen])]);
   }
+  if ((await currentBranch(folder)) !== chosen) throw new GitError(`${folder} is no longer on ${chosen}. Switch it back before running this step.`);
   return { repo, branch: chosen, folder, target };
 }
 
 /** Commits everything in the worktree. Returns false when there was nothing to commit. */
 export async function commitAll(folder: string, message: string[], author: Author): Promise<boolean> {
+  const branch = await currentBranch(folder);
+  if (!branch || !BRANCH.test(branch) || !(await ownerOf(folder, branch))) {
+    throw new GitError(`Shepherd cannot commit in ${folder}: its checked-out branch was not created by Shepherd.`);
+  }
   await must(folder, ["add", "-A"]);
   if ((await git(folder, ["diff", "--cached", "--quiet"])).code === 0) return false;
   await must(folder, ["commit", "-q", ...message.filter(Boolean).flatMap((part) => ["-m", part])], identity(author));
@@ -214,9 +267,21 @@ export async function commitAll(folder: string, message: string[], author: Autho
  * Moves the diff base past newly merged upstream work, so the task's diff keeps showing only what
  * the task itself changed.
  */
-async function advanceBase(folder: string, branch: string, upstream: string): Promise<void> {
+async function advanceBase(folder: string, branch: string, upstream: string, taskBranch: boolean): Promise<void> {
   const ref = baseRef(branch);
   const base = await must(folder, ["rev-parse", ref]);
+  const accepted = `refs/shepherd-accepted/${branch}`;
+  // The task branch includes this step's accepted work. Remove that contribution from the
+  // incoming diff base, or rerunning the step would erase its own diff from the board.
+  if (taskBranch && await exists(folder, accepted) && await contains(folder, accepted, upstream)) {
+    const stripped = await git(folder, ["merge-tree", "--write-tree", `--merge-base=${accepted}`, base, upstream]);
+    if (stripped.code === 0) {
+      const tree = stripped.stdout.trim().split("\n")[0]!;
+      const commit = await must(folder, ["commit-tree", tree, "-p", base, "-p", upstream, "-m", "Shepherd: diff base after task work"], identity());
+      await must(folder, ["update-ref", ref, commit]);
+      return;
+    }
+  }
   if (await contains(folder, upstream, base)) return;
   if (await contains(folder, base, upstream)) {
     await must(folder, ["update-ref", ref, upstream]);
@@ -253,7 +318,7 @@ export async function prepareRun(worktree: Worktree, upstream: string[], author:
           : `Could not merge ${source} into ${branch}: ${lastLine(result.stderr || result.stdout)}`,
       );
     }
-    await advanceBase(folder, branch, source);
+    await advanceBase(folder, branch, source, source === worktree.target);
     merged.push(source);
   }
   return merged;
@@ -267,8 +332,8 @@ function trimDiff(text: string, limit: number): string {
 }
 
 /** What the task changed on its branch, not counting upstream work merged into it. */
-export async function changes(folder: string, branch: string): Promise<Changes> {
-  const base = baseRef(branch);
+export async function changes(folder: string, branch: string, diffBase?: string): Promise<Changes> {
+  const base = diffBase ?? baseRef(branch);
   const head = await must(folder, ["rev-parse", "--short", "HEAD"]);
   const files = (await must(folder, ["diff", "--name-only", "--no-renames", base, "HEAD"])).split("\n").filter(Boolean);
   const diffs: Changes["diffs"] = [];
@@ -283,16 +348,17 @@ export async function changes(folder: string, branch: string): Promise<Changes> 
   return { head, files, diffs };
 }
 
-/** Merges a task branch into whatever branch the project folder has checked out. */
-export async function mergeBranch(repo: string, branch: string, message: string): Promise<{ into: string; sha: string }> {
+/** Merges into a clean checkout, optionally requiring its expected branch. */
+export async function mergeBranch(repo: string, branch: string, message: string, expectedInto?: string): Promise<{ into: string; sha: string }> {
   if (!BRANCH.test(branch) || !(await exists(repo, `refs/heads/${branch}`))) {
     throw new GitError(`The branch ${branch} no longer exists.`);
   }
   const into = await currentBranch(repo);
+  if (expectedInto && into !== expectedInto) throw new GitError(`${repo} is no longer on ${expectedInto}. Switch it back before merging.`);
   if (!into) throw new GitError(`${repo} is not on a branch, so there is nothing to merge into.`);
   if (await contains(repo, branch, "HEAD")) return { into, sha: await must(repo, ["rev-parse", "--short", "HEAD"]) };
   if (await must(repo, ["status", "--porcelain", "--untracked-files=no"])) {
-    throw new GitError(`${repo} has uncommitted changes on ${into}. Commit or stash them, then merge again.`);
+    throw new DirtyWorktreeError(`${repo} has uncommitted changes on ${into}. Commit or stash them, then merge again.`);
   }
   const result = await git(repo, ["merge", "--no-ff", "--no-edit", "-m", message, branch], await userIdentity(repo));
   if (result.code !== 0) {
@@ -305,4 +371,24 @@ export async function mergeBranch(repo: string, branch: string, message: string)
     );
   }
   return { into, sha: await must(repo, ["rev-parse", "--short", "HEAD"]) };
+}
+
+/** A task keeps its original base even if the project later checks out another branch. */
+export async function openGoalWorktree(repo: string, root: string, goalId: string, name: string, saved?: { branch?: string; base?: string }): Promise<Worktree> {
+  repo = realpathSync(repo);
+  const base = saved?.base ?? await currentBranch(repo);
+  if (!base) throw new GitError(`${repo} is not on a branch. Check out a branch before starting this task.`);
+  if (saved?.branch && (!(await exists(repo, `refs/heads/${saved.branch}`)) || await ownerOf(repo, saved.branch) !== `goal:${goalId}`)) {
+    throw new GitError(`The task branch ${saved.branch} is missing or no longer belongs to this task.`);
+  }
+  return openWorktree(repo, root, `goal:${goalId}`, name, saved?.branch, { start: base });
+}
+
+export async function head(folder: string): Promise<string> {
+  return must(folder, ["rev-parse", "HEAD"]);
+}
+
+/** Records exactly which step work the task branch has accepted, for subsequent diff updates. */
+export async function markAccepted(repo: string, branch: string): Promise<void> {
+  await must(repo, ["update-ref", `refs/shepherd-accepted/${branch}`, `refs/heads/${branch}`]);
 }

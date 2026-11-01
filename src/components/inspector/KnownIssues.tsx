@@ -24,7 +24,7 @@ export function KnownIssues({ task }: { task: Task }) {
     setAdding(false);
   };
   const makeStep = (issue: Issue) => {
-    const step = newStep(task.projectId, fixName(issue.text), fixPrompt(task, issue), DEFAULT_AGENT_ID);
+    const step = newStep(task.projectId, fixName(issue.text), fixPrompt(task, issue), DEFAULT_AGENT_ID, task.goalId);
     dispatch({ type: "fixIssue", id: task.id, issueId: issue.id, task: step });
     focusTask(step.id);
     setPanelTab("step");

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shepherd social preview source</title>
+  <link rel="icon" href="./assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./assets/tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #101412; color: #f3f0e5; font-family: 'Geist', sans-serif; }
+    main { height: 100vh; padding: 44px 48px; display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
+    .logo { width: 188px; height: auto; position: absolute; top: 40px; left: 48px; }
+    .copy { padding-top: 54px; }
+    .eyebrow { color: #98c4a2; font-size: 16px; margin: 0 0 22px; }
+    h1 { font-size: 62px; font-weight: 580; line-height: 1.06; letter-spacing: -.055em; margin: 0 0 24px; }
+    h1 span { color: #98c4a2; }
+    .description { color: #abb7ae; font-size: 20px; line-height: 1.5; max-width: 440px; margin: 0; }
+    code { display: inline-block; margin-top: 30px; padding: 13px 17px; border: 1px solid #708775; border-radius: 7px; background: #181e1a; font: 16px 'Geist Mono', monospace; }
+    .evidence { margin: 50px 0 0; }
+    .screenshot { width: 100%; height: auto; display: block; border: 1px solid #39473e; border-radius: 8px; }
+    figcaption { font-size: 14px; color: #abb7ae; margin-top: 12px; }
+    .path { display: flex; align-items: end; gap: 10px; margin-top: 18px; height: 48px; }
+    .path span { flex: 1; background: #39473e; height: 1px; margin-bottom: 7px; }
+    .path i { width: 7px; height: 7px; border: 1px solid #708775; border-radius: 50%; margin-bottom: 4px; }
+    .path img { width: 48px; height: 48px; }
+  </style>
+</head>
+<body>
+  <main>
+    <img class="logo" src="./assets/logo-dark.svg" width="188" height="44" alt="Shepherd">
+    <div class="copy">
+      <p class="eyebrow">Local app · Free and open source</p>
+      <h1>Long tasks.<br><span>Clear next steps.</span></h1>
+      <p class="description">Plan, run and check long coding-agent work.<br>Your machine. Your Codex and Claude Code.</p>
+      <code>npx shepherd-agents</code>
+    </div>
+    <figure class="evidence">
+      <img class="screenshot" src="./assets/task-map-desktop.png" width="1440" height="1000" alt="The Shepherd task map with eight steps, four done and two running.">
+      <figcaption>Real app. Fictional Slice project. Sample results.</figcaption>
+      <div class="path" aria-hidden="true"><span></span><i></i><span></span><i></i><span></span><img src="./assets/mascot.svg" width="48" height="48" alt=""><span></span></div>
+    </figure>
+  </main>
+</body>
+</html>

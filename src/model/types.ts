@@ -1,6 +1,6 @@
 export type TaskStatus = "queued" | "running" | "completed" | "blocked" | "failed";
 
-export type VerificationKind = "command" | "review";
+export type VerificationKind = "command" | "work" | "review";
 
 export type VerificationState = "pending" | "passed" | "failed";
 
@@ -27,10 +27,19 @@ export interface VerificationCheck {
   output?: string;
   durationMs?: number;
   running?: boolean;
+  result?: WorkCheckResult;
   /** What a gate script reported, step by step. */
   steps?: GateStep[];
   /** Files the check left in the task's evidence folder, relative to it. */
   artifacts?: string[];
+}
+
+export type WorkVerdict = "met" | "not met" | "can't tell";
+
+export interface WorkCheckResult {
+  items: { key: string; item: number; verdict: WorkVerdict; reason: string }[];
+  unrequested: string[];
+  violations: string[];
 }
 
 export interface GateStep {
@@ -58,19 +67,30 @@ export interface FilePreview {
 export interface TaskGit {
   branch: string;
   folder: string;
-  /** The project folder's branch, which this task merges into. */
+  /** The task branch this step merges into. */
   target: string;
   head?: string;
+  /** A human step shares the task branch, so its diff starts at this commit. */
+  diffBase?: string;
   merged?: { into: string; sha: string; at: number };
 }
 
+export interface AcceptanceMark {
+  note: string;
+  at: number;
+}
+
+/** A Task is a step in the UI; Goal is the task that holds those steps. */
 export interface Task {
   id: string;
   projectId: string;
+  goalId: string;
   name: string;
   objective: string;
   description: string;
   acceptance: string[];
+  /** What the agent says it has met, keyed by item content and occurrence. Checks still decide completion. */
+  acceptanceMarks?: Record<string, AcceptanceMark>;
   status: TaskStatus;
   runner: Runner;
   sessionId?: string | null;
@@ -93,6 +113,8 @@ export interface Task {
   autoRun?: boolean;
   /** Leave the upstream agents' own summaries out of this task's prompt, so it judges their work from the files. */
   independent?: boolean;
+  /** Shepherd pushes the task branch before starting this agent. */
+  pushBeforeRun?: boolean;
   /** Why the task's verification no longer counts: upstream work changed after it ran. */
   outdated?: string;
   /** Automatic retries since its check last passed. */
@@ -143,7 +165,10 @@ export interface SavedStepItem {
   acceptance: string[];
   checkCommand?: string;
   review?: boolean;
+  workCheck?: boolean;
   independent?: boolean;
+  /** Shepherd pushes the task branch before starting this agent. */
+  pushBeforeRun?: boolean;
   /** Its indent in the block. Steps at 1 run side by side under the step they are added after. */
   depth: number;
 }
@@ -178,7 +203,7 @@ export interface Dependency {
   outline?: boolean;
 }
 
-/** A step's place in a project's outline. Indented steps run side by side after the step above them. */
+/** A step's place in a task's outline. Indented steps run side by side after the step above them. */
 export interface OutlineItem {
   id: string;
   depth: number;
@@ -214,14 +239,33 @@ export interface Project {
   name: string;
   summary: string;
   directory?: string;
-  /** The steps in order. Unset for older projects, whose arrows were all drawn by hand. */
+  /** Absolute path to a repository supplied by the person, outside or inside the workspace. */
+  repo?: string;
+}
+
+export type GoalStatus = "open" | "done" | "archived";
+
+/** A task in the UI; Task remains the type for a step. */
+export interface Goal {
+  id: string;
+  projectId: string;
+  name: string;
+  goal: string;
+  /** Unset when older steps keep their hand-drawn arrows. */
   outline?: OutlineItem[];
-  /** Shepherd starts each step as soon as the steps before it are done. */
-  running?: boolean;
+  running: boolean;
+  status: GoalStatus;
+  branch?: string;
+  folder?: string;
+  base?: string;
+  blocker?: string | null;
+  merged?: { into: string; sha: string; at: number };
+  mergeRequestUrl?: string;
 }
 
 export interface OrchestrationState {
-  schema: 2;
+  schema: 3;
+  goals: Goal[];
   projects: Project[];
   tasks: Task[];
   dependencies: Dependency[];
@@ -229,7 +273,7 @@ export interface OrchestrationState {
   notifications: Notification[];
   now: number;
   seq: number;
-  /** The folder that holds every project. Unset means the server's default. */
+  /** The folder for projects Shepherd creates. Unset means the server's default. */
   workspace?: string;
 }
 
@@ -244,6 +288,7 @@ export interface Filters {
 export interface UiState {
   view: ViewId;
   projectId: string;
+  goalId: string;
   selectedTaskId: string | null;
   selectedAgentId: string | null;
   selectedEdgeId: string | null;
@@ -252,6 +297,7 @@ export interface UiState {
   filters: Filters;
   paletteOpen: boolean;
   newProjectOpen: boolean;
+  newTaskProjectId: string | null;
   contextMenu: { x: number; y: number; taskId: string } | null;
   fitToken: number;
   /** Bumped to put the cursor in the outline's goal box. */
@@ -280,6 +326,13 @@ export type Action =
   | { type: "connect"; source: string; target: string; gate?: Gate }
   | { type: "disconnect"; id: string }
   | { type: "createProject"; project: Project }
+  | { type: "createGoal"; goal: Goal }
+  | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal">> }
+  | { type: "goalRuntime"; id: string; patch: Partial<Pick<Goal, "branch" | "folder" | "base" | "blocker" | "merged" | "mergeRequestUrl">> }
+  | { type: "finishGoal"; id: string }
+  | { type: "archiveGoal"; id: string }
+  | { type: "reopenGoal"; id: string }
+  | { type: "deleteGoal"; id: string }
   | { type: "createTask"; task: Task; dependsOn?: { source: string; gate?: Gate }[] }
   | { type: "updateTask"; id: string; patch: Partial<Task> }
   | { type: "setStatus"; id: string; status: TaskStatus }
@@ -289,11 +342,14 @@ export type Action =
   | { type: "recordCheck"; taskId: string; run: CheckRun }
   | { type: "reassign"; id: string; agentId: string | null; runner?: Runner }
   /** Inserts steps into the outline after the step `after`, or at the top when it is null. */
-  | { type: "addSteps"; projectId: string; after: string | null; steps: { task: Task; depth: number }[] }
-  | { type: "setOutline"; projectId: string; items: OutlineItem[] }
+  | { type: "addSteps"; goalId: string; after: string | null; steps: { task: Task; depth: number }[] }
+  | { type: "setOutline"; goalId: string; items: OutlineItem[] }
   | { type: "followOutline"; id: string }
+  | { type: "setWorkCheck"; id: string; on: boolean }
+  | { type: "startWorkCheck"; taskId: string }
+  | { type: "recordWorkCheck"; taskId: string; result?: WorkCheckResult; failure?: string }
   | { type: "setReview"; id: string; on: boolean }
-  | { type: "setPlanRunning"; projectId: string; running: boolean }
+  | { type: "setPlanRunning"; goalId: string; running: boolean }
   | { type: "instruct"; id: string; text: string }
   | { type: "merged"; id: string; into: string; sha: string }
   | { type: "setWorkspace"; path: string }
@@ -308,6 +364,7 @@ export type Action =
       keepReview: boolean;
     }
   | { type: "looked"; id: string; look: Look }
+  | { type: "markAcceptance"; id: string; key: string; note: string | null }
   | { type: "noteIssue"; id: string; text: string }
   | { type: "dropIssue"; id: string; issueId: string }
   /** Adds `task` at the end of the outline to fix the issue, and links the two. */
@@ -320,7 +377,7 @@ export type Action =
   | { type: "deleteTask"; id: string }
   | { type: "reset" }
   | { type: "dismissNotification"; id: string }
-  | { type: "readNotifications" };
+  | { type: "readNotifications"; goalId?: string };
 
 export const STATUSES: TaskStatus[] = ["queued", "running", "completed", "blocked", "failed"];
 
@@ -335,6 +392,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
 export const CHECK_LABEL: Record<VerificationKind, string> = {
   command: "Check command",
   review: "Review",
+  work: "Work against this step",
 };
 
 export const GATE_LABEL: Record<Gate, string> = {
@@ -343,7 +401,7 @@ export const GATE_LABEL: Record<Gate, string> = {
 };
 
 export const SAVED_VIEWS: { id: Filters["savedView"]; label: string }[] = [
-  { id: "all", label: "All tasks" },
+  { id: "all", label: "All steps" },
   { id: "needs-me", label: "Needs me" },
   { id: "running", label: "Running" },
   { id: "unverified", label: "Unverified" },

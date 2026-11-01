@@ -1,8 +1,9 @@
-import { ChevronDown, CircleX, LayoutGrid, Plus, ScrollText, Settings, UserRound, Users, Zap } from "lucide-react";
+import { CircleX, LayoutGrid, ScrollText, Settings, UserRound, Users, Zap } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 import { cx, formatClock } from "../../model/format";
-import { needsYou, progress } from "../../model/stage";
-import { tasksForProject } from "../../model/selectors";
+import { needsYou } from "../../model/stage";
+import { tasksForGoal } from "../../model/selectors";
 import { agentStatus, setWorkspacePath, workspacePath } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
 
@@ -11,7 +12,7 @@ export function Hud() {
   const state = useShepherd((store) => store.state);
   const setView = useShepherd((store) => store.setView);
   const setFilters = useShepherd((store) => store.setFilters);
-  const tasks = tasksForProject(state, ui.projectId);
+  const tasks = tasksForGoal(state, ui.goalId);
   const running = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, state.tasks, state.dependencies)).length;
   const failed = tasks.filter((task) => task.status === "failed").length;
@@ -22,12 +23,12 @@ export function Hud() {
   };
 
   return (
-    <header className="relative z-20 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
+    <header className="relative z-20 flex min-h-14 shrink-0 flex-wrap items-center gap-2 py-2 sm:flex-nowrap sm:gap-3 sm:py-0 border-b border-line bg-surface px-4">
       <div className="flex items-center gap-2">
         <Sheep size={26} />
-        <span className="text-[15px] font-semibold text-text">Shepherd</span>
+        <span className="hidden md:inline text-[15px] font-semibold text-text">Shepherd</span>
       </div>
-      <ProjectPicker />
+      <ProjectSwitcher />
       <div className="flex items-center gap-1">
         <Counter
           icon={<Zap size={13} />}
@@ -85,9 +86,9 @@ function Counter({
     <button
       type="button"
       onClick={onClick}
-      title={active ? "Show every task" : `Show only tasks that ${label}`}
+      title={active ? "Show every step" : `Show only steps that ${label}`}
       className={cx(
-        "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] transition-colors",
+        "inline-flex h-8 items-center gap-1 sm:gap-1.5 rounded-lg border px-1 sm:px-2.5 text-[12px] transition-colors",
         count ? tone : "text-faint",
         active ? "border-current bg-current/10" : "border-transparent hover:bg-surface-2",
       )}
@@ -131,75 +132,20 @@ function usePopover() {
 
 const POPOVER = "enter absolute top-11 overflow-hidden rounded-lg border border-line-strong bg-surface shadow-2xl";
 
-function ProjectPicker() {
-  const state = useShepherd((store) => store.state);
-  const projectId = useShepherd((store) => store.ui.projectId);
-  const setProject = useShepherd((store) => store.setProject);
-  const setNewProjectOpen = useShepherd((store) => store.setNewProjectOpen);
-  const { open, setOpen, ref } = usePopover();
-  const current = state.projects.find((project) => project.id === projectId);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="inline-flex h-8 max-w-[240px] items-center gap-2 rounded-lg border border-line-strong bg-surface-2 px-3 hover:bg-surface-3"
-      >
-        <span className="truncate text-[13px] font-medium">{current?.name ?? "Pick a project"}</span>
-        <ChevronDown size={14} className="shrink-0 text-muted" />
-      </button>
-      {open ? (
-        <div className={cx(POPOVER, "left-0 w-72 p-1")}>
-          {state.projects.map((project) => {
-            const score = progress(state.tasks.filter((task) => task.projectId === project.id));
-            return (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => {
-                  setProject(project.id);
-                  setOpen(false);
-                }}
-                className={cx(
-                  "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left",
-                  project.id === projectId ? "bg-surface-3" : "hover:bg-surface-2",
-                )}
-              >
-                <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-                <span className={cx("font-mono text-[11px]", score.complete ? "text-completed" : "text-faint")}>
-                  {score.total ? `${score.done}/${score.total}` : "empty"}
-                </span>
-              </button>
-            );
-          })}
-          <button
-            type="button"
-            onClick={() => {
-              setNewProjectOpen(true);
-              setOpen(false);
-            }}
-            className="mt-1 flex w-full items-center gap-2 rounded-md border-t border-line px-3 py-2 text-left text-[13px] text-brass hover:bg-surface-2"
-          >
-            <Plus size={14} /> New project
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 const FEED_TONE = { info: "bg-queued", success: "bg-completed", warning: "bg-running", failure: "bg-failed" } as const;
 
-/** Everything that happened in this project, newest first. */
+/** Everything that happened in the selected task, newest first. */
 function Feed() {
   const { open, setOpen, ref } = usePopover();
-  const projectId = useShepherd((store) => store.ui.projectId);
+  const goalId = useShepherd((store) => store.ui.goalId);
   const allEvents = useShepherd((store) => store.state.events);
-  const unread = useShepherd((store) => store.state.notifications.filter((item) => !item.read).length);
+  const notifications = useShepherd((store) => store.state.notifications);
   const dispatch = useShepherd((store) => store.dispatch);
   const selectTask = useShepherd((store) => store.selectTask);
-  const events = allEvents.filter((event) => event.projectId === projectId).slice(-40).reverse();
+  const steps = useShepherd((store) => store.state.tasks);
+  const ids = new Set(steps.filter((step) => step.goalId === goalId).map((step) => step.id));
+  const unread = notifications.filter((item) => !item.read && item.taskId && ids.has(item.taskId)).length;
+  const events = allEvents.filter((event) => ids.has(event.taskId)).slice(-40).reverse();
 
   return (
     <div ref={ref} className="relative">
@@ -208,7 +154,7 @@ function Feed() {
         aria-label="Activity"
         title="Activity"
         onClick={() => {
-          if (!open && unread) dispatch({ type: "readNotifications" });
+          if (!open && unread) dispatch({ type: "readNotifications", goalId });
           setOpen(!open);
         }}
         className={cx("relative rounded-lg p-2 hover:bg-surface-2 hover:text-text", open ? "bg-surface-2 text-text" : "text-muted")}
@@ -217,7 +163,7 @@ function Feed() {
         {unread ? <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-approval" /> : null}
       </button>
       {open ? (
-        <div className={cx(POPOVER, "right-0 w-96")}>
+        <div className={cx(POPOVER, "right-0 w-[min(384px,calc(100vw-24px))]")}>
           <div className="border-b border-line px-4 py-2.5 text-[13px] font-medium">Activity</div>
           <ol className="max-h-[60vh] overflow-auto p-1">
             {events.map((event) => (

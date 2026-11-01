@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Launch page browser checks</title>
+<style>
+body { margin: 32px; background: #101412; color: #f3f0e5; font: 16px/1.6 system-ui; }
+h1 { font-size: 28px; } li { margin: 6px 0; } .pass { color: #98c4a2; } .fail { color: #ffaaaa; }
+iframe { position: fixed; left: -20000px; width: 1440px; height: 1000px; border: 0; }
+</style>
+<h1>Launch page browser checks</h1><p id="status">Running…</p><ul id="results"></ul><iframe title="Launch page test fixture" src="../"></iframe>
+<script type="module">
+const frame = document.querySelector('iframe');
+const wait = (ms = 60) => new Promise(resolve => setTimeout(resolve, ms));
+const results = [];
+function check(condition, message) {
+  results.push(Boolean(condition));
+  const li = document.createElement('li');
+  li.className = condition ? 'pass' : 'fail';
+  li.textContent = `${condition ? 'PASS' : 'FAIL'} ${message}`;
+  document.querySelector('#results').append(li);
+}
+await new Promise(resolve => frame.addEventListener('load', resolve, { once: true }));
+try {
+  const win = frame.contentWindow;
+  const doc = frame.contentDocument;
+  await doc.fonts.ready;
+  const tab = name => doc.querySelector(`#tab-${name}`);
+  const image = doc.querySelector('#explorer-image');
+  const full = doc.querySelector('#full-size');
+  const select = async name => { tab(name).click(); await image.decode(); await wait(); };
+  const width = async size => { frame.style.width = `${size}px`; await wait(180); await image.decode(); };
+  const current = name => image.currentSrc.endsWith(`${name}.png`);
+  const key = (name, value) => tab(name).dispatchEvent(new win.KeyboardEvent('keydown', { key: value, bubbles: true }));
+  check(doc.querySelectorAll('h1').length === 1, 'One H1');
+  check(tab('map').getAttribute('aria-selected') === 'true' && current('task-map-desktop'), 'Desktop defaults to the real map');
+  const screenshotTop = Math.round(doc.querySelector('#product-view').getBoundingClientRect().top);
+  check(screenshotTop < 800, `Desktop screenshot begins at ${screenshotTop}px (under 800)`);
+  await select('outline');
+  check(current('task-outline-desktop') && full.href === image.currentSrc, 'Outline source and full-size link match');
+  check(image.alt.includes('two of four'), 'Desktop outline has the correct alt text');
+  key('outline', 'End'); await wait();
+  check(doc.activeElement === tab('checks') && tab('checks').tabIndex === 0, 'End selects and focuses Checks');
+  key('checks', 'Home'); await wait();
+  check(doc.activeElement === tab('map'), 'Home selects and focuses The map');
+  key('map', 'ArrowLeft'); await wait();
+  check(doc.activeElement === tab('checks'), 'Left arrow wraps to Checks');
+  key('checks', 'ArrowRight'); await wait();
+  check(doc.activeElement === tab('map'), 'Right arrow wraps to The map');
+  check(doc.querySelectorAll('[role=tab][tabindex="0"]').length === 1, 'Only the selected tab is in the tab order');
+  await select('checks');
+  check(current('step-checks-desktop') && full.href === image.currentSrc, 'Checks source and full-size link match');
+  await width(390);
+  check(tab('checks').getAttribute('aria-selected') === 'true' && current('step-checks-mobile'), 'Visitor selection survives resize and uses the mobile source');
+  await select('outline');
+  check(current('task-outline-mobile') && image.alt.includes('two waiting') && full.href === image.currentSrc, 'Phone outline source, alt and full-size link match');
+  const copy = doc.querySelector('[data-copy]');
+  let copied;
+  Object.defineProperty(win.navigator, 'clipboard', { configurable: true, value: { writeText: async value => { copied = value; } } });
+  copy.click(); await wait();
+  check(copied === 'npx shepherd-agents' && copy.textContent.includes('Copied'), 'Copy writes only the exact install command');
+  check(doc.querySelector('[role=status]').textContent === 'Copied. Paste it into your terminal.', 'Copy success is announced');
+  win.navigator.clipboard.writeText = async () => { throw new Error('Clipboard blocked for test'); };
+  copy.click(); await wait();
+  check(win.getSelection().toString() === 'npx shepherd-agents', 'Blocked clipboard selects the visible command');
+  check(doc.querySelector('[role=status]').textContent === 'Select and copy: npx shepherd-agents', 'Blocked clipboard gives manual-copy instructions');
+  const bottomCopy = doc.querySelectorAll('[data-copy]')[1];
+  bottomCopy.click(); await wait();
+  check(win.getSelection().toString() === 'npx shepherd-agents', 'Closing command has the same clipboard fallback');
+  win.navigator.clipboard.writeText = async value => { copied = value; };
+  bottomCopy.click(); await wait();
+  check(bottomCopy.textContent.includes('Copied'), 'Closing command has the same copy success');
+  for (const size of [1440, 1024, 390, 320]) {
+    await width(size);
+    check(doc.documentElement.scrollWidth <= size, `No horizontal page overflow at ${size}px`);
+    check([...doc.querySelectorAll('button, nav a, summary')].filter(el => el.getBoundingClientRect().width).every(el => el.getBoundingClientRect().height >= 44), `Controls have 44px targets at ${size}px`);
+  }
+  const commandTop = Math.round(copy.getBoundingClientRect().top);
+  check(commandTop < 600, `Install button begins at ${commandTop}px on the narrowest layout`);
+  for (const details of doc.querySelectorAll('details')) details.querySelector('summary').click();
+  check([...doc.querySelectorAll('details')].every(el => el.open), 'All four FAQ disclosures open');
+  const links = [...doc.querySelectorAll('[data-repo]')];
+  check(links.every(link => link.href === `${links.find(link => link.dataset.repo === "").href}${link.dataset.repo}`), 'All repository links share the package.json destination');
+  check([...doc.querySelectorAll('a[href^="#"]')].every(link => !link.hash || doc.querySelector(link.hash)), 'All local section links have targets');
+  for (const img of doc.querySelectorAll('img')) { img.loading = 'eager'; await img.decode(); }
+  for (const size of [1440, 390]) {
+    await width(size);
+    for (const name of ['map', 'outline', 'checks']) await select(name);
+    for (const img of doc.querySelectorAll('img')) await img.decode();
+  }
+  await wait(200);
+  const resources = win.performance.getEntriesByType('resource');
+  check(resources.every(entry => new URL(entry.name).origin === location.origin), 'Every requested resource is same-origin');
+  const unique = new Map(resources.map(entry => [entry.name, entry.encodedBodySize]));
+  const bytes = [...unique.values()].reduce((sum, n) => sum + n, 0) + win.performance.getEntriesByType('navigation')[0].encodedBodySize;
+  check(bytes < 1500000, `Complete page, all seven image sources: ${bytes.toLocaleString()} measured body bytes (under 1.5 MB)`);
+  await width(390);
+  for (const element of doc.querySelectorAll('h1, h2, h3, p, a, button, code, summary, .eyebrow, .step-number')) {
+    element.dataset.testFont = win.getComputedStyle(element).fontSize;
+  }
+  for (const element of doc.querySelectorAll('[data-test-font]')) element.style.fontSize = `${parseFloat(element.dataset.testFont) * 2}px`;
+  check(doc.documentElement.scrollWidth <= 390, 'No horizontal overflow with 200% text sizing at 390px');
+  if (doc.documentElement.scrollWidth > 390) check(false, 'Overflow elements: ' + [...doc.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > 390).map(el => `${el.tagName}.${el.className}`).join(', '));
+  check([...doc.querySelectorAll('.install-command')].every(el => el.scrollWidth <= el.clientWidth), 'Install commands fit with 200% text sizing');
+  check(doc.querySelector('footer').textContent.includes('The Shepherd authors'), 'Footer and MIT copyright present');
+  const phoneFrame = document.createElement('iframe');
+  phoneFrame.style.width = '390px'; phoneFrame.src = '../'; document.body.append(phoneFrame);
+  await new Promise(resolve => phoneFrame.addEventListener('load', resolve, { once: true }));
+  const phoneDoc = phoneFrame.contentDocument;
+  await phoneDoc.querySelector('#explorer-image').decode();
+  check(phoneDoc.querySelector('#tab-outline').getAttribute('aria-selected') === 'true' && phoneDoc.querySelector('#explorer-image').currentSrc.endsWith('task-outline-mobile.png'), 'Fresh phone visit defaults to the real outline');
+  check(phoneDoc.querySelector('.install-command').getBoundingClientRect().top < 600, 'Fresh phone visit shows command within first 600px');
+  const css = [...doc.styleSheets].flatMap(sheet => [...sheet.cssRules]);
+  check(css.some(rule => rule.conditionText === '(prefers-reduced-motion: reduce)' && rule.cssText.includes('scroll-behavior: auto')), 'Reduced motion disables smooth scrolling');
+  check([...doc.querySelectorAll('*')].every(el => win.getComputedStyle(el).animationName === 'none'), 'No automatic or looping animations');
+  const noScript = new DOMParser().parseFromString(await (await fetch('../')).text(), 'text/html');
+  for (const script of noScript.querySelectorAll('script')) script.remove();
+  const base = noScript.createElement('base'); base.href = new URL('../', location.href).href; noScript.head.prepend(base);
+  const plain = document.createElement('iframe'); plain.style.width = '390px'; plain.srcdoc = noScript.documentElement.outerHTML; document.body.append(plain);
+  await new Promise(resolve => plain.addEventListener('load', resolve, { once: true }));
+  const plainDoc = plain.contentDocument;
+  await plainDoc.querySelector('#explorer-image').decode();
+  check(plainDoc.querySelector('#explorer-image').currentSrc.endsWith('task-outline-mobile.png') && plainDoc.querySelector('.install-command code').textContent === 'npx shepherd-agents', 'Without JavaScript, phone screenshot and install command remain visible');
+  check([...plainDoc.querySelectorAll('[data-repo]')].every(link => link.href.startsWith('https://github.com/') && link.href !== '#'), 'Without JavaScript, repository and documentation links work');
+  const rgb = value => value.match(/[\d.]+/g).slice(0, 3).map(Number).map(n => { const v = n / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; });
+  const luminance = color => rgb(color).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+  const contrast = (a, b) => (Math.max(luminance(a), luminance(b)) + .05) / (Math.min(luminance(a), luminance(b)) + .05);
+  const background = win.getComputedStyle(doc.body).backgroundColor;
+  check(['h1', '.hero-description', '.disclosure', '.text-link'].every(selector => contrast(win.getComputedStyle(doc.querySelector(selector)).color, background) >= 4.5), 'Primary, muted, disclosure and link text exceed AA contrast');
+  const buttonStyle = win.getComputedStyle(copy);
+  check(contrast(buttonStyle.color, buttonStyle.backgroundColor) >= 4.5, 'Copy-button text exceeds AA contrast');
+  check(contrast(win.getComputedStyle(doc.querySelector('.install-command')).borderTopColor, background) >= 3, 'Command control border exceeds 3:1 contrast');
+} catch (error) { check(false, error.stack); }
+const failed = results.filter(passed => !passed).length;
+document.querySelector('#status').textContent = `${results.length - failed}/${results.length} checks passed.`;
+if (failed) console.error(`${failed} launch page browser checks failed.`);
+</script>
+</html>

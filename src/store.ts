@@ -14,7 +14,7 @@ export const initialFilters: Filters = {
 
 const UI_KEY = "shepherd.ui";
 
-type SavedUi = Pick<UiState, "view" | "projectId" | "selectedTaskId">;
+type SavedUi = Pick<UiState, "view" | "projectId" | "goalId" | "selectedTaskId">;
 
 function savedUi(): Partial<SavedUi> {
   try {
@@ -29,6 +29,7 @@ const restored = savedUi();
 export const initialUi: UiState = {
   view: restored.view === "agents" ? "agents" : "canvas",
   projectId: restored.projectId ?? WORKSPACE_PROJECT_ID,
+  goalId: restored.goalId ?? `goal-${WORKSPACE_PROJECT_ID}`,
   selectedTaskId: restored.selectedTaskId ?? null,
   selectedAgentId: null,
   selectedEdgeId: null,
@@ -37,6 +38,7 @@ export const initialUi: UiState = {
   filters: initialFilters,
   paletteOpen: false,
   newProjectOpen: false,
+  newTaskProjectId: null,
   contextMenu: null,
   fitToken: 0,
   draftToken: 0,
@@ -63,6 +65,7 @@ interface ShepherdStore {
   setManageSaved: (open: boolean) => void;
   setView: (view: ViewId) => void;
   setProject: (projectId: string) => void;
+  setGoal: (goalId: string) => void;
   selectTask: (id: string | null) => void;
   /** Selects a step without opening its panel; an open panel follows it. */
   focusTask: (id: string) => void;
@@ -75,6 +78,7 @@ interface ShepherdStore {
   setFilters: (patch: Partial<Filters>) => void;
   setPaletteOpen: (open: boolean) => void;
   setNewProjectOpen: (open: boolean) => void;
+  setNewTaskProject: (projectId: string | null) => void;
   setContextMenu: (menu: UiState["contextMenu"]) => void;
   requestFit: () => void;
   /** Puts the cursor in the outline's goal box, with a goal in it if given. */
@@ -145,24 +149,38 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
   setView: (view) => set((store) => ({ ui: { ...store.ui, view, contextMenu: null } })),
   setProject: (projectId) =>
     set((store) => {
-      const tasks = store.state.tasks.filter((item) => item.projectId === projectId);
+      const goalId = store.state.goals.find((goal) => goal.projectId === projectId && goal.status === "open")?.id ?? store.state.goals.find((goal) => goal.projectId === projectId)?.id ?? "";
+      const tasks = store.state.tasks.filter((item) => item.goalId === goalId);
       const selected = tasks.some((item) => item.id === store.ui.selectedTaskId) ? store.ui.selectedTaskId : (tasks[0]?.id ?? null);
       return {
         ui: {
           ...store.ui,
           projectId,
+          goalId,
           selectedTaskId: selected,
           selectedEdgeId: null,
           contextMenu: null,
           addSaved: null,
-          filters: { ...store.ui.filters, agentId: "all", search: "" },
+          filters: initialFilters,
+          selectedAgentId: null,
+          inspectorOpen: false,
+          draftSeed: "",
+          draftToken: 0,
+          fitToken: store.ui.fitToken + 1,
         },
       };
     }),
+  setGoal: (goalId) => set((store) => {
+    const goal = store.state.goals.find((goal) => goal.id === goalId);
+    if (!goal) return store;
+    return { ui: { ...store.ui, projectId: goal.projectId, goalId, selectedTaskId: null,
+      selectedEdgeId: null, selectedAgentId: null, contextMenu: null, addSaved: null, saveFor: null, filters: initialFilters, inspectorOpen: false, draftSeed: "", draftToken: 0, fitToken: store.ui.fitToken + 1 } };
+  }),
   selectTask: (id) =>
     set((store) => ({
       ui: {
         ...store.ui,
+        ...selection(store.state, id),
         selectedTaskId: id,
         selectedEdgeId: null,
         contextMenu: null,
@@ -173,11 +191,11 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
     })),
   focusTask: (id) =>
     set((store) =>
-      store.ui.selectedTaskId === id ? store : { ui: { ...store.ui, selectedTaskId: id, selectedEdgeId: null, contextMenu: null } },
+      store.ui.selectedTaskId === id ? store : { ui: { ...store.ui, ...selection(store.state, id), selectedTaskId: id, selectedEdgeId: null, contextMenu: null } },
     ),
   openTask: (id, tab) =>
     set((store) => ({
-      ui: { ...store.ui, selectedTaskId: id, selectedEdgeId: null, contextMenu: null, inspectorOpen: true, panelTab: tab, view: "canvas" },
+      ui: { ...store.ui, ...selection(store.state, id), selectedTaskId: id, selectedEdgeId: null, contextMenu: null, inspectorOpen: true, panelTab: tab, view: "canvas" },
     })),
   setPanelTab: (tab) => set((store) => ({ ui: { ...store.ui, panelTab: tab } })),
   selectAgent: (id) => set((store) => ({ ui: { ...store.ui, selectedAgentId: id } })),
@@ -185,6 +203,7 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
   setInspectorOpen: (open) => set((store) => ({ ui: { ...store.ui, inspectorOpen: open } })),
   setFilters: (patch) => set((store) => ({ ui: { ...store.ui, filters: { ...store.ui.filters, ...patch } } })),
   setPaletteOpen: (open) => set((store) => ({ ui: { ...store.ui, paletteOpen: open } })),
+  setNewTaskProject: (newTaskProjectId) => set((store) => ({ ui: { ...store.ui, newTaskProjectId, paletteOpen: false, contextMenu: null } })),
   setNewProjectOpen: (open) => set((store) => ({ ui: { ...store.ui, newProjectOpen: open, paletteOpen: false } })),
   setContextMenu: (menu) => set((store) => ({ ui: { ...store.ui, contextMenu: menu } })),
   requestFit: () => set((store) => ({ ui: { ...store.ui, fitToken: store.ui.fitToken + 1, view: "canvas" } })),
@@ -194,8 +213,11 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
 
 function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
   const projectId = state.projects.some((project) => project.id === ui.projectId) ? ui.projectId : (state.projects[0]?.id ?? WORKSPACE_PROJECT_ID);
-  const task = state.tasks.find((item) => item.id === ui.selectedTaskId && item.projectId === projectId);
-  return { ...ui, projectId, selectedTaskId: task?.id ?? null, inspectorOpen: !!task };
+  const goalId = state.goals.find((goal) => goal.id === ui.goalId && goal.projectId === projectId)?.id
+    ?? state.goals.find((goal) => goal.projectId === projectId && goal.status === "open")?.id
+    ?? state.goals.find((goal) => goal.projectId === projectId)?.id ?? "";
+  const task = state.tasks.find((item) => item.id === ui.selectedTaskId && item.goalId === goalId);
+  return { ...ui, projectId, goalId, selectedTaskId: task?.id ?? null, inspectorOpen: !!task && ui.inspectorOpen };
 }
 
 function receive(revision: number, state: OrchestrationState) {
@@ -203,9 +225,7 @@ function receive(revision: number, state: OrchestrationState) {
   confirmedRevision = revision;
   pending = pending.filter((entry) => entry.revision === undefined || entry.revision > revision);
   rebase();
-  if (!useShepherd.getState().loaded) {
-    useShepherd.setState((store) => ({ loaded: true, ui: reconcileUi(store.ui, state) }));
-  }
+  useShepherd.setState((store) => ({ loaded: true, ui: reconcileUi(store.ui, store.state) }));
 }
 
 /** Follows the server's board for as long as the tab is open. EventSource reconnects by itself. */
@@ -231,14 +251,19 @@ export function connectToServer(): () => void {
 
 if (typeof localStorage !== "undefined") {
   useShepherd.subscribe((store, previous) => {
-    const { view, projectId, selectedTaskId } = store.ui;
+    const { view, projectId, goalId, selectedTaskId } = store.ui;
     const before = previous.ui;
-    if (view === before.view && projectId === before.projectId && selectedTaskId === before.selectedTaskId) return;
-    localStorage.setItem(UI_KEY, JSON.stringify({ view, projectId, selectedTaskId } satisfies SavedUi));
+    if (view === before.view && projectId === before.projectId && goalId === before.goalId && selectedTaskId === before.selectedTaskId) return;
+    localStorage.setItem(UI_KEY, JSON.stringify({ view, projectId, goalId, selectedTaskId } satisfies SavedUi));
   });
 }
 
 export function clearWorkspace() {
   if (!window.confirm("Remove every project and task from Shepherd? Files on disk stay where they are.")) return;
   useShepherd.getState().dispatch({ type: "reset" });
+}
+
+function selection(state: OrchestrationState, id: string | null): Partial<UiState> {
+  const task = state.tasks.find((task) => task.id === id);
+  return task ? { projectId: task.projectId, goalId: task.goalId } : {};
 }

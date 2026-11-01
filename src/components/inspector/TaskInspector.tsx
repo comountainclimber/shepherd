@@ -89,7 +89,7 @@ export function TaskInspector() {
 function NextStep({ task, stage }: { task: Task; stage: Stage }) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
-  const planRunning = useShepherd((store) => !!store.state.projects.find((project) => project.id === task.projectId)?.running);
+  const planRunning = useShepherd((store) => !!store.state.goals.find((goal) => goal.id === task.goalId)?.running);
   const dispatch = useShepherd((store) => store.dispatch);
   const tab = useShepherd((store) => store.ui.panelTab);
   const setPanelTab = useShepherd((store) => store.setPanelTab);

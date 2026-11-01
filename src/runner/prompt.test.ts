@@ -4,6 +4,7 @@ import { reducer } from "../model/reducer";
 import type { Action, OrchestrationState } from "../model/types";
 import { workspace } from "../model/workspace";
 import { taskPrompt, upstreamContext } from "./prompt";
+import { acceptanceItems } from "../model/acceptance";
 
 function step(id: string) {
   return blankTask({ id, projectId: "proj-local", name: id, objective: `Do ${id}`, agentId: "agent-codex", position: { x: 0, y: 0 } });
@@ -24,6 +25,19 @@ function board(...more: Action[]): OrchestrationState {
 const get = (state: OrchestrationState, id: string) => state.tasks.find((task) => task.id === id)!;
 
 describe("prompts", () => {
+  it("numbers Done when items and asks for evidence as each is confirmed, with a way to withdraw", () => {
+    const task = { ...step("a"), acceptance: ["Page loads", "Works on mobile"] };
+    const prompt = taskPrompt(task, undefined, [], { done: true });
+    expect(prompt).toContain("Done when:\n1. Page loads\n2. Works on mobile");
+    expect(prompt).toContain('node "$SHEPHERD_DONE" ITEM "Short note on how you know"');
+    expect(prompt).toContain("as you confirm them, not all at the end");
+    expect(prompt).toContain('node "$SHEPHERD_DONE" ITEM --undo');
+    expect(prompt).toContain("from its checks");
+    expect(taskPrompt(task)).not.toContain("SHEPHERD_DONE");
+    expect(taskPrompt(step("empty"), undefined, [], { done: true })).not.toContain("SHEPHERD_DONE");
+    const key = acceptanceItems(task.acceptance)[0].key;
+    expect(taskPrompt({ ...task, sessionId: "chat", acceptanceMarks: { [key]: { at: 1, note: "Opened it in Chrome" } } }, undefined, [], { done: true })).toContain("You previously marked this as met: Opened it in Chrome");
+  });
   it("tells the next step about known issues left in the work it builds on", () => {
     const state = board();
     const prompt = taskPrompt(get(state, "b"), undefined, upstreamContext(state, get(state, "b")));
@@ -51,5 +65,24 @@ describe("prompts", () => {
     const again = "You have worked on this step before in this conversation. Do the work again now";
     expect(taskPrompt(task)).not.toContain(again);
     expect(taskPrompt({ ...task, sessionId: "chat-1" })).toContain(again);
+  });
+
+  it("names the pushed task branch, remote and base, while forbidding agent commits and pushes", () => {
+    const task = get(board(), "b");
+    const prompt = taskPrompt(task, undefined, [], { pushed: { remote: "upstream", branch: "shepherd/fix", base: "release" } });
+    expect(prompt).toContain("Shepherd has pushed the task branch shepherd/fix to remote upstream. Its base branch is release.");
+    expect(prompt).toContain("glab, gh or your own tools");
+    expect(prompt).toContain("Do not commit or push yourself");
+    expect(prompt).toContain("full URL on its own line");
+    expect(taskPrompt(task)).not.toContain("Shepherd has pushed");
+  });
+
+  it("gives a push-enabled step all its ancestors' reports once, in order, within its task", () => {
+    let state = board({ type: "createTask", task: step("c"), dependsOn: [{ source: "b" }, { source: "a" }] });
+    state = reducer(state, { type: "updateTask", id: "c", patch: { pushBeforeRun: true } });
+    const context = upstreamContext(state, get(state, "c"));
+    expect(context.map((item) => item.name)).toEqual(["a", "b"]);
+    expect(context[0]?.summary).toBeTruthy();
+    expect(upstreamContext(state, get(state, "b")).map((item) => item.name)).toEqual(["a"]);
   });
 });

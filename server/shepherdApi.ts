@@ -1,16 +1,24 @@
+import { fileURLToPath } from "node:url";
+import { createSecurity } from "./security";
+import { startupWarnings } from "./startup";
 import { createReadStream, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Plugin } from "vite";
-import { agentChoice, isEffort, isModelId } from "../src/model/models";
+import { resolveGoal } from "../src/model/goals";
+import { workspace } from "../src/model/workspace";
+import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
 import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
-import { boardSummary, planProject, planTasks } from "./intake";
+import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
+import { markProgress } from "./progress";
+import { openTaskFolder } from "./openTaskFolder";
+import { availableRepo } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
 
@@ -22,36 +30,90 @@ const STREAM_THROTTLE_MS = 250;
 
 class BadRequest extends Error {}
 
+export interface AppOptions {
+  dataDir: string;
+  projectsDir: string;
+  helpersDir?: string;
+  origin: () => string | null;
+  /** Demo boards never create a runner or read the person's agent settings. */
+  demo?: { models: ModelCatalog };
+}
+
+/** Both launchers use the same board, runner, routes and authentication boundary. */
+export function createApp(options: AppOptions) {
+  const { dataDir: shepherd, projectsDir: sandbox } = options;
+  const helpers = options.helpersDir ?? path.dirname(fileURLToPath(import.meta.url));
+  mkdirSync(shepherd, { recursive: true, mode: 0o700 });
+  mkdirSync(sandbox, { recursive: true, mode: 0o700 });
+  const security = createSecurity(options.origin);
+  const engine = createEngine(path.join(shepherd, "state.json"), undefined, options.demo ? { ...workspace(), projects: [], goals: [] } : undefined);
+  const evidence = path.join(shepherd, "evidence");
+  const looks = path.join(shepherd, "looks");
+  const runner: Runner = options.demo ? {
+    handle: async () => ({ error: "This is a demo. Agent runs and commands are disabled." }),
+    cancel() {}, cancelAll() {}, close() {}, schedule() {}, async idle() {},
+  } : createRunner({
+    engine,
+    sandbox,
+    worktrees: path.join(shepherd, "worktrees"),
+    evidence,
+    gate: path.join(helpers, "../gates/shepherd-gate.mjs"),
+    authToken: security.token,
+    look: { script: path.join(helpers, "look-cli.mjs"), server: options.origin },
+    done: { script: path.join(helpers, "done-cli.mjs"), server: options.origin },
+    checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
+  });
+  const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
+  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo });
+  const stop = () => {
+    runner.close();
+    engine.close();
+  };
+  return {
+    engine,
+    runner,
+    security,
+    stop,
+    handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
+      if (!security.allow(req, res)) return;
+      if (options.demo) {
+        const url = new URL(req.url ?? "/", "http://shepherd.local");
+        if (url.pathname === "/api/models") return sendJson(res, 200, options.demo.models);
+        if (url.pathname === "/api/agents") return sendJson(res, 200, { codex: true, claude: true, git: true, workspace: "Demo workspace" });
+        if (url.pathname.startsWith("/api/") && ![
+          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps",
+        ].includes(url.pathname) && !/^\/api\/tasks\/[\w.-]+\/timeline$/.test(url.pathname) && url.pathname !== "/api/actions" && url.pathname !== "/api/progress") {
+          return sendJson(res, 409, { error: "This is a demo. Agent runs, drafts and external actions are disabled." });
+        }
+      }
+      void handle(req, res, next);
+    },
+  };
+}
+
 export function shepherdApi(): Plugin {
-  const root = process.cwd();
-  const sandbox = path.resolve(root, ".agent-sandbox");
-  const shepherd = path.resolve(root, ".shepherd");
   return {
     name: "shepherd-api",
     configureServer(server) {
-      mkdirSync(sandbox, { recursive: true });
-      const engine = createEngine(path.join(shepherd, "state.json"));
-      const evidence = path.join(shepherd, "evidence");
-      const looks = path.join(shepherd, "looks");
-      const runner = createRunner({
-        engine,
-        sandbox,
-        worktrees: path.join(shepherd, "worktrees"),
-        evidence,
-        gate: path.resolve(root, "gates/shepherd-gate.mjs"),
-        look: { script: path.resolve(root, "server/look-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
-        checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
+      const root = server.config.root;
+      const app = createApp({
+        dataDir: path.resolve(process.env.SHEPHERD_DATA_DIR || path.join(root, ".shepherd")),
+        projectsDir: path.resolve(process.env.SHEPHERD_PROJECTS_DIR || path.join(root, ".agent-sandbox")),
+        helpersDir: path.join(root, "server"),
+        origin: () => serverUrl(server.httpServer?.address()),
       });
-      // Vite rebuilds this plugin in the same process when a server file changes, so the old
-      // runner and engine must stop for good or they keep running agents and writing the board.
+      server.middlewares.use(app.handle);
+      // Vite replaces this plugin on edits; the previous runner must never write again.
       const stop = () => {
-        runner.close();
-        engine.close();
+        app.stop();
+        process.removeListener("exit", stop);
       };
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
-      const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
-      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved }));
+      server.httpServer?.once("listening", () => {
+        console.log(`\nShepherd: ${app.security.address()}\nOpen this address to unlock the board.\n`);
+        void startupWarnings().then((warnings) => warnings.forEach((warning) => console.warn(warning)));
+      });
     },
   };
 }
@@ -64,11 +126,12 @@ export function serverUrl(address: AddressInfo | string | null | undefined): str
 }
 
 /** A person's checklist, drafted in their step's folder once it exists, or else the project folder. */
-function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
+export async function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
   const project = board.projects.find((item) => item.id === task.projectId);
-  const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : projectFolder(board.workspace, project?.directory, sandbox);
-  if ("error" in folder) return Promise.resolve(folder);
-  mkdirSync(folder.path, { recursive: true });
+  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
+  if ("error" in base) return base;
+  const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : base;
+  if (!project?.repo) mkdirSync(folder.path, { recursive: true });
   return draftChecklist(checklistInput(board, task), folder.path, agentChoice({}, modelCatalog().codex.default), signal);
 }
 
@@ -80,6 +143,7 @@ interface Context {
   looks: string;
   look: ReturnType<typeof createLooks>;
   saved: SavedSteps;
+  demo?: boolean;
 }
 
 export function apiHandler(context: Context) {
@@ -107,7 +171,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence, looks, look, saved }: Context,
+  { engine, runner, sandbox, evidence, looks, look, saved, demo }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -115,6 +179,11 @@ async function route(
 ): Promise<boolean> {
   const { pathname } = url;
   const method = req.method ?? "GET";
+  if (pathname === "/api/progress" && method === "POST") {
+    const result = markProgress(engine, await readJson(req));
+    sendJson(res, "error" in result ? 409 : 200, result);
+    return true;
+  }
   if (pathname === "/api/state" && method === "GET") {
     sendJson(res, 200, { ...envelope(engine.get()), revision: engine.version() });
     return true;
@@ -139,7 +208,22 @@ async function route(
         errors.push(action.error);
         continue;
       }
+      if (action.type === "createProject" && action.project.repo !== undefined) {
+        if (demo) { errors.push("Demo projects use throwaway folders only."); continue; }
+        try {
+          action.project.repo = (await availableRepo(action.project.repo, engine.get, sandbox)).repo;
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+          continue;
+        }
+      }
       if (action.type === "deleteTask") runner.cancel(action.id);
+      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal") {
+        for (const step of engine.get().tasks.filter((step) => step.goalId === action.id)) {
+          runner.cancel(step.id);
+          if (step.status === "running" && action.type !== "deleteGoal") engine.dispatch({ type: "setStatus", id: step.id, status: "blocked" });
+        }
+      }
       if (action.type === "reset") runner.cancelAll();
       engine.dispatch(action);
     }
@@ -155,6 +239,18 @@ async function route(
     sendJson(res, 200, boardSummary(engine.get()));
     return true;
   }
+  const timeline = /^\/api\/tasks\/([\w.-]+)\/timeline$/.exec(pathname);
+  if (timeline && method === "GET") {
+    if (!engine.get().tasks.some((task) => task.id === timeline[1])) {
+      sendJson(res, 404, { error: "There is no such step." });
+      return true;
+    }
+    const after = Number(url.searchParams.get("after") ?? 0);
+    if (!Number.isSafeInteger(after) || after < 0) throw new BadRequest("after must be an entry id, starting at 0.");
+    res.setHeader("Cache-Control", "no-store");
+    sendJson(res, 200, engine.timelines.read(timeline[1], after));
+    return true;
+  }
   if (pathname === "/api/tasks" && method === "POST") {
     const id = stamp();
     const planned = planTasks(engine.get(), await readJson(req), (index) => `task-api-${id}-${index + 1}`);
@@ -163,7 +259,35 @@ async function route(
       return true;
     }
     planned.actions.forEach((action: Action) => engine.dispatch(action));
-    sendJson(res, 201, { project: planned.projectId, tasks: planned.tasks, note: "Added to the board." });
+    sendJson(res, 201, { project: planned.projectId, goal: planned.goalId, tasks: planned.tasks, note: "Added to the board." });
+    return true;
+  }
+  const openFolder = /^\/api\/goals\/([\w.-]+)\/open$/.exec(pathname);
+  if (openFolder && method === "POST") {
+    const body = (await readJson(req)) as { app?: unknown } | null;
+    const result = await openTaskFolder(engine.get(), openFolder[1]!, body?.app);
+    sendJson(res, "error" in result ? 409 : 200, result);
+    return true;
+  }
+  if (pathname === "/api/goals" && method === "GET") {
+    sendJson(res, 200, { goals: engine.get().goals });
+    return true;
+  }
+  if (pathname === "/api/goals" && method === "POST") {
+    const planned = planGoal(engine.get(), await readJson(req), `goal-api-${stamp()}`);
+    if ("error" in planned) sendJson(res, 400, planned);
+    else {
+      engine.dispatch(planned.action);
+      sendJson(res, 201, { goal: planned.goal });
+    }
+    return true;
+  }
+  if (pathname === "/api/projects/repo" && method === "GET") {
+    try {
+      sendJson(res, 200, await availableRepo(url.searchParams.get("path") ?? "", engine.get, sandbox));
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
     return true;
   }
   if (pathname === "/api/projects" && method === "POST") {
@@ -172,28 +296,38 @@ async function route(
       sendJson(res, 400, planned);
       return true;
     }
+    if (planned.project.repo) {
+      try {
+        planned.project.repo = (await availableRepo(planned.project.repo, engine.get, sandbox)).repo;
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        return true;
+      }
+    }
     engine.dispatch(planned.action);
     sendJson(res, 201, { project: planned.project, note: "Added to the board." });
     return true;
   }
   if (pathname === "/api/draft" && method === "POST") {
-    const body = (await readJson(req)) as { projectId?: unknown; goal?: unknown; model?: unknown; thinking?: unknown };
+    const body = (await readJson(req)) as { project?: unknown; projectId?: unknown; goal?: unknown; prompt?: unknown; model?: unknown; thinking?: unknown };
     const board = engine.get();
-    const project = board.projects.find((item) => item.id === body.projectId);
-    const goal = typeof body.goal === "string" ? body.goal.trim() : "";
-    if (!project) throw new BadRequest("Say which project, as projectId.");
-    if (!goal) throw new BadRequest("Say what you want done, as goal.");
+    const selected = resolveGoal(board, body.goal, body.project ?? body.projectId);
+    if ("error" in selected) throw new BadRequest(selected.error);
+    if (selected.status !== "open") throw new BadRequest("Reopen this task before drafting steps.");
+    const project = board.projects.find((item) => item.id === selected.projectId)!;
+    const goal = typeof body.prompt === "string" ? body.prompt.trim() : selected.goal;
+    if (!goal) throw new BadRequest("Say what you want done in the task's goal text or as prompt.");
     if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
     const { model = null, thinking = null } = body;
-    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
+    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, as listed by /api/models.");
     if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
     const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
-    const folder = projectFolder(board.workspace, project.directory, sandbox);
+    const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
     if ("error" in folder) {
       sendJson(res, 409, { error: folder.error });
       return true;
     }
-    mkdirSync(folder.path, { recursive: true });
+    if (!project.repo) mkdirSync(folder.path, { recursive: true });
     const abandon = new AbortController();
     res.on("close", () => {
       if (!res.writableEnded) abandon.abort();

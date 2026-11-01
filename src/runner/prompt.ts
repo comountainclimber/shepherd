@@ -1,4 +1,7 @@
+import { workCheckText } from "../model/workCheck";
 import { openIssues } from "../model/stage";
+import { acceptanceItems } from "../model/acceptance";
+import { dependencyOrder } from "../model/outline";
 import type { OrchestrationState, Task } from "../model/types";
 
 export interface UpstreamContext {
@@ -13,6 +16,9 @@ export interface UpstreamContext {
 export interface PromptOptions {
   /** The agent can ask Shepherd for screenshots with $SHEPHERD_LOOK. */
   look?: boolean;
+  done?: boolean;
+  taskBranch?: string;
+  pushed?: { remote: string; branch: string; base: string };
 }
 
 export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
@@ -26,7 +32,18 @@ export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
 const REPORT_LIMIT = 4000;
 
 export function upstreamContext(state: OrchestrationState, task: Task): UpstreamContext[] {
-  return upstreamTasks(state, task).map((item) => {
+  let steps = upstreamTasks(state, task);
+  if (task.pushBeforeRun) {
+    const seen = new Set<string>([task.id]);
+    const visit = (step: Task) => {
+      if (seen.has(step.id) || step.goalId !== task.goalId) return;
+      seen.add(step.id);
+      for (const earlier of upstreamTasks(state, step)) visit(earlier);
+    };
+    for (const step of steps) visit(step);
+    steps = dependencyOrder(state.tasks.filter((step) => step.id !== task.id && seen.has(step.id)), state.dependencies);
+  }
+  return steps.map((item) => {
     const report = item.status === "completed" ? (item.output ?? item.activity) : "";
     const issues = openIssues(item, state.tasks)
       .filter((issue) => issue.stepId !== task.id)
@@ -89,11 +106,24 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     "Work only in the current directory. It is this step's own git worktree, so other steps cannot see or overwrite your changes.",
     "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
+    options.taskBranch ? `This step belongs to task branch ${options.taskBranch}. Accepted work collects there; the project checkout stays untouched.` : "",
+    options.pushed
+      ? `Shepherd has pushed the task branch ${options.pushed.branch} to remote ${options.pushed.remote}. Its base branch is ${options.pushed.base}. You may create or update a merge request (or pull request) from that task branch into its base with glab, gh or your own tools. Use the named remote's repository. Do not commit or push yourself. Finish with the merge request's full URL on its own line.`
+      : "",
     `Task: ${task.name}`,
     `Objective: ${task.objective || task.name}`,
     task.description && task.description !== task.objective ? `Context: ${task.description}` : "",
-    task.acceptance.length ? ["", "Done when:", ...task.acceptance.map((line) => `- ${line}`)].join("\n") : "",
+    task.acceptance.length ? ["", "Done when:", ...acceptanceItems(task.acceptance).map((item) => `${item.number}. ${item.text}${options.done && task.acceptanceMarks?.[item.key] ? ` (You previously marked this as met: ${task.acceptanceMarks[item.key].note})` : ""}`)].join("\n") : "",
+    options.done && task.acceptance.length ? [
+      'As soon as you confirm each Done when item, run node "$SHEPHERD_DONE" ITEM "Short note on how you know", using its number above and a note of at most 500 characters. Mark items as you confirm them, not all at the end.',
+      'If a mark is no longer true, take it back with node "$SHEPHERD_DONE" ITEM --undo. These marks show what you say you have met; Shepherd still decides whether the step is done from its checks.',
+    ].join("\n") : "",
     ...checkLines,
+    ...task.verification.filter((check) => check.kind === "work" && check.state === "failed").map((check) => [
+      "Shepherd checked the work against this step and it failed. Fix the causes in these verdicts:",
+      check.evidence,
+      check.result ? workCheckText(check.result) : "Codex could not complete the work check.",
+    ].join("\n")),
     ...(options.look ? LOOK_LINES : []),
     "",
     inputs.length ? "Earlier steps this one builds on. Their work is already merged into this worktree:" : "",

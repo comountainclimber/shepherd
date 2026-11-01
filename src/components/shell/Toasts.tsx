@@ -49,9 +49,9 @@ export function useTaskToasts() {
     let finished: Map<string, boolean> | null = null;
     const watch = (store: ReturnType<typeof useShepherd.getState>) => {
       if (!store.loaded) return;
-      const { tasks, dependencies, projects } = store.state;
+      const { tasks, dependencies, goals } = store.state;
       const now = new Map(tasks.map((task) => [task.id, stageOf(task, tasks, dependencies)]));
-      const complete = new Map(projects.map((project) => [project.id, progress(tasks.filter((task) => task.projectId === project.id)).complete]));
+      const complete = new Map(goals.map((project) => [project.id, progress(tasks.filter((task) => task.goalId === project.id)).complete]));
       if (seen && finished) {
         const { push } = useToasts.getState();
         for (const task of tasks) {
@@ -65,10 +65,10 @@ export function useTaskToasts() {
           } else if (after === "failed") push({ tone: "failed", title: `${name} failed`, detail: task.blocker ?? "Open it to see why.", taskId: task.id });
           else if (after === "needs-you") push({ tone: "needs-you", title: `${name} needs you`, detail: "Open it to review or finish it.", taskId: task.id });
         }
-        for (const project of projects) {
+        for (const project of goals) {
           if (!complete.get(project.id) || finished.get(project.id) !== false) continue;
-          const last = tasks.filter((task) => task.projectId === project.id).at(-1);
-          if (last) push({ tone: "verified", title: `Every step in ${project.name} is done`, detail: "Merge the result from the bottom of the step list.", taskId: last.id });
+          const last = tasks.filter((task) => task.goalId === project.id).at(-1);
+          if (last) push({ tone: "verified", title: `Every step in ${project.name} is done`, detail: "Merge the result from Task actions in the header.", taskId: last.id });
         }
       }
       seen = now;

@@ -1,14 +1,17 @@
-import { blankTask, nextPosition, slugify } from "../src/model/factory";
+import { blankGoal, blankTask, nextPosition, slugify } from "../src/model/factory";
+import { resolveGoal } from "../src/model/goals";
 import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
 import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
+import { repoPath } from "./projectRepos";
 
 export const MAX_TASKS = 50;
 
 export interface Planned {
   projectId: string;
+  goalId: string;
   tasks: { id: string; name: string }[];
   actions: Action[];
 }
@@ -34,7 +37,10 @@ export function planTasks(state: OrchestrationState, body: unknown, newId: (inde
 
 function plan(state: OrchestrationState, body: unknown, newId: (index: number) => string): Planned {
   const raw = record(body) ?? fail("Send a JSON object.");
-  const project = findProject(state, raw.project);
+  const goal = resolveGoal(state, raw.goal, raw.project);
+  if ("error" in goal) fail(goal.error);
+  if (goal.status !== "open") fail("Reopen this task before adding steps.");
+  const project = state.projects.find((project) => project.id === goal.projectId)!;
   const batch = Array.isArray(raw.tasks);
   const items: unknown[] = batch ? (raw.tasks as unknown[]) : [raw];
   if (!items.length) fail("There are no tasks to add.");
@@ -50,34 +56,39 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const name = text(request.name, field("name")) || fail(`${where} needs a name.`);
     const runner = runnerFor(request.runner, field("runner"));
     const checkCommand = text(request.checkCommand, field("checkCommand"));
+    const workCheck = flag(request.workCheck, field("workCheck"), false);
     const review = flag(request.review, field("review"), false);
     const autoRun = flag(request.autoRun, field("autoRun"), false);
     const independent = flag(request.independent, field("independent"), false);
+    const pushBeforeRun = flag(request.pushBeforeRun, field("pushBeforeRun"), false);
     const model = text(request.model, field("model"));
-    if (model && !isModelId(model)) fail(`${field("model")} is not a model name, such as gpt-6-astra or opus.`);
+    if (model && !isModelId(model)) fail(`${field("model")} is not a model name, as listed by /api/models.`);
     const effort = text(request.thinking, field("thinking"));
     if (effort && !isEffort(effort)) fail(`${field("thinking")} must be one of: ${EFFORTS.join(", ")}.`);
-    if (runner === "human" && (autoRun || independent || review || model || effort)) {
-      fail(`${where} is done by a person, so autoRun, independent, review, model and thinking do not apply to it.`);
+    if (runner === "human" && (autoRun || independent || pushBeforeRun || workCheck || review || model || effort)) {
+      fail(`${where} is done by a person, so autoRun, independent, pushBeforeRun, workCheck, review, model and thinking do not apply to it.`);
     }
-    const dependsOn = dependencies(scratch, project.id, request.dependsOn, where, field("dependsOn"));
+    const dependsOn = dependencies(scratch, goal.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
     const task = {
       ...blankTask({
         id,
         projectId: project.id,
+        goalId: goal.id,
         name,
         objective: text(request.objective, field("objective")) || name,
         description: text(request.description, field("description")),
         acceptance: lines(request.acceptance, field("acceptance")),
         checkCommand,
         review,
+        workCheck,
         autoRun,
         independent,
+        pushBeforeRun,
         runner,
         agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
         worktree: freeWorktree(scratch, project.id, name),
-        position: nextPosition(scratch.tasks, project.id, dependsOn.map((dep) => dep.source)),
+        position: nextPosition(scratch.tasks, goal.id, dependsOn.map((dep) => dep.source)),
       }),
       ...(model ? { model } : {}),
       ...(effort ? { effort: effort as Effort } : {}),
@@ -87,7 +98,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     actions.push(action);
     tasks.push({ id, name });
   });
-  return { projectId: project.id, tasks, actions };
+  return { projectId: project.id, goalId: goal.id, tasks, actions };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -113,11 +124,14 @@ export function planProject(state: OrchestrationState, body: unknown, id: string
     const name = text(raw.name, "name") || fail("The project needs a name.");
     const taken = state.projects.find((project) => project.name.toLowerCase() === name.toLowerCase());
     if (taken) fail(`There is already a project named ${taken.name} (${taken.id}).`);
-    const directory = text(raw.directory, "directory") || projectDirectory(name, state.projects);
-    if (directory.split("/").some((part) => !part || part === "." || part === "..")) {
-      fail("directory must be a folder inside the workspace, without . or .. in the path.");
+    if (raw.directory !== undefined) fail("Use repo for an existing repository's absolute path. Omit it for a new folder in the workspace.");
+    const repo = text(raw.repo, "repo");
+    if (raw.repo !== undefined && !repo) fail("repo must name an existing repository by its absolute path.");
+    let absolute: string | undefined;
+    if (repo) {
+      try { absolute = repoPath(repo); } catch (error) { fail((error as Error).message); }
     }
-    const project: Project = { id, name, summary: text(raw.summary, "summary"), directory };
+    const project: Project = { id, name, summary: text(raw.summary, "summary"), ...(absolute ? { repo: absolute } : { directory: projectDirectory(name, state.projects) }) };
     return { project, action: { type: "createProject", project } };
   } catch (error) {
     if (error instanceof Invalid) return { error: error.message };
@@ -159,14 +173,14 @@ function agentFor(value: unknown, field: string): string {
 
 function dependencies(
   state: OrchestrationState,
-  projectId: string,
+  goalId: string,
   value: unknown,
   where: string,
   field: string,
 ): { source: string; gate: Gate }[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) fail(`${field} must be a list.`);
-  const tasks = state.tasks.filter((task) => task.projectId === projectId);
+  const tasks = state.tasks.filter((task) => task.goalId === goalId);
   const found = new Map<string, Gate>();
   for (const entry of value) {
     const spec: Record<string, unknown> =
@@ -177,7 +191,7 @@ function dependencies(
     const byId = tasks.find((task) => task.id === key);
     const byName = byId ? [byId] : tasks.filter((task) => task.name.toLowerCase() === key.toLowerCase());
     if (byName.length > 1) fail(`${where} depends on ${key}, but more than one task has that name. Use its id.`);
-    const source = byName[0] ?? fail(`${where} depends on ${key}, which is not a task in this project.`);
+    const source = byName[0] ?? fail(`${where} depends on ${key}, which is not a step in this task.`);
     found.set(source.id, gate as Gate);
   }
   return [...found].map(([source, gate]) => ({ source, gate }));
@@ -198,11 +212,14 @@ export function boardSummary(state: OrchestrationState) {
       id: project.id,
       name: project.name,
       directory: project.directory ?? null,
+      repo: project.repo ?? null,
+      goals: state.goals.filter((goal) => goal.projectId === project.id),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)
         .map((task) => ({
           id: task.id,
           name: task.name,
+          goalId: task.goalId,
           status: task.status,
           runner: task.runner,
           agent: task.runner === "human" ? null : (agentById(task.agentId)?.name ?? null),
@@ -212,4 +229,17 @@ export function boardSummary(state: OrchestrationState) {
         })),
     })),
   };
+}
+
+export function planGoal(state: OrchestrationState, body: unknown, id: string) {
+  try {
+    const raw = record(body) ?? fail("Send a JSON object.");
+    const project = findProject(state, raw.project);
+    const name = text(raw.name, "name") || fail("The task needs a name.");
+    const goal = blankGoal(project.id, name, id, text(raw.goal, "goal"));
+    return { goal, action: { type: "createGoal", goal } as Action };
+  } catch (error) {
+    if (error instanceof Invalid) return { error: error.message };
+    throw error;
+  }
 }

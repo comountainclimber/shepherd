@@ -26,7 +26,7 @@ import {
 import { cx } from "../model/format";
 import { STAGE_LABEL, type AssigneeKind, type Stage } from "../model/stage";
 import type { Gate, TaskStatus, VerificationCheck, VerificationState } from "../model/types";
-import { GATE_LABEL, STATUS_LABEL } from "../model/types";
+import { CHECK_LABEL, GATE_LABEL, STATUS_LABEL } from "../model/types";
 
 export const statusBg: Record<TaskStatus, string> = {
   queued: "bg-queued",
@@ -140,7 +140,7 @@ export function CheckDots({ checks }: { checks: VerificationCheck[] }) {
       {checks.map((check) => (
         <span
           key={check.id}
-          title={`${check.kind === "review" ? "Your review" : "Check"}: ${check.running ? "running" : check.state}`}
+          title={`${check.kind === "review" ? "Your review" : CHECK_LABEL[check.kind]}: ${check.running ? "running" : check.state}`}
           className={cx(
             "inline-block h-2 w-2 rounded-full",
             check.running

@@ -5,3 +5,5 @@ dist
 *.tsbuildinfo
 .agent-sandbox
 .shepherd
+dist-server
+*.tgz

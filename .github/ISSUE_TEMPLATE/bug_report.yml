@@ -1,0 +1,42 @@
+name: Bug report
+description: Report behavior that does not work as expected.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a vulnerability, follow SECURITY.md and report privately.
+        Remove tokens, personal paths, credentials and private logs from your report.
+  - type: input
+    id: version
+    attributes:
+      label: Shepherd version
+      description: The package version, or commit if running from source.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node version, browser and relevant agent CLI version.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use a small, neutral example and include how you started Shepherd.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include redacted errors or screenshots if useful.
+    validations:
+      required: true

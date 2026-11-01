@@ -22,7 +22,7 @@ export function reviewPending(task: Task): VerificationCheck | undefined {
 }
 
 export function failedCheck(task: Task): VerificationCheck | undefined {
-  return task.verification.find((check) => check.kind === "command" && check.state === "failed");
+  return task.verification.find((check) => check.kind !== "review" && check.state === "failed");
 }
 
 /** The upstream tasks whose gates into this one are still closed. */
@@ -68,6 +68,7 @@ export function stageHint(task: Task, stage: Stage, tasks: Task[], deps: Depende
     case "needs-you":
       return reviewPending(task) && task.status === "completed" ? "Ready for your review" : "Your task";
     case "verified": {
+      if (task.blocker) return task.blocker;
       const open = openIssues(task, tasks).length;
       const done = task.git?.merged
         ? `Merged into ${task.git.merged.into}`

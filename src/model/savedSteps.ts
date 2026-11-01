@@ -56,6 +56,26 @@ export const STARTERS: SavedStep[] = [
     starter: true,
     steps: [{ name: "Check it yourself", runner: "human", agentId: null, objective: "", description: "", acceptance: [], depth: 0 }],
   },
+  {
+    id: "starter-merge-request",
+    name: "Open a merge request",
+    version: 1,
+    updatedAt: 0,
+    starter: true,
+    steps: [
+      {
+        name: "Open a merge request",
+        runner: "agent",
+        agentId: "agent-codex",
+        pushBeforeRun: true,
+        objective:
+          "Do not change any files. Open or update a merge request for the task branch Shepherd has pushed, targeting the task's base branch. Read the named remote's URL to determine whether it is GitLab or GitHub, including self-hosted instances. Use glab, gh or your own tools for that remote's repository. Look for an existing open merge request from this source branch into this base and update it rather than making a duplicate. Write the title and description from the earlier steps' reports and the task's diff, including what changed and how it was verified. Follow this repository's merge request conventions, templates and any applicable skills. Do not commit or push. Finish with the merge request's full URL on its own line. If you cannot create or update it, report the error plainly and do not claim success.",
+        description: "Add this as the task's last step, after its work and checks.",
+        acceptance: [],
+        depth: 0,
+      },
+    ],
+  },
 ];
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -85,8 +105,10 @@ function item(raw: unknown): SavedStepItem | null {
     description: text(step.description, 20_000),
     acceptance,
     ...(checkCommand ? { checkCommand } : {}),
+    ...(agent && step.workCheck === true ? { workCheck: true } : {}),
     ...(agent && step.review === true ? { review: true } : {}),
     ...(agent && step.independent === true ? { independent: true } : {}),
+    ...(agent && step.pushBeforeRun === true ? { pushBeforeRun: true } : {}),
     depth: Number.isInteger(step.depth) ? Math.max(0, Math.min(step.depth as number, MAX_DEPTH)) : 0,
   };
 }
@@ -129,15 +151,17 @@ export function toSavedItem(task: Task, depth: number, keepChecklist = true): Sa
     description: task.description,
     acceptance: task.acceptance.filter((line) => line.trim()),
     ...(checkCommand ? { checkCommand } : {}),
+    ...(agent && task.verification.some((check) => check.kind === "work") ? { workCheck: true } : {}),
     ...(agent && task.verification.some((check) => check.kind === "review") ? { review: true } : {}),
     ...(agent && task.independent ? { independent: true } : {}),
+    ...(agent && task.pushBeforeRun ? { pushBeforeRun: true } : {}),
     depth,
   };
 }
 
 /** The steps you can save along with one: those side by side with it, and those under it. */
 export function relatives(state: OrchestrationState, taskId: string): { siblings: string[]; children: string[] } {
-  const items = outlineOf(state, state.tasks.find((task) => task.id === taskId)?.projectId ?? "");
+  const items = outlineOf(state, state.tasks.find((task) => task.id === taskId)?.goalId ?? "");
   const index = items.findIndex((entry) => entry.id === taskId);
   if (index < 0) return { siblings: [], children: [] };
   const depth = items[index]!.depth;
@@ -162,7 +186,7 @@ export function blockOf(state: OrchestrationState, ids: string[], checklistFor: 
   const first = state.tasks.find((task) => task.id === ids[0]);
   if (!first) return [];
   const wanted = new Set(ids);
-  const items = outlineOf(state, first.projectId).filter((entry) => wanted.has(entry.id));
+  const items = outlineOf(state, first.goalId).filter((entry) => wanted.has(entry.id));
   if (!items.length) return [];
   const base = Math.min(...items.map((entry) => entry.depth));
   const sideBySide = base > 0 && items.filter((entry) => entry.depth === base).length > 1;
@@ -173,8 +197,8 @@ export function blockOf(state: OrchestrationState, ids: string[], checklistFor: 
 }
 
 /** Where a saved step goes when added after a row: past that row's own sub-steps, at its indent. */
-export function placeAfter(state: OrchestrationState, projectId: string, taskId: string | null): { after: string | null; depth: number } {
-  const items = outlineOf(state, projectId);
+export function placeAfter(state: OrchestrationState, goalId: string, taskId: string | null): { after: string | null; depth: number } {
+  const items = outlineOf(state, goalId);
   const index = taskId ? items.findIndex((entry) => entry.id === taskId) : -1;
   if (index < 0) return { after: items.at(-1)?.id ?? null, depth: 0 };
   return { after: items[subtreeEnd(items, index) - 1]!.id, depth: items[index]!.depth };
@@ -206,7 +230,9 @@ export function fromSaved(
       acceptance: entry.acceptance,
       checkCommand: entry.checkCommand,
       review: entry.review,
+      workCheck: entry.workCheck,
       independent: entry.independent,
+      pushBeforeRun: entry.pushBeforeRun,
       runner: entry.runner,
       agentId: entry.agentId,
       worktree: id,

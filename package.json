@@ -1,23 +1,24 @@
 {
-  "name": "shepherd",
-  "private": true,
+  "name": "shepherd-agents",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "test": "vitest run"
+    "dev": "node bin/check-node.mjs && vite",
+    "demo": "npm run build && node scripts/demo.mjs",
+    "typecheck": "tsc -b",
+    "build": "tsc --noEmit && vite build && node scripts/build-server.mjs",
+    "test": "vitest run",
+    "start": "node bin/shepherd.mjs",
+    "prepack": "npm run build"
   },
-  "dependencies": {
+  "devDependencies": {
     "@fontsource-variable/geist": "^5.2.6",
     "@fontsource-variable/geist-mono": "^5.2.6",
     "@xyflow/react": "^12.8.6",
     "lucide-react": "^0.545.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "zustand": "^5.0.8"
-  },
-  "devDependencies": {
+    "zustand": "^5.0.8",
     "@tailwindcss/vite": "^4.1.14",
     "@types/node": "^26.6.6",
     "@types/react": "^19.1.16",
@@ -27,5 +28,35 @@
     "typescript": "^5.9.3",
     "vite": "^7.1.9",
     "vitest": "^3.2.4"
-  }
+  },
+  "description": "Run multi-step coding-agent work locally with Codex and Claude Code.",
+  "keywords": [
+    "coding-agents",
+    "codex",
+    "claude-code",
+    "local-first",
+    "workflow",
+    "git-worktrees"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OWNER/shepherd"
+  },
+  "homepage": "https://github.com/OWNER/shepherd#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/shepherd/issues"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "bin": {
+    "shepherd": "bin/shepherd.mjs"
+  },
+  "files": [
+    "bin/shepherd.mjs",
+    "bin/check-node.mjs",
+    "dist/",
+    "dist-server/"
+  ]
 }

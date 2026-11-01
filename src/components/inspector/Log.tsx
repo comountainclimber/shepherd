@@ -14,7 +14,7 @@ export function Log() {
   const [note, setNote] = useState("");
   const human = task.runner === "human";
   const git = task.git;
-  const folder = human || !git ? [workspacePath() || ".agent-sandbox", project?.directory].filter(Boolean).join("/") : git.folder;
+  const folder = git?.folder ?? project?.repo ?? [workspacePath() || ".agent-sandbox", project?.directory].filter(Boolean).join("/");
 
   return (
     <div className="space-y-3">
@@ -82,7 +82,7 @@ export function Log() {
           <Meta label="Started" value={formatClock(task.startedAt)} />
           <Meta label="Last run took" value={task.elapsedMs ? formatDuration(task.elapsedMs) : "—"} />
         </div>
-        <div className="mt-3 text-[11px] font-medium text-faint">{human || !git ? "Project folder" : "Worktree"}</div>
+        <div className="mt-3 text-[11px] font-medium text-faint">{git ? "Worktree" : "Project folder"}</div>
         <div className="break-all font-mono text-[11px] leading-5 text-text">{folder}/</div>
       </Card>
     </div>
