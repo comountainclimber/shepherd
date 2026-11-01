@@ -46,7 +46,7 @@ describe("look requests", () => {
 describe("screenshots", () => {
   const png = Buffer.from("not really a png");
 
-  it("saves each screenshot in the step's folder, records it, and keeps only the latest", async () => {
+  it("keeps the latest screenshots on the board and retains earlier timeline thumbnails on disk", async () => {
     const { engine, root } = board();
     let shots = 0;
     const take = createLooks(engine, root, async (request: LookRequest) => {
@@ -65,7 +65,9 @@ describe("screenshots", () => {
     for (let index = 0; index < LOOK_LIMIT + 2; index += 1) await take({ taskId: "step-1", url: "http://localhost:8130/" });
     const kept = engine.get().tasks[0]!.looks!.map((item) => item.file);
     expect(kept).toHaveLength(LOOK_LIMIT);
-    expect(readdirSync(path.join(root, "step-1")).sort()).toEqual([...kept].sort());
+    const timelineFiles = engine.timelines.read("step-1").entries.flatMap((entry) => entry.kind === "screenshot" ? [entry.look.file] : []);
+    expect(timelineFiles).toHaveLength(LOOK_LIMIT + 3);
+    expect(readdirSync(path.join(root, "step-1")).sort()).toEqual(timelineFiles.sort());
   });
 
   it("refuses an unknown step, an unsafe id, and pages elsewhere, before starting a browser", async () => {

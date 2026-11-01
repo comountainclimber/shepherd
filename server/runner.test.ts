@@ -100,6 +100,51 @@ function finishedTask(): Task {
 }
 
 describe("scheduler", () => {
+  it("records a stopped run without losing its progress notes", async () => {
+    const board = outlined("Build");
+    const id = board.tasks[0].id;
+    const server = planServer(board, undefined, FAKE_AGENT + '\nsetInterval(() => {}, 1000);');
+    try {
+      await server.runner.handle({ command: "run", taskId: id });
+      await expect.poll(() => server.engine.timelines.read(id).entries.some((entry) => entry.kind === "note"), { timeout: 10000 }).toBe(true);
+      await server.runner.handle({ command: "stop", taskId: id });
+      await server.runner.idle();
+      expect(server.engine.timelines.read(id).entries.at(-1)).toMatchObject({ kind: "run_ended", outcome: "stopped" });
+      expect(server.engine.get().tasks[0].status).toBe("blocked");
+    } finally { server.runner.close(); server.engine.close(); }
+  });
+
+  for (const provider of ["codex", "claude"] as const) it(`records ${provider} streams and checks outside the board, grouped by run`, async () => {
+    let board = outlined("Build");
+    const id = board.tasks[0].id;
+    board = reducer(board, { type: "setCheckCommand", id, command: "test -f build.txt" });
+    if (provider === "claude") board = reducer(board, { type: "reassign", id, agentId: "agent-claude", runner: "agent" });
+    const stream = provider === "codex" ? `
+say({ type: "item.completed", item: { type: "agent_message", text: "Unique progress note" } });
+say({ type: "item.started", item: { type: "command_execution", id: "cmd", command: "echo build\\necho hidden" } });
+say({ type: "item.completed", item: { type: "command_execution", id: "cmd", command: "echo build\\necho hidden", exit_code: 0 } });
+` : `
+say({ type: "assistant", message: { content: [{ type: "text", text: "Unique progress note" }, { type: "tool_use", id: "cmd", name: "Bash", input: { command: "echo build\\necho hidden" } }] } });
+say({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "cmd", is_error: false }] } });
+`;
+    const server = planServer(board, undefined, FAKE_AGENT.replace('say({ type: "thread.started"', `${stream}\nsay({ type: "thread.started"`));
+    try {
+      await server.runner.handle({ command: "run", taskId: id });
+      await server.runner.idle();
+      const first = server.engine.timelines.read(id);
+      expect(first.entries.map((entry) => entry.kind)).toEqual(expect.arrayContaining(["run_started", "note", "command", "command_end", "files", "report", "run_ended", "check_started", "check_ended"]));
+      expect(new Set(first.entries.map((entry) => entry.run)).size).toBe(1);
+      expect(first.entries.find((entry) => entry.kind === "command")).toMatchObject({ text: "echo build" });
+      expect(first.entries.find((entry) => entry.kind === "check_ended")).toMatchObject({ ok: true });
+      expect(JSON.stringify(server.engine.get())).not.toMatch(/Unique progress note|echo hidden|echo build/);
+      expect(server.engine.get().tasks[0].output).toContain("Report from build");
+      await server.runner.handle({ command: "run", taskId: id });
+      await server.runner.idle();
+      expect(new Set(server.engine.timelines.read(id).entries.map((entry) => entry.run)).size).toBe(2);
+      expect(server.engine.timelines.read(id, first.cursor).entries[0]).toMatchObject({ kind: "run_started", text: "Resumed" });
+    } finally { server.runner.close(); server.engine.close(); }
+  });
+
   it("runs in an external repository's new branch without changing its checkout or existing branches", async () => {
     const repo = mkdtempSync(path.join(tmpdir(), "shepherd-existing-"));
     gitOut(repo, "init", "-q", "-b", "my-main");
@@ -448,6 +493,7 @@ describe("task work collection", () => {
       engine.dispatch({ type: "setCheck", taskId: first().id, checkId: "review-build", state: "passed" });
       await runner.idle();
       expect(first().blocker).toContain("Commit or stash");
+      expect(engine.timelines.read(first().id).entries.filter((entry) => entry.kind === "wait")).toMatchObject([{ text: expect.stringContaining("uncommitted changes") }]);
       expect(engine.get().goals[0].blocker).toBe(first().blocker);
       expect(first().git?.merged).toBeUndefined();
       expect(engine.get().tasks[1].status).toBe("queued");

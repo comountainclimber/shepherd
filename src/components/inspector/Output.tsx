@@ -9,6 +9,7 @@ import { useShepherd } from "../../store";
 import { Button, Card } from "../ui";
 import { KnownIssues } from "./KnownIssues";
 import { useSelectedTask } from "./useSelectedTask";
+import { Timeline } from "./Timeline";
 
 /** What the step produced: the agent's report, the files it changed, and merging them. */
 export function Output() {
@@ -16,6 +17,7 @@ export function Output() {
   const done = isFullyVerified(task);
   return (
     <div className="space-y-3">
+      <Timeline key={`timeline-${task.id}`} task={task} />
       <Report task={task} />
       <Issues task={task} />
       <Looks task={task} />

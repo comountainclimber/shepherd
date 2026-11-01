@@ -5,6 +5,9 @@ import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
 import type { Action, OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
+import { formatDuration } from "../src/model/format";
+import { commandLine } from "../src/runner/timeline";
+import { createTimelines, type Timelines } from "./timelines";
 
 /** Edits a tab may send. Run lifecycle actions (running, checks, merges) only come from the server. */
 export const TAB_ACTIONS = new Set<Action["type"]>([
@@ -45,6 +48,7 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
 const EDITABLE = new Set(["name", "objective", "description", "acceptance", "autoRun", "independent", "pushBeforeRun"]);
 
 export interface Engine {
+  timelines: Timelines;
   get(): OrchestrationState;
   version(): number;
   dispatch(action: Action): OrchestrationState;
@@ -61,6 +65,15 @@ const BACKUP_LIMIT = 30;
 
 export function createEngine(file: string, clock: () => number = () => Date.now()): Engine {
   let state = interruptWork(load(file));
+  const timelines = createTimelines(path.join(path.dirname(file), "timelines"), clock);
+  const checkRuns = new Map<string, number>();
+  for (const task of state.tasks) {
+    const entries = timelines.read(task.id).entries;
+    const lastRun = [...entries].reverse().find((entry) => entry.kind === "run_started");
+    if (lastRun && !entries.some((entry) => entry.run === lastRun.run && entry.kind === "run_ended")) {
+      timelines.append(task.id, { kind: "run_ended", outcome: "stopped", text: "Stopped: Shepherd restarted" });
+    }
+  }
   let version = 1;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastBackupAt = 0;
@@ -79,6 +92,7 @@ export function createEngine(file: string, clock: () => number = () => Date.now(
   write();
 
   return {
+    timelines,
     get: () => state,
     version: () => version,
     dispatch(action) {
@@ -86,6 +100,23 @@ export function createEngine(file: string, clock: () => number = () => Date.now(
       const input = { ...state, now: clock() };
       const next = reducer(input, action);
       if (next === input) return state;
+      for (const task of state.tasks) if (!next.tasks.some((item) => item.id === task.id)) timelines.delete(task.id);
+      if (action.type === "startCheck") {
+        const task = next.tasks.find((item) => item.id === action.taskId);
+        if (task) checkRuns.set(task.id, timelines.append(task.id, { kind: "check_started", text: commandLine(task.checkCommand ?? "Check") }).run);
+      }
+      if (action.type === "recordCheck") {
+        const run = action.run;
+        const ok = run.exitCode === 0 && !run.timedOut;
+        const timelineRun = checkRuns.get(action.taskId);
+        timelines.append(action.taskId, { kind: "check_ended", ok, text: `${commandLine(run.command)}: ${run.timedOut ? "Timed out" : run.exitCode === null ? "Failed" : `Exited ${run.exitCode}`} in ${formatDuration(run.durationMs)}`, detail: run.output }, timelineRun);
+        for (const step of run.steps ?? []) timelines.append(action.taskId, { kind: "check_ended", ok: step.ok, text: `${step.name}: ${step.ok ? "Passed" : "Failed"}${step.detail ? ` — ${step.detail}` : ""}` }, timelineRun);
+        checkRuns.delete(action.taskId);
+      }
+      if (action.type === "setCheck" && action.state !== "pending") {
+        const check = next.tasks.find((task) => task.id === action.taskId)?.verification.find((item) => item.id === action.checkId);
+        if (check) timelines.append(action.taskId, { kind: "check_ended", ok: check.state === "passed", text: `${check.kind === "review" ? "Your review" : "Check"}: ${check.state === "passed" ? "Passed" : "Failed"}`, detail: check.evidence });
+      }
       state = next;
       version += 1;
       timer ??= setTimeout(write, WRITE_DELAY_MS);

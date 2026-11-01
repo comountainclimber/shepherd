@@ -173,6 +173,18 @@ async function route(
     sendJson(res, 200, boardSummary(engine.get()));
     return true;
   }
+  const timeline = /^\/api\/tasks\/([\w.-]+)\/timeline$/.exec(pathname);
+  if (timeline && method === "GET") {
+    if (!engine.get().tasks.some((task) => task.id === timeline[1])) {
+      sendJson(res, 404, { error: "There is no such step." });
+      return true;
+    }
+    const after = Number(url.searchParams.get("after") ?? 0);
+    if (!Number.isSafeInteger(after) || after < 0) throw new BadRequest("after must be an entry id, starting at 0.");
+    res.setHeader("Cache-Control", "no-store");
+    sendJson(res, 200, engine.timelines.read(timeline[1], after));
+    return true;
+  }
   if (pathname === "/api/tasks" && method === "POST") {
     const id = stamp();
     const planned = planTasks(engine.get(), await readJson(req), (index) => `task-api-${id}-${index + 1}`);

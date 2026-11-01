@@ -79,6 +79,8 @@ export function createLooks(engine: Engine, root: string, shoot: Shoot = (reques
     if (!SAFE_ID.test(taskId) || !engine.get().tasks.some((task) => task.id === taskId)) {
       throw new LookRefused(taskId ? `There is no step ${taskId}.` : "Say which step is looking, as taskId.");
     }
+    const runs = engine.timelines.read(taskId).runs ?? [];
+    const timelineRun = runs.length ? Math.max(...runs) : undefined;
     const request = lookRequest(body);
     let result: LookResult;
     try {
@@ -87,13 +89,16 @@ export function createLooks(engine: Engine, root: string, shoot: Shoot = (reques
       if (error instanceof LookError) throw new LookRefused(error.message);
       throw error;
     }
+    if (!engine.get().tasks.some((task) => task.id === taskId)) throw new LookRefused("This step was deleted while Shepherd was looking.");
     const dir = path.join(root, taskId);
     mkdirSync(dir, { recursive: true });
     const file = `${Date.now().toString(36)}-${result.width}.png`;
     writeFileSync(path.join(dir, file), result.png);
     const record: Look = { file, url: result.url, width: result.width, height: result.height, at: Date.now(), errors: result.errors };
+    engine.timelines.append(taskId, { kind: "screenshot", look: record }, timelineRun);
     engine.dispatch({ type: "looked", id: taskId, look: record });
     const kept = new Set((engine.get().tasks.find((task) => task.id === taskId)?.looks ?? []).map((item) => item.file));
+    for (const entry of engine.timelines.read(taskId).entries) if (entry.kind === "screenshot") kept.add(entry.look.file);
     for (const name of readdirSync(dir)) if (name.endsWith(".png") && !kept.has(name)) rmSync(path.join(dir, name), { force: true });
     return {
       path: path.join(dir, file),

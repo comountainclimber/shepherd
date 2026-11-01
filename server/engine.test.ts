@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -29,6 +29,39 @@ it("keeps the exact old board beside the migrated file before writing, including
 });
 
 describe("task actions from tabs", () => {
+  it("keeps a late check with the run that started it and records review results", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "shepherd-check-timeline-"));
+    const engine = createEngine(path.join(root, "state.json"));
+    const task = blankTask({ id: "step", projectId: "proj-local", name: "Build", objective: "", agentId: "agent-codex", position: { x: 0, y: 0 }, checkCommand: "npm test", review: true });
+    engine.dispatch({ type: "createTask", task });
+    const first = engine.timelines.append(task.id, { kind: "run_started", text: "Started" });
+    engine.dispatch({ type: "startCheck", taskId: task.id });
+    engine.timelines.append(task.id, { kind: "run_started", text: "Resumed" });
+    engine.dispatch({ type: "recordCheck", taskId: task.id, run: { command: "npm test", exitCode: 1, output: "Failed test", durationMs: 30 } });
+    expect(engine.timelines.read(task.id).entries.at(-1)).toMatchObject({ kind: "check_ended", run: first.run, ok: false, detail: "Failed test" });
+    const review = task.verification.find((check) => check.kind === "review")!;
+    engine.dispatch({ type: "setCheck", taskId: task.id, checkId: review.id, state: "passed" });
+    expect(engine.timelines.read(task.id).entries.at(-1)).toMatchObject({ kind: "check_ended", ok: true, text: "Your review: Passed" });
+    engine.close();
+  });
+
+  it("ends interrupted timelines on restart without putting them on the board, and deletes them with their task", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "shepherd-timeline-engine-"));
+    const file = path.join(root, "state.json");
+    const engine = createEngine(file);
+    const task = blankTask({ id: "step", projectId: "proj-local", name: "Build", objective: "", agentId: "agent-codex", position: { x: 0, y: 0 } });
+    engine.dispatch({ type: "createTask", task });
+    engine.timelines.append(task.id, { kind: "run_started", text: "Started" });
+    engine.timelines.append(task.id, { kind: "note", text: "A note only in the timeline" });
+    engine.close();
+    const fresh = createEngine(file);
+    expect(fresh.timelines.read(task.id).entries.at(-1)).toMatchObject({ kind: "run_ended", outcome: "stopped", text: "Stopped: Shepherd restarted" });
+    expect(readFileSync(file, "utf8")).not.toContain("A note only in the timeline");
+    fresh.dispatch({ type: "deleteGoal", id: task.goalId });
+    expect(existsSync(path.join(root, "timelines", "step.jsonl"))).toBe(false);
+    fresh.close();
+  });
+
   it("allows task lifecycle edits but refuses moving or starting a step by editing its task", () => {
     const board = workspace(1);
     for (const type of ["finishGoal", "archiveGoal", "reopenGoal", "deleteGoal"]) {

@@ -46,6 +46,22 @@ async function close(http: Server, runner: Runner, engine: Engine) {
 }
 
 describe("goal API", () => {
+  it("serves a step timeline incrementally and removes it with the step", async () => {
+    const { request, engine, root } = await server();
+    const created = await request("tasks", { goal: "goal-proj-local", name: "Timeline", runner: "human" });
+    const id = created.body.tasks[0].id;
+    expect(await request(`tasks/${id}/timeline`)).toMatchObject({ status: 200, body: { entries: [], cursor: 0 } });
+    engine.timelines.append(id, { kind: "run_started", text: "Started" });
+    engine.timelines.append(id, { kind: "note", text: "Working" });
+    expect(await request(`tasks/${id}/timeline?after=1`)).toMatchObject({ status: 200, body: { entries: [{ id: 2, text: "Working" }], cursor: 2 } });
+    expect((await request(`tasks/${id}/timeline?after=2`)).body.entries).toEqual([]);
+    expect((await request(`tasks/${id}/timeline?after=-1`)).status).toBe(400);
+    expect((await request("tasks/missing/timeline")).status).toBe(404);
+    expect(existsSync(path.join(root, "timelines", `${id}.jsonl`))).toBe(true);
+    expect((await request("actions", { action: { type: "deleteTask", id } })).status).toBe(200);
+    expect(existsSync(path.join(root, "timelines", `${id}.jsonl`))).toBe(false);
+  });
+
   it("opens the chosen task folder through the goal endpoint and reports refused launches", async () => {
     const { request, engine } = await server();
     const launch = vi.spyOn(folders, "openTaskFolder").mockResolvedValue({ ok: true });

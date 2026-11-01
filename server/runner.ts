@@ -10,7 +10,7 @@ import { dependencyOrder } from "../src/model/outline";
 import type { Action, CheckRun, GateStep, OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified, unmetDependencies } from "../src/model/verify";
 import { agentById } from "../src/model/workspace";
-import { parseAgentLine } from "../src/runner/parse";
+import { createTimelineParser, parseAgentLine } from "../src/runner/parse";
 import { taskPrompt, upstreamContext, upstreamTasks } from "../src/runner/prompt";
 import type { Engine } from "./engine";
 import {
@@ -85,6 +85,8 @@ export interface Runner {
 }
 
 interface Attempt {
+  timelineRun: number;
+  ended?: boolean;
   stopped: boolean;
   child: ChildProcess | null;
   scheduled: boolean;
@@ -113,7 +115,15 @@ export function createRunner(options: RunnerOptions): Runner {
     work.add(settled);
   };
 
+  function endRun(taskId: string, outcome: "completed" | "failed" | "stopped", text: string) {
+    const attempt = runs.get(taskId);
+    if (!attempt || attempt.ended || !find(taskId)) return;
+    engine.timelines.append(taskId, { kind: "run_ended", outcome, text }, attempt.timelineRun);
+    attempt.ended = true;
+  }
+
   function fail(taskId: string, message: string): string {
+    endRun(taskId, "failed", `Failed: ${message}`);
     dispatch({ type: "updateTask", id: taskId, patch: { blocker: message, activity: message } });
     dispatch({ type: "setStatus", id: taskId, status: "failed" });
     return message;
@@ -126,6 +136,7 @@ export function createRunner(options: RunnerOptions): Runner {
   }
 
   function finish(taskId: string, summary: string) {
+    endRun(taskId, "completed", "Agent finished");
     dispatch({ type: "setStatus", id: taskId, status: "completed" });
     dispatch({ type: "updateTask", id: taskId, patch: { activity: summary } });
   }
@@ -160,6 +171,7 @@ export function createRunner(options: RunnerOptions): Runner {
   function kill(taskId: string) {
     const attempt = runs.get(taskId);
     if (!attempt) return;
+    endRun(taskId, "stopped", "Stopped");
     attempt.stopped = true;
     if (attempt.child) killGroup(attempt.child);
     runs.delete(taskId);
@@ -171,7 +183,9 @@ export function createRunner(options: RunnerOptions): Runner {
     if (task.runner === "human") return "A person does this task. Mark it complete when it is done.";
     if (closed()) return "Shepherd is restarting. Try again in a moment.";
     kill(taskId);
-    const attempt: Attempt = { stopped: false, child: null, scheduled: !manual };
+    const failedCheck = task.verification.some((check) => check.state === "failed" || (check.kind === "command" && check.exitCode !== undefined && check.exitCode !== 0));
+    const timelineRun = engine.timelines.append(taskId, { kind: "run_started", text: failedCheck ? "Resumed after a failed check" : task.sessionId ? "Resumed" : "Started" }).run;
+    const attempt: Attempt = { timelineRun, stopped: false, child: null, scheduled: !manual };
     runs.set(taskId, attempt);
     try {
       // Refuse a missing remote before collecting work or creating any git branches.
@@ -193,6 +207,7 @@ export function createRunner(options: RunnerOptions): Runner {
     } catch (error) {
       return attempt.stopped ? null : fail(taskId, `Shepherd hit an error running this task: ${message(error)}`);
     } finally {
+      if (!attempt.ended && !attempt.stopped) endRun(taskId, "failed", `Could not run: ${find(taskId)?.blocker ?? "The step could not start"}`);
       if (runs.get(taskId) === attempt) runs.delete(taskId);
       schedule();
     }
@@ -248,6 +263,8 @@ export function createRunner(options: RunnerOptions): Runner {
     if (merged.length) dispatch({ type: "updateTask", id: taskId, patch: { activity: `Merged ${merged.join(", ")} into ${tree.branch}` } });
 
     const latest = find(taskId)!;
+    const runStartHead = await head(tree.folder);
+    if (attempt.stopped || !find(taskId)) return null;
     const tools = lookEnv(taskId);
     const goal = state().goals.find((item) => item.id === latest.goalId)!;
     const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), {
@@ -270,21 +287,30 @@ export function createRunner(options: RunnerOptions): Runner {
     let report = "";
     let result: { ok: boolean; summary: string } | null = null;
     let sessionId = latest.sessionId ?? null;
+    const parseTimelineLine = createTimelineParser();
     const consume = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? "";
       for (const line of lines) {
+        if (attempt.stopped) continue;
+        const events = parseTimelineLine(line);
+        for (const event of events) engine.timelines.append(taskId, event, attempt.timelineRun);
         const parsed = parseAgentLine(line);
-        if (!parsed || attempt.stopped) continue;
+        if (!parsed) {
+          if (events.length) dispatch({ type: "updateTask", id: taskId, patch: { activity: lastActivity } });
+          continue;
+        }
         if (parsed.chatId && parsed.chatId !== sessionId) {
           sessionId = parsed.chatId;
           dispatch({ type: "updateTask", id: taskId, patch: { sessionId } });
         }
         if (parsed.message) report = parsed.message;
-        if (parsed.activity && parsed.activity !== lastActivity) {
+        if (parsed.activity && (parsed.activity !== lastActivity || events.length)) {
           lastActivity = parsed.activity;
           dispatch({ type: "updateTask", id: taskId, patch: { activity: parsed.activity } });
+        } else if (events.length) {
+          dispatch({ type: "updateTask", id: taskId, patch: { activity: lastActivity } });
         }
         if (parsed.done) {
           const summary = parsed.summary && parsed.summary !== "Codex finished" ? parsed.summary : lastActivity || parsed.summary || "";
@@ -321,6 +347,10 @@ export function createRunner(options: RunnerOptions): Runner {
     }
     const git = find(taskId)?.git;
     if (!git || attempt.stopped) return null;
+    const runDiff = await changes(tree.folder, tree.branch, runStartHead);
+    if (attempt.stopped || !find(taskId)) return null;
+    if (runDiff.files.length) engine.timelines.append(taskId, { kind: "files", files: runDiff.files }, attempt.timelineRun);
+    if (report) engine.timelines.append(taskId, { kind: "report", text: report }, attempt.timelineRun);
     dispatch({
       type: "updateTask",
       id: taskId,
@@ -609,6 +639,7 @@ export function createRunner(options: RunnerOptions): Runner {
         ? `Waiting to merge ${task.name}: the task folder has uncommitted changes. Commit or stash them; Shepherd will try again.`
         : `Waiting to merge ${task.name}: ${message(error)}`;
       retryMergeAt.set(taskId, Date.now() + 1000);
+      if (find(taskId)?.blocker !== note) engine.timelines.append(taskId, { kind: "wait", text: note });
       if (find(taskId)?.blocker !== note) dispatch({ type: "updateTask", id: taskId, patch: { blocker: note, activity: note } });
       if (state().goals.find((goal) => goal.id === task.goalId)?.blocker !== note) dispatch({ type: "goalRuntime", id: task.goalId, patch: { blocker: note } });
       return note;
