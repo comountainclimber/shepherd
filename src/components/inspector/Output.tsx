@@ -1,10 +1,13 @@
 import { GitMerge, LoaderCircle } from "lucide-react";
 import { useState } from "react";
 import { formatClock } from "../../model/format";
+import { openIssues } from "../../model/stage";
 import type { Task } from "../../model/types";
 import { isFullyVerified } from "../../model/verify";
-import { mergeTask } from "../../runner/live";
+import { lookUrl, mergeTask } from "../../runner/live";
+import { useShepherd } from "../../store";
 import { Button, Card } from "../ui";
+import { KnownIssues } from "./KnownIssues";
 import { useSelectedTask } from "./useSelectedTask";
 
 /** What the step produced: the agent's report, the files it changed, and merging them. */
@@ -14,6 +17,8 @@ export function Output() {
   return (
     <div className="space-y-3">
       <Report task={task} />
+      <Issues task={task} />
+      <Looks task={task} />
       <Changes task={task} />
       {task.git && task.runner === "agent" ? <Merge key={task.id} task={task} done={done} /> : null}
     </div>
@@ -58,6 +63,61 @@ function Report({ task }: { task: Task }) {
       {text ? <p className="mt-2 text-[11px] text-faint">The steps after this one get this report with their prompt.</p> : null}
     </Card>
   );
+}
+
+/** Problems left for later. Offered once there is work to have problems with. */
+function Issues({ task }: { task: Task }) {
+  const tasks = useShepherd((store) => store.state.tasks);
+  const open = openIssues(task, tasks).length;
+  if (!task.issues?.length && task.status !== "completed" && !(task.runner === "human" && task.git)) return null;
+  return (
+    <Card title="Known issues" right={open ? <span className="text-[11px] text-approval">{open} open</span> : null}>
+      <KnownIssues task={task} />
+    </Card>
+  );
+}
+
+/** The screenshots Shepherd took for the agent, newest first, so you can see what it judged the page by. */
+function Looks({ task }: { task: Task }) {
+  const looks = [...(task.looks ?? [])].reverse();
+  if (!looks.length) return null;
+  return (
+    <Card title="What it looked at" right={<span className="text-[11px] text-faint">{looks.length === 1 ? "1 screenshot" : `${looks.length} screenshots`}</span>}>
+      <ul className="grid grid-cols-2 gap-2">
+        {looks.map((look) => {
+          const src = lookUrl(task.id, look.file);
+          const where = pageName(look.url);
+          return (
+            <li key={look.file} className="min-w-0">
+              <a href={src} target="_blank" rel="noreferrer" className="relative block overflow-hidden rounded-md border border-line bg-black/30 hover:border-line-strong">
+                <img src={src} alt={`${where} at ${look.width} pixels wide`} loading="lazy" className="aspect-[4/3] w-full object-cover object-top" />
+                <span className="absolute right-1 top-1 rounded bg-black/70 px-1 font-mono text-[10px] text-text">{look.width}px</span>
+              </a>
+              <div className="mt-1 truncate font-mono text-[11px] text-muted" title={look.url}>
+                {where}
+              </div>
+              {look.errors.length ? (
+                <div className="text-[11px] leading-4 text-failed" title={look.errors.join("\n")}>
+                  {look.errors.length === 1 ? "1 page error" : `${look.errors.length} page errors`}
+                </div>
+              ) : null}
+              <div className="text-[11px] text-faint">{formatClock(look.at)}</div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
+  );
+}
+
+/** A local page by its port and path, which is what tells two screenshots apart. */
+function pageName(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.port ? `:${parsed.port}` : parsed.hostname}${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return url;
+  }
 }
 
 function Changes({ task }: { task: Task }) {

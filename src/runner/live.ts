@@ -68,6 +68,11 @@ export function markComplete(taskId: string) {
   return command({ command: "complete", taskId });
 }
 
+/** Has Codex suggest a checklist for your step from the earlier steps' work. It waits on the step for you. */
+export function draftChecklist(taskId: string): Promise<string | null> {
+  return command({ command: "checklist", taskId });
+}
+
 /** Merges a verified task's branch into the project folder's branch. Returns an error to show, or null. */
 export function mergeTask(taskId: string): Promise<string | null> {
   return command({ command: "merge", taskId });
@@ -133,4 +138,9 @@ function providerFor(task: Task): "claude" | "codex" {
 /** Each check gets its own evidence folder on the server; this is where one of its files is served. */
 export function evidenceUrl(taskId: string, file: string): string {
   return `/api/evidence/${encodeURIComponent(taskId)}/${file.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+/** Where a screenshot Shepherd took for a step's agent is served. */
+export function lookUrl(taskId: string, file: string): string {
+  return `/api/looks/${encodeURIComponent(taskId)}/${encodeURIComponent(file)}`;
 }

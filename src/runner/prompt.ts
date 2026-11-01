@@ -1,3 +1,4 @@
+import { openIssues } from "../model/stage";
 import type { OrchestrationState, Task } from "../model/types";
 
 export interface UpstreamContext {
@@ -5,6 +6,13 @@ export interface UpstreamContext {
   objective: string;
   files: string[];
   summary?: string;
+  /** Problems someone noted in its work and left for later. */
+  issues?: string[];
+}
+
+export interface PromptOptions {
+  /** The agent can ask Shepherd for screenshots with $SHEPHERD_LOOK. */
+  look?: boolean;
 }
 
 export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
@@ -20,16 +28,29 @@ const REPORT_LIMIT = 4000;
 export function upstreamContext(state: OrchestrationState, task: Task): UpstreamContext[] {
   return upstreamTasks(state, task).map((item) => {
     const report = item.status === "completed" ? (item.output ?? item.activity) : "";
+    const issues = openIssues(item, state.tasks)
+      .filter((issue) => issue.stepId !== task.id)
+      .map((issue) => issue.text);
     return {
       name: item.name,
       objective: item.objective || item.name,
       files: item.filesChanged,
       summary: report ? (report.length > REPORT_LIMIT ? `${report.slice(0, REPORT_LIMIT)}…` : report) : undefined,
+      ...(issues.length ? { issues } : {}),
     };
   });
 }
 
-export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext[] = []): string {
+const LOOK_LINES = [
+  "",
+  "If the work has a page, look at it before you finish, at a wide and a narrow width and after the clicks that matter, and judge it the way a person would. Tests that pass do not prove it looks right. Two ways to see a page once its server is running:",
+  "- Your own browser tool, if you have one (such as browser use). It works in the user's own Chrome: open a new tab for your page and leave their other tabs alone. If it is missing, or refuses the page or a site you need, do not retry it; use Shepherd's screenshots for the rest of this step.",
+  '- Shepherd\'s screenshots, since a browser cannot start in your sandbox: node "$SHEPHERD_LOOK" http://localhost:PORT/path [--width 390] [--full] [--click "CSS selector"] [--type "text"] [--press Enter] [--wait 500]',
+  "  Clicks, typing and key presses happen in the order given, before the screenshot. It prints the PNG's path and any errors the page logged; open the PNG with your image viewing tool.",
+  '  Start the server in the same command, for example: PORT=8130 node server.mjs & sleep 1; node "$SHEPHERD_LOOK" http://localhost:8130/; kill $!',
+];
+
+export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext[] = [], options: PromptOptions = {}): string {
   const followUp = extra?.trim() ?? "";
   const earlier = task.instructions.filter((line) => line !== followUp);
   const inputs = upstream.map((item) =>
@@ -37,6 +58,7 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
       `- ${item.name}: ${item.objective}`,
       item.files.length ? `  Files it wrote: ${item.files.join(", ")}` : "  It did not write any files.",
       item.summary && !task.independent ? `  What it reported:\n${indent(item.summary)}` : "",
+      item.issues?.length ? `  Known issues someone noted in its work and left for later:\n${indent(item.issues.map((issue) => `- ${issue}`).join("\n"))}` : "",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -72,6 +94,7 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     task.description && task.description !== task.objective ? `Context: ${task.description}` : "",
     task.acceptance.length ? ["", "Done when:", ...task.acceptance.map((line) => `- ${line}`)].join("\n") : "",
     ...checkLines,
+    ...(options.look ? LOOK_LINES : []),
     "",
     inputs.length ? "Earlier steps this one builds on. Their work is already merged into this worktree:" : "",
     ...inputs,

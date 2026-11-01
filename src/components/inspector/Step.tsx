@@ -1,9 +1,10 @@
-import { ChevronDown, Trash2, X } from "lucide-react";
+import { ChevronDown, LoaderCircle, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { cx } from "../../model/format";
 import { hasCycle, incoming, outgoing } from "../../model/selectors";
 import type { Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
+import { draftChecklist } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, Button, Select, TextArea, TextInput } from "../ui";
 import { useSelectedTask } from "./useSelectedTask";
@@ -79,7 +80,9 @@ function StepFields({ task }: { task: Task }) {
           <p className="mt-1 text-[11px] leading-4 text-faint">
             The agent also gets the reports of the steps before it, and their work is already merged into its branch.
           </p>
-        ) : null}
+        ) : (
+          <DraftChecklist task={task} />
+        )}
       </section>
       <Order task={task} />
       <MoreOptions task={task} />
@@ -96,6 +99,52 @@ function StepFields({ task }: { task: Task }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+/** A checklist for your step, written by Codex from what the earlier steps did, for you to use or discard. */
+function DraftChecklist({ task }: { task: Task }) {
+  const dispatch = useShepherd((store) => store.dispatch);
+  const earlier = useShepherd((store) => store.state.dependencies.some((dep) => dep.target === task.id));
+  const [asking, setAsking] = useState(false);
+  if (!earlier && !task.checklist) return null;
+
+  if (task.drafting || asking) {
+    return (
+      <p className="mt-1.5 flex items-center gap-2 text-[12px] text-muted">
+        <LoaderCircle size={13} className="animate-spin" /> Writing a checklist from the earlier steps' work…
+      </p>
+    );
+  }
+  if (task.checklist) {
+    return (
+      <div className="mt-2 space-y-2 rounded-lg border border-brass/40 bg-brass/5 p-2.5">
+        <div className="text-[12px] font-medium text-muted">Suggested checklist</div>
+        <p className="max-h-72 overflow-auto whitespace-pre-wrap text-[12px] leading-5 text-text [overflow-wrap:anywhere]">{task.checklist}</p>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="primary" onClick={() => dispatch({ type: "settleChecklist", id: task.id, use: true })}>
+            Use it
+          </Button>
+          <Button size="sm" variant="quiet" onClick={() => dispatch({ type: "settleChecklist", id: task.id, use: false })}>
+            Discard
+          </Button>
+          <span className="text-[11px] text-faint">Using it replaces what is written above.</span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="mt-1.5 text-[12px] text-brass hover:underline"
+      onClick={async () => {
+        setAsking(true);
+        await draftChecklist(task.id);
+        setAsking(false);
+      }}
+    >
+      Draft it from the earlier steps' work
+    </button>
   );
 }
 

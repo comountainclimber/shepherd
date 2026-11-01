@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type Keyboar
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
 import { cx } from "../../model/format";
 import { indent, moveBlock, moveDown, moveUp, outdent, outlineOf, parseList, subtreeEnd } from "../../model/outline";
-import { STAGE_LABEL, STEP_LABEL, assigneeFor, needsYou, nextStep, progress, stageHint, stageOf } from "../../model/stage";
+import { STAGE_LABEL, STEP_LABEL, assigneeFor, needsYou, nextStep, openIssues, progress, stageHint, stageOf } from "../../model/stage";
 import type { OutlineItem, Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftSteps, mergePlan, runPlan, stopPlan } from "../../runner/live";
@@ -519,6 +519,7 @@ function PlanBar({ projectId }: { projectId: string }) {
   const target = tasks.find((task) => task.git)?.git?.target ?? "main";
   const started = tasks.some((task) => task.status !== "queued" || task.git);
   const running = !!project?.running;
+  const issues = tasks.reduce((count, task) => count + openIssues(task, allTasks).length, 0);
 
   const status = running
     ? working
@@ -529,7 +530,9 @@ function PlanBar({ projectId }: { projectId: string }) {
           ? "Waiting for you"
           : "Starting…"
     : score.complete
-      ? "All steps done"
+      ? issues
+        ? `All steps done, with ${issues === 1 ? "1 known issue" : `${issues} known issues`}`
+        : "All steps done"
       : failed
         ? `${failed} ${failed === 1 ? "step" : "steps"} failed`
         : `${score.done} of ${score.total} done`;

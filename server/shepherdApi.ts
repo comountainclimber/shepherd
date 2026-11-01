@@ -1,12 +1,14 @@
-import { createReadStream, mkdirSync, realpathSync, statSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Plugin } from "vite";
-import type { Action } from "../src/model/types";
+import type { Action, OrchestrationState, Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
-import { draftSteps } from "./draft";
+import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planProject, planTasks } from "./intake";
+import { LookRefused, createLooks } from "./looks";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 
 /** The longest goal Shepherd sends to an agent to plan. */
@@ -27,12 +29,15 @@ export function shepherdApi(): Plugin {
       mkdirSync(sandbox, { recursive: true });
       const engine = createEngine(path.join(shepherd, "state.json"));
       const evidence = path.join(shepherd, "evidence");
+      const looks = path.join(shepherd, "looks");
       const runner = createRunner({
         engine,
         sandbox,
         worktrees: path.join(shepherd, "worktrees"),
         evidence,
         gate: path.resolve(root, "gates/shepherd-gate.mjs"),
+        look: { script: path.resolve(root, "server/look-cli.mjs"), server: () => serverUrl(server.httpServer?.address()) },
+        checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
       });
       // Vite rebuilds this plugin in the same process when a server file changes, so the old
       // runner and engine must stop for good or they keep running agents and writing the board.
@@ -42,9 +47,25 @@ export function shepherdApi(): Plugin {
       };
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
-      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence }));
+      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks) }));
     },
   };
+}
+
+/** Where agents reach this server. A wildcard address is reached on loopback. */
+export function serverUrl(address: AddressInfo | string | null | undefined): string | null {
+  if (!address || typeof address === "string") return null;
+  const host = address.address === "::" || address.address === "0.0.0.0" ? "127.0.0.1" : address.address;
+  return `http://${host.includes(":") ? `[${host}]` : host}:${address.port}`;
+}
+
+/** A person's checklist, drafted in their step's folder once it exists, or else the project folder. */
+function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
+  const project = board.projects.find((item) => item.id === task.projectId);
+  const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : projectFolder(board.workspace, project?.directory, sandbox);
+  if ("error" in folder) return Promise.resolve(folder);
+  mkdirSync(folder.path, { recursive: true });
+  return draftChecklist(checklistInput(board, task), folder.path, signal);
 }
 
 interface Context {
@@ -52,6 +73,8 @@ interface Context {
   runner: Runner;
   sandbox: string;
   evidence: string;
+  looks: string;
+  look: ReturnType<typeof createLooks>;
 }
 
 export function apiHandler(context: Context) {
@@ -79,7 +102,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence }: Context,
+  { engine, runner, sandbox, evidence, looks, look }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -170,6 +193,20 @@ async function route(
     if (!res.destroyed) sendJson(res, Array.isArray(result) ? 200 : 409, Array.isArray(result) ? { steps: result } : result);
     return true;
   }
+  if (pathname === "/api/look" && method === "POST") {
+    try {
+      sendJson(res, 200, await look(await readJson(req)));
+    } catch (error) {
+      if (!(error instanceof LookRefused)) throw error;
+      sendJson(res, 409, { error: error.message });
+    }
+    return true;
+  }
+  const shot = /^\/api\/looks\/([\w.-]+)\/([\w.-]+\.png)$/.exec(pathname);
+  if (shot && method === "GET") {
+    serveFile(looks, shot[1]!, shot[2]!, res, "No such screenshot. A step keeps only its latest ones.");
+    return true;
+  }
   if (pathname === "/api/agents" && method === "GET") {
     const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
     sendJson(res, 200, { ...status, git, workspace: sandbox });
@@ -177,7 +214,7 @@ async function route(
   }
   const file = /^\/api\/evidence\/([\w.-]+)\/(.+)$/.exec(pathname);
   if (file && method === "GET") {
-    serveEvidence(evidence, file[1]!, decodeURIComponent(file[2]!), res);
+    serveFile(evidence, file[1]!, decodeURIComponent(file[2]!), res, "No such evidence file. A newer check may have replaced it.");
     return true;
   }
   return false;
@@ -226,14 +263,14 @@ const TYPES: Record<string, string> = {
   ".zip": "application/zip",
 };
 
-function serveEvidence(root: string, taskId: string, relative: string, res: ServerResponse) {
+function serveFile(root: string, taskId: string, relative: string, res: ServerResponse, missing: string) {
   const base = path.join(root, taskId);
   let file = inside(base, relative);
   try {
     if (file && statSync(file).isDirectory()) file = path.join(file, "index.html");
     if (!file || !statSync(file).isFile() || !realpathSync(file).startsWith(realpathSync(base) + path.sep)) throw new Error();
   } catch {
-    sendJson(res, 404, { error: "No such evidence file. A newer check may have replaced it." });
+    sendJson(res, 404, { error: missing });
     return;
   }
   res.writeHead(200, {

@@ -97,6 +97,24 @@ describe("loadState", () => {
     expect(off).not.toHaveProperty("independent");
   });
 
+  it("keeps known issues and screenshots, drops broken ones, and forgets a checklist being written", () => {
+    const look = { file: "m1-390.png", url: "http://localhost:8130/", width: 390, height: 800, at: 2, errors: ["boom"] };
+    const issue = { id: "issue-1", text: "The replay link ignores hash changes.", at: 3, stepId: "step-fix" };
+    const [kept, broken] = loadState({
+      ...schemaOne,
+      tasks: [
+        { ...schemaOneTask, looks: [look], issues: [issue, { ...issue, id: "issue-2", stepId: undefined }], drafting: true, checklist: "1. Open it." },
+        { ...schemaOneTask, id: "other", looks: [{ ...look, file: "../../etc/passwd" }, { url: "x" }], issues: [{ id: "issue-3" }] },
+      ],
+    })!.tasks;
+    expect(kept!.looks).toEqual([look]);
+    expect(kept!.issues).toEqual([issue, { id: "issue-2", text: issue.text, at: 3 }]);
+    expect(kept).not.toHaveProperty("drafting");
+    expect(kept!.checklist).toBe("1. Open it.");
+    expect(broken).not.toHaveProperty("looks");
+    expect(broken).not.toHaveProperty("issues");
+  });
+
   it("keeps a schema 2 board as it is", () => {
     const state = workspace(1);
     expect(loadState(state)).toEqual(state);

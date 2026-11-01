@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { slugify } from "../src/model/factory";
 import { dependencyOrder } from "../src/model/outline";
-import type { Action, CheckRun, GateStep, Task } from "../src/model/types";
+import type { Action, CheckRun, GateStep, OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified, unmetDependencies } from "../src/model/verify";
 import { CODEX_MODEL, agentById } from "../src/model/workspace";
 import { parseAgentLine } from "../src/runner/parse";
@@ -52,6 +52,10 @@ export interface RunnerOptions {
   checkTimeoutMs?: number;
   command?: (provider: AgentCli, prompt: string, resumeId: string | null) => { cmd: string; args: string[] };
   loggedIn?: (provider: AgentCli) => Promise<boolean>;
+  /** Lets agents and checks ask for screenshots: the script they run, and Shepherd's address once it listens. */
+  look?: { script: string; server: () => string | null };
+  /** Writes the checklist for a step a person does, from the work of the steps before it. */
+    checklist?: (board: OrchestrationState, task: Task, signal: AbortSignal) => Promise<{ text: string } | { error: string }>;
 }
 
 export interface Runner {
@@ -96,6 +100,12 @@ export function createRunner(options: RunnerOptions): Runner {
     dispatch({ type: "updateTask", id: taskId, patch: { blocker: message, activity: message } });
     dispatch({ type: "setStatus", id: taskId, status: "failed" });
     return message;
+  }
+
+  /** What an agent or check needs in its environment to ask Shepherd for a screenshot. */
+  function lookEnv(taskId: string): Record<string, string> {
+    const server = options.look?.server();
+    return options.look && server ? { SHEPHERD_LOOK: options.look.script, SHEPHERD_URL: server, SHEPHERD_TASK_ID: taskId } : {};
   }
 
   function finish(taskId: string, summary: string) {
@@ -176,11 +186,12 @@ export function createRunner(options: RunnerOptions): Runner {
     if (merged.length) dispatch({ type: "updateTask", id: taskId, patch: { activity: `Merged ${merged.join(", ")} into ${tree.branch}` } });
 
     const latest = find(taskId)!;
-    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest));
+    const tools = lookEnv(taskId);
+    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK });
     const spec = command(provider, prompt, latest.sessionId ?? null);
     const child = spawn(spec.cmd, spec.args, {
       cwd: tree.folder,
-      env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate }),
+      env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate, ...tools }),
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
@@ -351,6 +362,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const task = find(taskId);
     if (!task || task.runner !== "human" || refreshing.has(taskId) || closed()) return;
     refreshing.add(taskId);
+    let first = false;
     try {
       const dir = folderFor(task);
       if ("error" in dir) {
@@ -380,12 +392,39 @@ export function createRunner(options: RunnerOptions): Runner {
       const latest = find(taskId);
       if (!latest || latest.status !== "queued" || closed()) return;
       if (!latest.git) {
+        first = true;
         dispatch({ type: "updateTask", id: taskId, patch: { git: { branch: tree.branch, folder: tree.folder, target: tree.target, head: diff.head } } });
       }
       dispatch({ type: "refreshed", id: taskId, head: diff.head, merged, filesChanged: diff.files, previews: diff.diffs, keepReview: true });
     } finally {
       refreshing.delete(taskId);
       schedule();
+    }
+    if (!first) return;
+    const error = await writeChecklist(taskId, false);
+    if (error) console.warn(`[shepherd] Could not write the checklist for ${task.name}: ${error}`);
+  }
+
+  /**
+   * Writes a person's checklist from the earlier steps' work: straight into a step that says nothing
+   * yet, or as a suggestion to use or discard. Returns why it could not.
+   */
+  async function writeChecklist(taskId: string, suggest: boolean): Promise<string | null> {
+    const task = find(taskId);
+    if (!task || !options.checklist || closed() || (!suggest && !blankInstructions(task))) return null;
+    if (task.drafting) return "Shepherd is already writing this step's checklist.";
+    const before = task.objective;
+    dispatch({ type: "updateTask", id: taskId, patch: { drafting: true } });
+    try {
+      const result = await options.checklist(state(), task, closing.signal);
+      const latest = find(taskId);
+      if (!latest || closed()) return null;
+      if ("error" in result) return result.error;
+      if (suggest) dispatch({ type: "updateTask", id: taskId, patch: { checklist: result.text } });
+      else if (latest.objective === before) dispatch({ type: "updateTask", id: taskId, patch: { objective: result.text } });
+      return null;
+    } finally {
+      if (find(taskId)?.drafting) dispatch({ type: "updateTask", id: taskId, patch: { drafting: undefined } });
     }
   }
 
@@ -446,6 +485,7 @@ export function createRunner(options: RunnerOptions): Runner {
           SHEPHERD_GATE: gate,
           SHEPHERD_EVIDENCE_DIR: dir,
           SHEPHERD_TASK: task.name,
+          ...lookEnv(taskId),
           ...(task.git ? { SHEPHERD_BRANCH: task.git.branch, SHEPHERD_BASE_REF: `refs/shepherd-base/${task.git.branch}` } : {}),
         };
         const result = await runCheckCommand(folder.path, commandLine, options.checkTimeoutMs, env, closing.signal);
@@ -709,8 +749,17 @@ export function createRunner(options: RunnerOptions): Runner {
         if (!note) return { error: "Say what is wrong, as text." };
         return outcome(sendBack(taskId, typeof raw.to === "string" ? raw.to : "", note));
       }
+      case "checklist": {
+        if (task.runner !== "human") return { error: `An agent does ${task.name}, so its prompt is yours to write.` };
+        if (!options.checklist) return { error: "This Shepherd cannot write checklists." };
+        const work = writeChecklist(taskId, true);
+        track(work);
+        return outcome(await work);
+      }
       default:
-        return { error: "command must be run, stop, instruct, check, complete, merge, forward, sendBack, runPlan, stopPlan or mergePlan." };
+        return {
+          error: "command must be run, stop, instruct, check, complete, merge, forward, sendBack, checklist, runPlan, stopPlan or mergePlan.",
+        };
     }
   }
 
@@ -774,6 +823,12 @@ function killGroup(child: ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
   } catch {
     child.kill(signal);
   }
+}
+
+/** A step whose prompt is empty or only repeats its name. */
+export function blankInstructions(task: Task): boolean {
+  const text = task.objective.trim();
+  return !text || text === task.name.trim();
 }
 
 function uncheckedCommand(task: Task): boolean {

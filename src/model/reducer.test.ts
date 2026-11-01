@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { blankTask } from "./factory";
-import { reducer } from "./reducer";
+import { LOOK_LIMIT, reducer } from "./reducer";
 import { needsMe, waitingOn } from "./selectors";
+import { openIssues, stageHint } from "./stage";
 import type { Action, Gate, OrchestrationState } from "./types";
 import { dependencySatisfied, isFullyVerified } from "./verify";
 import { workspace } from "./workspace";
@@ -385,5 +386,66 @@ describe("check commands", () => {
     state = reducer(state, { type: "setCheckCommand", id: "a", command: "" });
     expect(task(state, "a").verification).toEqual([]);
     expect(isFullyVerified(task(state, "a"))).toBe(true);
+  });
+});
+
+describe("known issues", () => {
+  function noted() {
+    const state = review(finishRun(chain("verified"), "a"), "a", "passed");
+    return reducer(review(finishRun(state, "b"), "b", "passed"), { type: "noteIssue", id: "a", text: "  The replay link ignores later hash changes.  " });
+  }
+
+  it("keeps a problem on a finished step without reopening it", () => {
+    const state = noted();
+    const issues = task(state, "a").issues!;
+    expect(issues).toEqual([{ id: issues[0]!.id, text: "The replay link ignores later hash changes.", at: NOW }]);
+    expect(isFullyVerified(task(state, "a"))).toBe(true);
+    expect(openIssues(task(state, "a"), state.tasks)).toHaveLength(1);
+    expect(stageHint(task(state, "a"), "verified", state.tasks, state.dependencies)).toMatch(/^1 known issue · /);
+    expect(state.events.at(-1)!.message).toBe("Known issue in a: The replay link ignores later hash changes.");
+    expect(reducer(state, { type: "noteIssue", id: "a", text: "   " })).toBe(state);
+  });
+
+  it("drops an issue, and leaves no empty list behind", () => {
+    const state = noted();
+    const dropped = reducer(state, { type: "dropIssue", id: "a", issueId: task(state, "a").issues![0]!.id });
+    expect(task(dropped, "a").issues).toBeUndefined();
+  });
+
+  it("turns an issue into a step at the end of the plan, open until that step is done", () => {
+    let state = noted();
+    const issue = task(state, "a").issues![0]!;
+    const fix = make("fix", { review: false });
+    state = reducer(state, { type: "fixIssue", id: "a", issueId: issue.id, task: fix });
+    expect(task(state, "a").issues![0]!.stepId).toBe("fix");
+    expect(state.projects.find((project) => project.id === "proj-local")!.outline!.map((item) => item.id)).toEqual(["a", "b", "fix"]);
+    expect(waitingOn(task(state, "fix"), state.tasks, state.dependencies)).toBeNull();
+    expect(state.dependencies.filter((dep) => dep.target === "fix").map((dep) => dep.source)).toEqual(["b"]);
+    expect(openIssues(task(state, "a"), state.tasks)).toHaveLength(1);
+    expect(reducer(state, { type: "fixIssue", id: "a", issueId: issue.id, task: make("again") })).toBe(state);
+
+    state = finishRun(state, "fix");
+    expect(openIssues(task(state, "a"), state.tasks)).toEqual([]);
+  });
+
+  it("forgets the fix when its step is deleted, so the issue can be turned into a step again", () => {
+    let state = noted();
+    const issue = task(state, "a").issues![0]!;
+    state = apply(state, { type: "fixIssue", id: "a", issueId: issue.id, task: make("fix") }, { type: "deleteTask", id: "fix" });
+    expect(task(state, "a").issues![0]!.stepId).toBeUndefined();
+    expect(reducer(state, { type: "fixIssue", id: "a", issueId: issue.id, task: make("again") }).tasks.some((item) => item.id === "again")).toBe(true);
+  });
+});
+
+describe("screenshots", () => {
+  it("keeps only the latest ones a step's agent took", () => {
+    let state = chain("verified");
+    for (let index = 0; index < LOOK_LIMIT + 3; index += 1) {
+      state = reducer(state, { type: "looked", id: "a", look: { file: `${index}.png`, url: "http://localhost:8130/", width: 1280, height: 800, at: NOW, errors: [] } });
+    }
+    const looks = task(state, "a").looks!;
+    expect(looks).toHaveLength(LOOK_LIMIT);
+    expect(looks.at(-1)!.file).toBe(`${LOOK_LIMIT + 2}.png`);
+    expect(looks[0]!.file).toBe("3.png");
   });
 });

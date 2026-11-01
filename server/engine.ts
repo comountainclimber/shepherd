@@ -27,6 +27,10 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "setOutline",
   "followOutline",
   "setReview",
+  "noteIssue",
+  "dropIssue",
+  "fixIssue",
+  "settleChecklist",
 ]);
 
 /** Fields of a task a tab may edit directly. The rest change only through runs, checks and merges. */
@@ -115,8 +119,10 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
         ? action.tasks
         : action.type === "addSteps"
           ? (action.steps ?? []).map((step) => step.task)
-          : [];
-  if (created.some((task) => task.git || task.status === "running" || task.verification.some((check) => check.state !== "pending"))) {
+          : action.type === "fixIssue"
+            ? [action.task]
+            : [];
+  if (created.some((task) => !task || task.git || task.status === "running" || !Array.isArray(task.verification) || task.verification.some((check) => check.state !== "pending"))) {
     return { error: "A new task starts unverified, with no branch." };
   }
   return action;

@@ -1,4 +1,4 @@
-import type { Dependency, Task, VerificationCheck } from "./types";
+import type { Dependency, Issue, Task, VerificationCheck } from "./types";
 import { dependencySatisfied, isFullyVerified } from "./verify";
 import { agentById } from "./workspace";
 
@@ -67,10 +67,17 @@ export function stageHint(task: Task, stage: Stage, tasks: Task[], deps: Depende
       return "Merging in upstream changes";
     case "needs-you":
       return reviewPending(task) && task.status === "completed" ? "Ready for your review" : "Your task";
-    case "verified":
-      if (task.git?.merged) return `Merged into ${task.git.merged.into}`;
-      if (task.runner === "human") return "Marked done by you";
-      return task.verification.length ? "Checks passed" : firstLine(task.output) || "Finished";
+    case "verified": {
+      const open = openIssues(task, tasks).length;
+      const done = task.git?.merged
+        ? `Merged into ${task.git.merged.into}`
+        : task.runner === "human"
+          ? "Marked done by you"
+          : task.verification.length
+            ? "Checks passed"
+            : firstLine(task.output) || "Finished";
+      return open ? `${open} known ${open === 1 ? "issue" : "issues"} · ${done}` : done;
+    }
     case "failed":
       return failedCheck(task) ? "Its check failed" : (task.blocker ?? "The run failed");
     case "paused":
@@ -90,6 +97,14 @@ export function assigneeFor(task: Task): Assignee {
   const agent = agentById(task.agentId);
   if (!agent) return { kind: "none", name: "Unassigned" };
   return { kind: agent.provider === "codex" ? "codex" : "claude", name: agent.name };
+}
+
+/** Issues noted on a step that no finished step has fixed yet. */
+export function openIssues(task: Task, tasks: Task[]): Issue[] {
+  return (task.issues ?? []).filter((issue) => {
+    const fix = issue.stepId ? tasks.find((item) => item.id === issue.stepId) : undefined;
+    return !fix || !isFullyVerified(fix);
+  });
 }
 
 /** The first line of an agent's report, without Markdown decoration. */

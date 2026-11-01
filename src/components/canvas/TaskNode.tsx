@@ -1,6 +1,6 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { cx, formatDuration } from "../../model/format";
-import { assigneeFor, needsYou, nextStep, STEP_LABEL, stageHint, stageOf } from "../../model/stage";
+import { assigneeFor, needsYou, nextStep, openIssues, STEP_LABEL, stageHint, stageOf } from "../../model/stage";
 import { useShepherd } from "../../store";
 import { useNextStep } from "../useNextStep";
 import { Avatar, CheckDots, StageBadge, stageBg, stageBorder } from "../ui";
@@ -22,6 +22,7 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
   const step = needsYou(task, tasks, deps) ? nextStep(task, stage) : null;
   const running = stage === "running";
   const hint = stageHint(task, stage, tasks, deps);
+  const issues = stage === "verified" && openIssues(task, tasks).length > 0;
 
   return (
     <div
@@ -43,7 +44,7 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
         </div>
       </div>
       <div className="px-3 pb-3 pt-2">
-        <div className={cx("truncate text-[12px]", running ? "text-running" : "text-muted")} title={hint}>
+        <div className={cx("truncate text-[12px]", running ? "text-running" : issues ? "text-approval" : "text-muted")} title={hint}>
           {hint}
         </div>
         <div className="mt-2 flex h-6 items-center justify-between gap-2">

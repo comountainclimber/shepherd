@@ -1,6 +1,6 @@
 import { Check, Clock, LoaderCircle, Play, RefreshCw, Square, Undo2, X } from "lucide-react";
 import { cx } from "../../model/format";
-import { assigneeFor, failedCheck, reviewPending, stageHint, stageOf, waitingFor, type Stage } from "../../model/stage";
+import { assigneeFor, failedCheck, openIssues, reviewPending, stageHint, stageOf, waitingFor, type Stage } from "../../model/stage";
 import type { PanelTab, Task } from "../../model/types";
 import { runTask, stopTask } from "../../runner/live";
 import { useShepherd } from "../../store";
@@ -185,12 +185,18 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
         </p>
       );
     }
-    case "verified":
+    case "verified": {
+      const open = openIssues(task, tasks).length;
       return (
         <div className="flex flex-wrap items-center gap-2">
           <p className="flex items-center gap-2 text-[13px] text-completed">
             <Check size={15} /> {task.git?.merged ? `Done and merged into ${task.git.merged.into}` : "Done"}
           </p>
+          {open ? (
+            <button type="button" className="text-[13px] text-approval hover:underline" onClick={() => setPanelTab("output")}>
+              with {open === 1 ? "1 known issue" : `${open} known issues`}
+            </button>
+          ) : null}
           {task.runner === "agent" ? (
             <Button variant="quiet" onClick={() => void runTask(task.id)}>
               Run again
@@ -198,5 +204,6 @@ function NextStep({ task, stage }: { task: Task; stage: Stage }) {
           ) : null}
         </div>
       );
+    }
   }
 }

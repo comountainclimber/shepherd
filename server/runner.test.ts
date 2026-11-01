@@ -8,7 +8,7 @@ import type { OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { WORKSPACE_PROJECT_ID, workspace } from "../src/model/workspace";
 import { createEngine, envelope } from "./engine";
-import { createRunner } from "./runner";
+import { createRunner, type RunnerOptions } from "./runner";
 
 /** Stands in for Codex: writes a file named after its step, then reports like Codex does. */
 const FAKE_AGENT = `
@@ -23,7 +23,7 @@ say({ type: "item.completed", item: { type: "agent_message", text: "Report from 
 say({ type: "turn.completed" });
 `;
 
-function planServer(board: OrchestrationState) {
+function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"]) {
   const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
   const sandbox = path.join(root, "sandbox");
   mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
@@ -41,6 +41,7 @@ function planServer(board: OrchestrationState) {
     gate: path.join(root, "gate.mjs"),
     loggedIn: async () => true,
     command: (_provider, prompt) => ({ cmd: process.execPath, args: [agent, log, prompt] }),
+    checklist,
   });
   const prompts = () =>
     readFileSync(log, "utf8")
@@ -199,6 +200,40 @@ describe("plans", () => {
 
     expect(await runner.handle({ command: "mergePlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
     for (const file of ["plan.txt", "front.txt", "back.txt", "notes.txt"]) expect(existsSync(path.join(project, file))).toBe(true);
+    runner.close();
+    engine.close();
+  }, 60_000);
+
+  it("writes a checklist for a step you do once its folder is ready, but only if the step says nothing yet", async () => {
+    const board = outlined("Build\nTry\nSign");
+    const yours = (name: string, objective: string) => (task: Task) => (task.name === name ? { ...task, runner: "human" as const, agentId: null, objective } : task);
+    const asked: { name: string; earlier: string[] }[] = [];
+    const { engine, runner } = planServer({ ...board, tasks: board.tasks.map(yours("Try", "Try")).map(yours("Sign", "Sign it off")) }, async (state, task) => {
+      expect(engine.get().tasks.find((item) => item.id === task.id)!.drafting).toBe(true);
+      asked.push({ name: task.name, earlier: state.tasks.filter((item) => item.status === "completed").map((item) => item.name) });
+      return { text: "npm start, then open http://localhost:8123\n1. Play a move." };
+    });
+    const step = (name: string) => engine.get().tasks.find((task) => task.name === name)!;
+    expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
+    await runner.idle();
+    expect(asked).toEqual([{ name: "Try", earlier: ["Build"] }]);
+    expect(step("Try").objective).toBe("npm start, then open http://localhost:8123\n1. Play a move.");
+    expect(step("Try").drafting).toBeUndefined();
+
+    expect(await runner.handle({ command: "complete", taskId: step("Try").id })).toEqual({ ok: true });
+    await runner.idle();
+    expect(step("Sign").git).toBeDefined();
+    expect(asked).toHaveLength(1);
+    expect(step("Sign").objective).toBe("Sign it off");
+
+    expect(await runner.handle({ command: "checklist", taskId: step("Sign").id })).toEqual({ ok: true });
+    expect(asked.map((item) => item.name)).toEqual(["Try", "Sign"]);
+    expect(step("Sign").objective).toBe("Sign it off");
+    expect(step("Sign").checklist).toBe("npm start, then open http://localhost:8123\n1. Play a move.");
+    engine.dispatch({ type: "settleChecklist", id: step("Sign").id, use: true });
+    expect(step("Sign").objective).toBe("npm start, then open http://localhost:8123\n1. Play a move.");
+    expect(step("Sign").checklist).toBeUndefined();
+    expect(await runner.handle({ command: "checklist", taskId: step("Build").id })).toEqual({ error: "An agent does Build, so its prompt is yours to write." });
     runner.close();
     engine.close();
   }, 60_000);

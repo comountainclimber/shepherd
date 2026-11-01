@@ -61,13 +61,23 @@ function SendBack({ task }: { task: Task }) {
   const [to, setTo] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
-  if (!candidates.length) return null;
+  const setPanelTab = useShepherd((store) => store.setPanelTab);
+  const later = (
+    <button type="button" className="text-[12px] text-muted hover:text-text hover:underline" onClick={() => setPanelTab("output")}>
+      keep it as a known issue
+    </button>
+  );
+  if (!candidates.length) return <p className="text-[12px] text-muted">Found a problem you will not fix now? You can {later}.</p>;
   const target = candidates.some((item) => item.id === to) ? to : candidates[0]!.id;
   if (!open) {
     return (
-      <button type="button" className="text-[12px] text-muted hover:text-text hover:underline" onClick={() => setOpen(true)}>
-        Found a problem? Send it back
-      </button>
+      <p className="text-[12px] text-muted">
+        Found a problem?{" "}
+        <button type="button" className="text-muted hover:text-text hover:underline" onClick={() => setOpen(true)}>
+          Send it back
+        </button>{" "}
+        or {later}
+      </p>
     );
   }
   return (

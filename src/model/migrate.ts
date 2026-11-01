@@ -3,6 +3,8 @@ import type {
   Dependency,
   ExecutionEvent,
   FilePreview,
+  Issue,
+  Look,
   Notification,
   OrchestrationState,
   Project,
@@ -165,7 +167,35 @@ function task(raw: Raw): Task {
     ...(typeof raw.retries === "number" && raw.retries > 0 ? { retries: raw.retries } : {}),
     ...(typeof raw.output === "string" && raw.output ? { output: raw.output } : {}),
     ...(raw.wired === true ? { wired: true } : {}),
+    ...listed("looks", list(raw.looks).flatMap(look)),
+    ...listed("issues", list(raw.issues).flatMap(issue)),
+    ...(typeof raw.checklist === "string" && raw.checklist.trim() ? { checklist: raw.checklist } : {}),
   };
+}
+
+function listed<K extends string, T>(key: K, items: T[]): Partial<Record<K, T[]>> {
+  return items.length ? ({ [key]: items } as Record<K, T[]>) : {};
+}
+
+function look(value: unknown): Look[] {
+  const raw = record(value);
+  if (!raw || typeof raw.file !== "string" || !/^\w[\w.-]*\.png$/.test(raw.file) || typeof raw.url !== "string") return [];
+  return [
+    {
+      file: raw.file,
+      url: raw.url,
+      width: Number(raw.width) || 0,
+      height: Number(raw.height) || 0,
+      at: Number(raw.at) || 0,
+      errors: list(raw.errors).filter((item): item is string => typeof item === "string"),
+    },
+  ];
+}
+
+function issue(value: unknown): Issue[] {
+  const raw = record(value);
+  if (!raw || typeof raw.id !== "string" || typeof raw.text !== "string" || !raw.text.trim()) return [];
+  return [{ id: raw.id, text: raw.text, at: Number(raw.at) || 0, ...(typeof raw.stepId === "string" ? { stepId: raw.stepId } : {}) }];
 }
 
 /** Reads a saved board from any earlier schema. Returns null when there is nothing worth keeping. */

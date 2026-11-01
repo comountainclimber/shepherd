@@ -8,6 +8,7 @@ import type {
   Dependency,
   ExecutionEvent,
   Gate,
+  Look,
   Notification,
   OrchestrationState,
   OutlineItem,
@@ -72,6 +73,7 @@ const OUTLINE_ACTIONS = new Set<Action["type"]>([
   "createTask",
   "approvePlan",
   "deleteTask",
+  "fixIssue",
 ]);
 
 export function reducer(state: OrchestrationState, action: Action): OrchestrationState {
@@ -88,7 +90,7 @@ export function reducer(state: OrchestrationState, action: Action): Orchestratio
 /** The project whose map follows its outline again after this action. */
 function laidOut(state: OrchestrationState, action: Action): string | null {
   if (action.type === "addSteps" || action.type === "setOutline") return action.projectId;
-  if (action.type === "followOutline" || action.type === "deleteTask") {
+  if (action.type === "followOutline" || action.type === "deleteTask" || action.type === "fixIssue") {
     return state.tasks.find((task) => task.id === action.id)?.projectId ?? null;
   }
   return null;
@@ -162,6 +164,16 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return outdate(state, action.id, action.reason);
     case "refreshed":
       return refreshed(state, action);
+    case "looked":
+      return looked(state, action.id, action.look);
+    case "noteIssue":
+      return noteIssue(state, action.id, action.text);
+    case "dropIssue":
+      return dropIssue(state, action.id, action.issueId);
+    case "fixIssue":
+      return fixIssue(state, action.id, action.issueId, action.task);
+    case "settleChecklist":
+      return settleChecklist(state, action.id, action.use);
     case "approvePlan":
       return approvePlan(state, action.tasks, action.dependencies);
     case "deleteTask":
@@ -382,6 +394,13 @@ function createTask(
   ];
   log.event({ taskId: task.id, projectId: task.projectId, message: `Created ${task.name}`, tone: "info" });
   return log.finish({ tasks: [...state.tasks, task], dependencies });
+}
+
+function settleChecklist(state: OrchestrationState, id: string, use: boolean): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task?.checklist) return state;
+  const { checklist, ...rest } = task;
+  return { ...state, tasks: replaceTask(state.tasks, use ? { ...rest, objective: checklist } : rest) };
 }
 
 function updateTask(state: OrchestrationState, id: string, patch: Partial<Task>): OrchestrationState {
@@ -755,6 +774,51 @@ function refreshed(state: OrchestrationState, action: Extract<Action, { type: "r
   return log.finish({ tasks: replaceTask(state.tasks, next) });
 }
 
+/** How many screenshots a step keeps. Older ones drop off. */
+export const LOOK_LIMIT = 12;
+
+function looked(state: OrchestrationState, id: string, look: Look): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task) return state;
+  return { ...state, tasks: replaceTask(state.tasks, { ...task, looks: [...(task.looks ?? []), look].slice(-LOOK_LIMIT) }) };
+}
+
+const ISSUE_LIMIT = 2000;
+
+function noteIssue(state: OrchestrationState, id: string, text: string): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  const trimmed = typeof text === "string" ? text.trim().slice(0, ISSUE_LIMIT) : "";
+  if (!task || !trimmed) return state;
+  const counted = { ...state, seq: state.seq + 1 };
+  const issue = { id: `issue-${counted.seq}`, text: trimmed, at: state.now };
+  const log = createLog(counted, state.now);
+  log.event({ taskId: id, projectId: task.projectId, message: `Known issue in ${task.name}: ${trimmed}`, tone: "warning" });
+  return log.finish({ tasks: replaceTask(state.tasks, { ...task, issues: [...(task.issues ?? []), issue] }) });
+}
+
+function dropIssue(state: OrchestrationState, id: string, issueId: string): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task?.issues?.some((issue) => issue.id === issueId)) return state;
+  const issues = task.issues.filter((issue) => issue.id !== issueId);
+  const next: Task = { ...task, issues };
+  if (!issues.length) delete next.issues;
+  return { ...state, tasks: replaceTask(state.tasks, next) };
+}
+
+/** Puts a step to fix the issue at the end of the outline, after everything else. */
+function fixIssue(state: OrchestrationState, id: string, issueId: string, step: Task): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  const issue = task?.issues?.find((item) => item.id === issueId);
+  if (!task || !issue || !step || step.projectId !== task.projectId) return state;
+  if (issue.stepId && state.tasks.some((item) => item.id === issue.stepId)) return state;
+  const last = outlineOf(state, task.projectId).at(-1)?.id ?? null;
+  const added = addSteps(state, task.projectId, last, [{ task: step, depth: 0 }]);
+  if (added === state) return state;
+  const current = added.tasks.find((item) => item.id === id)!;
+  const issues = (current.issues ?? []).map((item) => (item.id === issueId ? { ...item, stepId: step.id } : item));
+  return { ...added, tasks: replaceTask(added.tasks, { ...current, issues }) };
+}
+
 function approvePlan(state: OrchestrationState, tasks: Task[], dependencies: Dependency[]): OrchestrationState {
   const log = createLog(state, state.now);
   const known = new Set(state.tasks.map((task) => task.id));
@@ -788,8 +852,12 @@ function deleteTask(state: OrchestrationState, id: string): OrchestrationState {
   if (!task) return state;
   const log = createLog(state, state.now);
   if (task.name) log.event({ taskId: id, projectId: task.projectId, message: `Deleted ${task.name}`, tone: "warning" });
+  const unlink = (item: Task): Task =>
+    item.issues?.some((issue) => issue.stepId === id)
+      ? { ...item, issues: item.issues.map(({ stepId, ...issue }) => (stepId === id ? issue : { ...issue, ...(stepId ? { stepId } : {}) })) }
+      : item;
   return log.finish({
-    tasks: state.tasks.filter((item) => item.id !== id),
+    tasks: state.tasks.filter((item) => item.id !== id).map(unlink),
     dependencies: state.dependencies.filter((dep) => dep.source !== id && dep.target !== id),
     projects: state.projects.map((project) =>
       project.outline?.some((item) => item.id === id) ? { ...project, outline: project.outline.filter((item) => item.id !== id) } : project,

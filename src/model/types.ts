@@ -101,6 +101,35 @@ export interface Task {
   output?: string;
   /** Its inputs were set by hand on the map, so the outline no longer decides what it waits for. */
   wired?: boolean;
+  /** Screenshots Shepherd took for its agent, newest last. */
+  looks?: Look[];
+  /** Problems found in its work and left for later. */
+  issues?: Issue[];
+  /** Shepherd is writing this step's checklist from the earlier steps' work. Not saved. */
+  drafting?: boolean;
+  /** A checklist Shepherd suggested for this step, until you use it or discard it. */
+  checklist?: string;
+}
+
+/** A screenshot of a page, taken by Shepherd because a browser cannot start in an agent's sandbox. */
+export interface Look {
+  /** The PNG's name in the step's looks folder. */
+  file: string;
+  url: string;
+  width: number;
+  height: number;
+  at: number;
+  /** What the page logged or threw as errors while Shepherd looked. */
+  errors: string[];
+}
+
+/** Something wrong with a step's work that someone noted and left for later. */
+export interface Issue {
+  id: string;
+  text: string;
+  at: number;
+  /** The step made to fix it. */
+  stepId?: string;
 }
 
 export interface Dependency {
@@ -226,6 +255,13 @@ export type Action =
       previews: FilePreview[];
       keepReview: boolean;
     }
+  | { type: "looked"; id: string; look: Look }
+  | { type: "noteIssue"; id: string; text: string }
+  | { type: "dropIssue"; id: string; issueId: string }
+  /** Adds `task` at the end of the outline to fix the issue, and links the two. */
+  | { type: "fixIssue"; id: string; issueId: string; task: Task }
+  /** Makes the suggested checklist the step's prompt, or discards it. */
+  | { type: "settleChecklist"; id: string; use: boolean }
   | { type: "approvePlan"; tasks: Task[]; dependencies: Dependency[] }
   | { type: "deleteTask"; id: string }
   | { type: "reset" }
