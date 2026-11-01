@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { changes, commitAll, ensureRepo, mergeBranch, openWorktree, prepareRun } from "./git";
+import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, openWorktree, prepareRun } from "./git";
 
 const AGENT = { name: "Codex", email: "codex@shepherd.local" };
 let temps: string[] = [];
@@ -57,6 +57,50 @@ describe("ensureRepo", () => {
     await expect(ensureRepo(path.join(outer, "src"))).rejects.toThrow(/inside the git repository/);
     const nested = await ensureRepo(path.join(outer, "sandbox", "app"));
     expect(gitOut(nested, "rev-parse", "--show-toplevel")).toBe(nested);
+  });
+});
+
+describe("inspectRepo", () => {
+  it("refuses missing, plain, nested and empty folders without writing anything", async () => {
+    const root = temp();
+    const missing = path.join(root, "missing");
+    await expect(inspectRepo(missing)).rejects.toThrow(missing);
+    expect(existsSync(missing)).toBe(false);
+    await expect(inspectRepo(root)).rejects.toThrow(`${root} is not a git repository`);
+    expect(readdirSync(root)).toEqual([]);
+    gitOut(root, "init", "-q");
+    write(root, "mine.txt", "mine");
+    const before = gitOut(root, "status", "--porcelain");
+    await expect(inspectRepo(root)).rejects.toThrow(`${root} has no commits`);
+    expect(gitOut(root, "status", "--porcelain")).toBe(before);
+    expect(gitOut(root, "ls-files")).toBe("");
+    gitOut(root, "add", "mine.txt");
+    gitOut(root, "commit", "-qm", "Person's first commit");
+    const nested = path.join(root, "nested");
+    mkdirSync(nested);
+    await expect(inspectRepo(nested)).rejects.toThrow(`${nested} is inside a git repository`);
+    expect(readdirSync(nested)).toEqual([]);
+    expect(gitOut(root, "rev-list", "--count", "HEAD")).toBe("1");
+  });
+
+  it("returns the canonical root and checked-out branch, including detached HEAD", async () => {
+    const { repo } = await project();
+    const alias = path.join(temp(), "alias");
+    symlinkSync(repo, alias);
+    expect(await inspectRepo(alias)).toEqual({ repo, branch: gitOut(repo, "branch", "--show-current") });
+    gitOut(repo, "checkout", "-q", "--detach");
+    expect((await inspectRepo(repo)).branch).toMatch(/^detached at /);
+  });
+
+  it("does not commit on a person's branch, even if a step folder was switched to it", async () => {
+    const { repo, worktrees } = await project();
+    const tree = await openWorktree(repo, worktrees, "task-1", "safe");
+    gitOut(tree.folder, "checkout", "-qb", "my-work");
+    write(tree.folder, "mine.txt", "mine");
+    await expect(commitAll(tree.folder, ["Should not happen"], AGENT)).rejects.toThrow(/was not created/);
+    await expect(openWorktree(repo, worktrees, "task-1", "safe", tree.branch)).rejects.toThrow(/no longer on/);
+    expect(gitOut(tree.folder, "rev-list", "--count", "HEAD")).toBe("1");
+    expect(gitOut(tree.folder, "ls-files", "mine.txt")).toBe("");
   });
 });
 

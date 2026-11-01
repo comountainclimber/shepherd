@@ -106,7 +106,9 @@ describe("planProject", () => {
     const error = (body: unknown) => (planProject(board(), body, "proj-api-1") as { error: string }).error;
     expect(error({})).toBe("The project needs a name.");
     expect(error({ name: "greeter" })).toBe("There is already a project named Greeter (proj-2).");
-    expect(error({ name: "Elsewhere", directory: "../outside" })).toMatch(/inside the workspace/);
+    expect(error({ name: "Elsewhere", directory: "../outside" })).toMatch(/Use repo/);
+    expect(error({ name: "Elsewhere", repo: "relative/path" })).toMatch(/must be absolute/);
+    expect(planProject(board(), { name: "Elsewhere", repo: "/tmp/my-repo" }, "proj-api-1")).toMatchObject({ project: { repo: "/tmp/my-repo" } });
   });
 });
 

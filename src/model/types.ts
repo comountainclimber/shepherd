@@ -216,10 +216,13 @@ export interface Project {
   name: string;
   summary: string;
   directory?: string;
+  /** Absolute path to a repository supplied by the person, outside or inside the workspace. */
+  repo?: string;
 }
 
 export type GoalStatus = "open" | "done" | "archived";
 
+/** A task in the UI; Task remains the type for a step. */
 export interface Goal {
   id: string;
   projectId: string;
@@ -244,7 +247,7 @@ export interface OrchestrationState {
   notifications: Notification[];
   now: number;
   seq: number;
-  /** The folder that holds every project. Unset means the server's default. */
+  /** The folder for projects Shepherd creates. Unset means the server's default. */
   workspace?: string;
 }
 

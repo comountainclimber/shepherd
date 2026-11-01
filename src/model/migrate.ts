@@ -40,6 +40,7 @@ function project(raw: Raw): Project {
     name: text(raw.name),
     summary: text(raw.summary),
     ...(directory ? { directory } : {}),
+    ...(text(raw.repo) ? { repo: text(raw.repo) } : {}),
   };
 }
 
@@ -209,7 +210,7 @@ export function loadState(saved: unknown): OrchestrationState | null {
   const projects = list(raw.projects).flatMap((item) => (record(item) ? [project(item as Raw)] : []));
   if (!projects.length) return null;
   // The workspace folder holds every project, so it cannot be one project's repository.
-  for (const item of projects) item.directory ||= projectDirectory(item.name, projects);
+  for (const item of projects) if (!item.repo) item.directory ||= projectDirectory(item.name, projects);
   const goals: Goal[] = raw.schema === 3
     ? list(raw.goals).flatMap((item) => {
         const value = record(item);

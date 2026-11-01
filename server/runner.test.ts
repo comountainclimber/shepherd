@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +10,10 @@ import { isFullyVerified } from "../src/model/verify";
 import { WORKSPACE_PROJECT_ID, workspace } from "../src/model/workspace";
 import { createEngine, envelope } from "./engine";
 import { createRunner, type RunnerOptions } from "./runner";
+
+function gitOut(cwd: string, ...args: string[]) {
+  return execFileSync("git", ["-c", "user.name=Person", "-c", "user.email=person@example.test", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
+}
 
 /** Stands in for Codex: writes a file named after its step, then reports like Codex does. */
 const FAKE_AGENT = `
@@ -94,6 +99,57 @@ function finishedTask(): Task {
 }
 
 describe("scheduler", () => {
+  it("runs in an external repository's new branch without changing its checkout or existing branches", async () => {
+    const repo = mkdtempSync(path.join(tmpdir(), "shepherd-existing-"));
+    gitOut(repo, "init", "-q", "-b", "my-main");
+    writeFileSync(path.join(repo, "mine.txt"), "committed\n");
+    gitOut(repo, "add", ".");
+    gitOut(repo, "commit", "-qm", "My initial work");
+    gitOut(repo, "branch", "other-work");
+    gitOut(repo, "branch", "shepherd/build");
+    writeFileSync(path.join(repo, "mine.txt"), "staged\n");
+    gitOut(repo, "add", "mine.txt");
+    writeFileSync(path.join(repo, "mine.txt"), "unstaged\n");
+    writeFileSync(path.join(repo, "untracked.txt"), "untracked\n");
+    const status = gitOut(repo, "status", "--porcelain");
+    const head = gitOut(repo, "rev-parse", "HEAD");
+    const board = outlined("Build");
+    board.projects[0] = { id: WORKSPACE_PROJECT_ID, name: "My repo", summary: "", repo };
+    const { engine, runner } = planServer(board);
+    try {
+      expect(await runner.handle({ command: "runPlan", goalId: board.goals[0].id })).toEqual({ ok: true });
+      await runner.idle();
+      const step = engine.get().tasks[0];
+      expect(step.status).toBe("completed");
+      expect(step.git?.branch).toBe("shepherd/build-2");
+      expect(step.git?.folder).not.toBe(repo);
+      expect(readFileSync(path.join(step.git!.folder, "build.txt"), "utf8")).toBe("build\n");
+      expect(gitOut(repo, "rev-list", "--count", step.git!.branch)).toBe("2");
+      expect(gitOut(repo, "branch", "--show-current")).toBe("my-main");
+      expect(gitOut(repo, "rev-parse", "HEAD")).toBe(head);
+      expect(gitOut(repo, "rev-parse", "other-work")).toBe(head);
+      expect(gitOut(repo, "rev-parse", "shepherd/build")).toBe(head);
+      expect(gitOut(repo, "status", "--porcelain")).toBe(status);
+      expect(readFileSync(path.join(repo, "mine.txt"), "utf8")).toBe("unstaged\n");
+
+      // A saved worktree must not let a missing project path bypass the next check or run.
+      rmSync(repo, { recursive: true });
+      engine.dispatch({ type: "setCheckCommand", id: step.id, command: "touch should-not-run" });
+      await runner.handle({ command: "check", taskId: step.id });
+      await runner.idle();
+      expect(engine.get().tasks[0].verification[0].output).toContain(repo);
+      expect(existsSync(path.join(step.git!.folder, "should-not-run"))).toBe(false);
+      await runner.handle({ command: "run", taskId: step.id });
+      await runner.idle();
+      expect(engine.get().tasks[0].blocker).toContain(repo);
+      expect(existsSync(repo)).toBe(false);
+    } finally {
+      runner.close();
+      engine.close();
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("reruns a check that a restart cut short", async () => {
     const task = finishedTask();
     const { engine, runner } = restartWith({ ...task, verification: task.verification.map((check) => ({ ...check, running: true })) });

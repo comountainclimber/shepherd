@@ -132,6 +132,12 @@ describe("loadState", () => {
     expect(loadState(state)).toEqual(state);
   });
 
+  it("keeps an external repository path without adding a workspace folder", () => {
+    const state = workspace(1);
+    state.projects[0] = { id: state.projects[0].id, name: "Existing", summary: "", repo: "/Users/person/projects/app" };
+    expect(loadState(state)?.projects).toEqual(state.projects);
+  });
+
   it("refuses demo boards, unknown schemas, and boards with no project", () => {
     expect(loadState({ ...schemaOne, projects: [{ id: "proj-checkout", name: "Checkout", summary: "" }] })).toBeNull();
     expect(loadState({ ...schemaOne, schema: 4 })).toBeNull();

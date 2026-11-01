@@ -16,6 +16,7 @@ import {
   changes,
   commitAll,
   ensureRepo,
+  inspectRepo,
   isTaskBranch,
   isTaskName,
   mergeBranch,
@@ -28,6 +29,7 @@ import {
   type Changes,
 } from "./git";
 import { modelCatalog } from "./models";
+import { repoPath } from "./projectRepos";
 
 export type AgentCli = "claude" | "codex";
 
@@ -122,7 +124,7 @@ export function createRunner(options: RunnerOptions): Runner {
   function folderFor(task: Task) {
     const board = state();
     const project = board.projects.find((item) => item.id === task.projectId);
-    return projectFolder(board.workspace, project?.directory, sandbox);
+    return projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
   }
 
   function kill(taskId: string) {
@@ -165,7 +167,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const named = find(taskId) ?? current;
     const provider = providerFor(current);
     const author = AUTHORS[provider];
-    const dir = folderFor(current);
+    const dir = await folderFor(current);
     if ("error" in dir) return fail(taskId, dir.error);
     if (!isTaskName(named.worktree)) return fail(taskId, `Not a usable task folder name: ${named.worktree}`);
     if (!(await loggedIn(provider))) return attempt.stopped ? null : fail(taskId, `${author.name} is not logged in.`);
@@ -176,7 +178,9 @@ export function createRunner(options: RunnerOptions): Runner {
     let merged: string[];
     try {
       [tree, merged] = await serialized(dir.path, async () => {
-        const repo = await ensureRepo(dir.path);
+        const repo = state().projects.find((project) => project.id === task.projectId)?.repo
+          ? (await inspectRepo(dir.path)).repo
+          : await ensureRepo(dir.path);
         const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch);
         return [opened, await prepareRun(opened, branches(upstreamTasks(state(), current)), author)] as const;
       });
@@ -322,7 +326,7 @@ export function createRunner(options: RunnerOptions): Runner {
     refreshing.add(taskId);
     try {
       dispatch({ type: "updateTask", id: taskId, patch: { activity: "Bringing in upstream work…" } });
-      const dir = folderFor(task);
+      const dir = await folderFor(task);
       if ("error" in dir) {
         fail(taskId, dir.error);
         return;
@@ -332,7 +336,9 @@ export function createRunner(options: RunnerOptions): Runner {
       let diff: Changes;
       try {
         [merged, diff] = await serialized(dir.path, async () => {
-          const repo = await ensureRepo(dir.path);
+          const repo = state().projects.find((project) => project.id === task.projectId)?.repo
+            ? (await inspectRepo(dir.path)).repo
+            : await ensureRepo(dir.path);
           const tree = await openWorktree(repo, worktrees, taskId, task.worktree, task.git?.branch);
           const brought = await prepareRun(tree, branches(upstreamTasks(state(), task)), author);
           return [brought, await changes(tree.folder, tree.branch)] as const;
@@ -370,7 +376,7 @@ export function createRunner(options: RunnerOptions): Runner {
     refreshing.add(taskId);
     let first = false;
     try {
-      const dir = folderFor(task);
+      const dir = await folderFor(task);
       if ("error" in dir) {
         fail(taskId, dir.error);
         return;
@@ -386,7 +392,9 @@ export function createRunner(options: RunnerOptions): Runner {
       let diff: Changes;
       try {
         [tree, merged, diff] = await serialized(dir.path, async () => {
-          const repo = await ensureRepo(dir.path);
+          const repo = state().projects.find((project) => project.id === task.projectId)?.repo
+            ? (await inspectRepo(dir.path)).repo
+            : await ensureRepo(dir.path);
           const opened = await openWorktree(repo, worktrees, taskId, name, task.git?.branch);
           const brought = await prepareRun(opened, branches(upstreamTasks(state(), task)), await personAuthor(repo));
           return [opened, brought, await changes(opened.folder, opened.branch)] as const;
@@ -438,7 +446,7 @@ export function createRunner(options: RunnerOptions): Runner {
   async function commitPerson(taskId: string): Promise<string | null> {
     const task = find(taskId);
     if (!task?.git || !existsSync(task.git.folder)) return null;
-    const dir = folderFor(task);
+    const dir = await folderFor(task);
     if ("error" in dir) return dir.error;
     const folder = task.git.folder;
     const branch = task.git.branch;
@@ -480,8 +488,8 @@ export function createRunner(options: RunnerOptions): Runner {
     try {
       dispatch({ type: "startCheck", taskId });
       const started = Date.now();
-      const directory = state().projects.find((item) => item.id === task.projectId)?.directory;
-      const folder = checkFolder(state().workspace, directory, task.git?.branch, sandbox, worktrees);
+      const project = state().projects.find((item) => item.id === task.projectId);
+      const folder = await checkFolder(state().workspace, project?.directory, task.git?.branch, sandbox, worktrees, project?.repo);
       let run: CheckRun;
       try {
         if ("error" in folder) throw new Error(folder.error);
@@ -519,7 +527,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const task = find(taskId);
     if (!task?.git) return "This task has no branch yet. Run it first.";
     if (!isFullyVerified(task)) return "Verify the task before merging it.";
-    const dir = folderFor(task);
+    const dir = await folderFor(task);
     if ("error" in dir) return dir.error;
     try {
       const done = await serialized(dir.path, () =>
@@ -842,7 +850,10 @@ function uncheckedCommand(task: Task): boolean {
   return task.verification.some((check) => check.kind === "command" && check.state === "pending" && !check.running);
 }
 
-export function projectFolder(workspace: string | undefined, directory: string | undefined, sandbox: string): { path: string } | { error: string } {
+export async function projectFolder(workspace: string | undefined, directory: string | undefined, sandbox: string, repo?: string): Promise<{ path: string } | { error: string }> {
+  if (repo !== undefined) {
+    try { return { path: (await inspectRepo(repoPath(repo))).repo }; } catch (error) { return { error: message(error) }; }
+  }
   if (!directory?.trim()) return { error: "This project has no folder." };
   const root = resolveWorkspace(workspace, sandbox);
   if ("error" in root) return root;
@@ -851,16 +862,17 @@ export function projectFolder(workspace: string | undefined, directory: string |
 }
 
 /** A task with a branch is checked in its worktree; anything else is checked in the project folder. */
-export function checkFolder(
+export async function checkFolder(
   workspace: string | undefined,
   directory: string | undefined,
   branch: string | undefined,
   sandbox: string,
   worktrees: string,
-): { path: string } | { error: string } {
-  const dir = projectFolder(workspace, directory, sandbox);
+  repo?: string,
+): Promise<{ path: string } | { error: string }> {
+  const dir = await projectFolder(workspace, directory, sandbox, repo);
   if ("error" in dir || !branch) {
-    if (!("error" in dir)) mkdirSync(dir.path, { recursive: true });
+    if (!("error" in dir) && !repo) mkdirSync(dir.path, { recursive: true });
     return dir;
   }
   if (!isTaskBranch(branch)) return { error: `Not a Shepherd branch: ${branch}` };

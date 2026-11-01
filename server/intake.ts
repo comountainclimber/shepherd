@@ -5,6 +5,7 @@ import { reducer } from "../src/model/reducer";
 import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
+import { repoPath } from "./projectRepos";
 
 export const MAX_TASKS = 50;
 
@@ -119,11 +120,14 @@ export function planProject(state: OrchestrationState, body: unknown, id: string
     const name = text(raw.name, "name") || fail("The project needs a name.");
     const taken = state.projects.find((project) => project.name.toLowerCase() === name.toLowerCase());
     if (taken) fail(`There is already a project named ${taken.name} (${taken.id}).`);
-    const directory = text(raw.directory, "directory") || projectDirectory(name, state.projects);
-    if (directory.split("/").some((part) => !part || part === "." || part === "..")) {
-      fail("directory must be a folder inside the workspace, without . or .. in the path.");
+    if (raw.directory !== undefined) fail("Use repo for an existing repository's absolute path. Omit it for a new folder in the workspace.");
+    const repo = text(raw.repo, "repo");
+    if (raw.repo !== undefined && !repo) fail("repo must name an existing repository by its absolute path.");
+    let absolute: string | undefined;
+    if (repo) {
+      try { absolute = repoPath(repo); } catch (error) { fail((error as Error).message); }
     }
-    const project: Project = { id, name, summary: text(raw.summary, "summary"), directory };
+    const project: Project = { id, name, summary: text(raw.summary, "summary"), ...(absolute ? { repo: absolute } : { directory: projectDirectory(name, state.projects) }) };
     return { project, action: { type: "createProject", project } };
   } catch (error) {
     if (error instanceof Invalid) return { error: error.message };
@@ -204,6 +208,7 @@ export function boardSummary(state: OrchestrationState) {
       id: project.id,
       name: project.name,
       directory: project.directory ?? null,
+      repo: project.repo ?? null,
       goals: state.goals.filter((goal) => goal.projectId === project.id),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)

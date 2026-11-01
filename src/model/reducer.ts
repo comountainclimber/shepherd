@@ -305,7 +305,9 @@ function createProject(state: OrchestrationState, project: Project): Orchestrati
         id: project.id,
         name,
         summary: project.summary.trim(),
-        directory: project.directory?.trim() || projectDirectory(name, state.projects),
+        ...(project.repo?.trim()
+          ? { repo: project.repo.trim() }
+          : { directory: project.directory?.trim() || projectDirectory(name, state.projects) }),
       },
     ],
   };

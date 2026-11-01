@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export class GitError extends Error {}
@@ -113,6 +113,27 @@ export async function gitAvailable(): Promise<boolean> {
   return (await git(process.cwd(), ["--version"])).code === 0;
 }
 
+/** Read-only: a supplied repository must already have a checkout and a commit. */
+export async function inspectRepo(dir: string): Promise<{ repo: string; branch: string }> {
+  let real: string;
+  try {
+    if (!statSync(dir).isDirectory()) throw new Error();
+    real = realpathSync(dir);
+  } catch {
+    throw new GitError(`The repository path ${dir} does not exist or is not a folder.`);
+  }
+  const top = await git(real, ["rev-parse", "--show-toplevel"]);
+  if (top.code !== 0) throw new GitError(`${dir} is not a git repository. Choose a repository with at least one commit.`);
+  if (realpathSync(top.stdout.trim()) !== real) {
+    throw new GitError(`${dir} is inside a git repository. Use its top folder, ${top.stdout.trim()}.`);
+  }
+  if ((await git(real, ["rev-parse", "--verify", "-q", "HEAD^{commit}"])).code !== 0) {
+    throw new GitError(`${dir} has no commits. Make a first commit before adding it to Shepherd.`);
+  }
+  const branch = (await currentBranch(real)) ?? `detached at ${await must(real, ["rev-parse", "--short", "HEAD"])}`;
+  return { repo: real, branch };
+}
+
 /** Makes `dir` the top of a git repository with at least one commit, and returns its real path. */
 export async function ensureRepo(dir: string): Promise<string> {
   mkdirSync(dir, { recursive: true });
@@ -191,6 +212,7 @@ export async function openWorktree(repo: string, root: string, taskId: string, n
     if ((await ownerOf(repo, candidate)) === taskId) chosen = candidate;
   }
   const folder = worktreeFolder(root, repo, chosen);
+  if (target === chosen) throw new GitError(`${repo} has ${chosen} checked out. Switch the project checkout to another branch before running this step.`);
   if (!existsSync(path.join(folder, ".git"))) {
     await must(repo, ["worktree", "prune"]);
     mkdirSync(path.dirname(folder), { recursive: true });
@@ -199,11 +221,16 @@ export async function openWorktree(repo: string, root: string, taskId: string, n
   if (!(await exists(repo, baseRef(chosen)))) {
     await must(repo, ["update-ref", baseRef(chosen), await must(repo, ["merge-base", "HEAD", chosen])]);
   }
+  if ((await currentBranch(folder)) !== chosen) throw new GitError(`${folder} is no longer on ${chosen}. Switch it back before running this step.`);
   return { repo, branch: chosen, folder, target };
 }
 
 /** Commits everything in the worktree. Returns false when there was nothing to commit. */
 export async function commitAll(folder: string, message: string[], author: Author): Promise<boolean> {
+  const branch = await currentBranch(folder);
+  if (!branch || !BRANCH.test(branch) || !(await ownerOf(folder, branch))) {
+    throw new GitError(`Shepherd cannot commit in ${folder}: its checked-out branch was not created for a Shepherd step.`);
+  }
   await must(folder, ["add", "-A"]);
   if ((await git(folder, ["diff", "--cached", "--quiet"])).code === 0) return false;
   await must(folder, ["commit", "-q", ...message.filter(Boolean).flatMap((part) => ["-m", part])], identity(author));

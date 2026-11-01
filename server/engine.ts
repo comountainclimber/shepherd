@@ -112,6 +112,12 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
   const action = value && typeof value === "object" ? (value as Action) : null;
   if (!action || typeof action.type !== "string") return { error: "Send an action with a type." };
   if (!TAB_ACTIONS.has(action.type)) return { error: `A tab cannot send ${action.type}; the server does that itself.` };
+  if (action.type === "createProject") {
+    const project = action.project;
+    if (!project || typeof project.id !== "string" || !project.id || typeof project.name !== "string" || !project.name.trim() || typeof project.summary !== "string" || (project.repo !== undefined && (typeof project.repo !== "string" || !project.repo.trim()))) {
+      return { error: "A project needs an id, name, summary and a repository path or workspace folder." };
+    }
+  }
   if (action.type === "updateTask") {
     const blocked = Object.keys(action.patch ?? {}).filter((key) => !EDITABLE.has(key));
     if (blocked.length) return { error: `A tab cannot change ${blocked.join(", ")} directly.` };

@@ -12,6 +12,7 @@ import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
+import { availableRepo } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
 
@@ -65,11 +66,12 @@ export function serverUrl(address: AddressInfo | string | null | undefined): str
 }
 
 /** A person's checklist, drafted in their step's folder once it exists, or else the project folder. */
-function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
+export async function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
   const project = board.projects.find((item) => item.id === task.projectId);
-  const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : projectFolder(board.workspace, project?.directory, sandbox);
-  if ("error" in folder) return Promise.resolve(folder);
-  mkdirSync(folder.path, { recursive: true });
+  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
+  if ("error" in base) return base;
+  const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : base;
+  if (!project?.repo) mkdirSync(folder.path, { recursive: true });
   return draftChecklist(checklistInput(board, task), folder.path, agentChoice({}, modelCatalog().codex.default), signal);
 }
 
@@ -140,6 +142,14 @@ async function route(
         errors.push(action.error);
         continue;
       }
+      if (action.type === "createProject" && action.project.repo !== undefined) {
+        try {
+          action.project.repo = (await availableRepo(action.project.repo, engine.get, sandbox)).repo;
+        } catch (error) {
+          errors.push(error instanceof Error ? error.message : String(error));
+          continue;
+        }
+      }
       if (action.type === "deleteTask") runner.cancel(action.id);
       if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal") {
         for (const step of engine.get().tasks.filter((step) => step.goalId === action.id)) {
@@ -186,11 +196,27 @@ async function route(
     }
     return true;
   }
+  if (pathname === "/api/projects/repo" && method === "GET") {
+    try {
+      sendJson(res, 200, await availableRepo(url.searchParams.get("path") ?? "", engine.get, sandbox));
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (pathname === "/api/projects" && method === "POST") {
     const planned = planProject(engine.get(), await readJson(req), `proj-api-${stamp()}`);
     if ("error" in planned) {
       sendJson(res, 400, planned);
       return true;
+    }
+    if (planned.project.repo) {
+      try {
+        planned.project.repo = (await availableRepo(planned.project.repo, engine.get, sandbox)).repo;
+      } catch (error) {
+        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+        return true;
+      }
     }
     engine.dispatch(planned.action);
     sendJson(res, 201, { project: planned.project, note: "Added to the board." });
@@ -210,12 +236,12 @@ async function route(
     if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
     if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
     const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
-    const folder = projectFolder(board.workspace, project.directory, sandbox);
+    const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
     if ("error" in folder) {
       sendJson(res, 409, { error: folder.error });
       return true;
     }
-    mkdirSync(folder.path, { recursive: true });
+    if (!project.repo) mkdirSync(folder.path, { recursive: true });
     const abandon = new AbortController();
     res.on("close", () => {
       if (!res.writableEnded) abandon.abort();
