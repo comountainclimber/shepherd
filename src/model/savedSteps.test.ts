@@ -73,6 +73,21 @@ describe("readSavedSteps", () => {
   it("accepts the starters as they are", () => {
     expect(readSavedSteps(STARTERS)).toEqual(STARTERS);
   });
+
+  it("offers a Codex merge request step and preserves its push option through saving and copying", () => {
+    const saved = STARTERS.find((step) => step.id === "starter-merge-request")!;
+    expect(saved.name).toBe("Open a merge request");
+    expect(saved.steps[0]).toMatchObject({ runner: "agent", agentId: "agent-codex", pushBeforeRun: true });
+    expect(saved.steps[0]!.objective).toContain("GitLab or GitHub");
+    expect(saved.steps[0]!.objective).toContain("earlier steps' reports");
+    expect(saved.steps[0]!.objective).toContain("conventions, templates");
+    const copy = fromSaved(readSavedSteps([saved])[0]!, P, 0, catalog, () => "mr").steps[0]!.task;
+    expect(copy.pushBeforeRun).toBe(true);
+    expect(toSavedItem(copy, 0).pushBeforeRun).toBe(true);
+    expect(changedFrom({ ...copy, pushBeforeRun: false }, saved)).toBe(true);
+    expect(toSavedItem({ ...copy, runner: "human" }, 0).pushBeforeRun).toBeUndefined();
+    expect(readSavedSteps([{ ...saved, steps: [{ ...saved.steps[0], runner: "human" }] }])[0]!.steps[0]!.pushBeforeRun).toBeUndefined();
+  });
 });
 
 describe("toSavedItem", () => {
@@ -239,7 +254,7 @@ describe("upsertSaved and withStarters", () => {
   it("brings back only the starters you deleted", () => {
     const edited = upsertSaved([STARTERS[0]!], { ...STARTERS[0]!, name: "Mine now" }, 5);
     const back = withStarters(edited);
-    expect(back.map((entry) => entry.id)).toEqual(["starter-chrome", "starter-audit", "starter-yourself"]);
+    expect(back.map((entry) => entry.id)).toEqual(STARTERS.map((entry) => entry.id));
     expect(back[0]!.name).toBe("Mine now");
   });
 });

@@ -38,5 +38,8 @@ describe("task actions from tabs", () => {
     expect(tabAction(board, { type: "updateTask", id: "x", patch: { goalId: "other" } })).toHaveProperty("error");
     expect(tabAction(board, { type: "goalRuntime", id: "x", patch: { branch: "main" } })).toHaveProperty("error");
     expect(tabAction(board, { type: "createGoal", goal: { ...blankGoal(board.projects[0].id, "Fake"), branch: "main", folder: "/tmp/fake" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "updateTask", id: "x", patch: { pushBeforeRun: true } })).toEqual({ type: "updateTask", id: "x", patch: { pushBeforeRun: true } });
+    expect(tabAction(board, { type: "updateTask", id: "x", patch: { pushBeforeRun: "yes" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "updateGoal", id: "x", patch: { mergeRequestUrl: "https://github.com/o/r/pull/1" } })).toHaveProperty("error");
   });
 });

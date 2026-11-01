@@ -68,6 +68,8 @@ describe("planTasks", () => {
     );
     expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a step in this task/);
     expect(error({ project: "Greeter", name: "X", autoRun: "yes" })).toBe("autoRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", pushBeforeRun: "yes" })).toBe("pushBeforeRun must be true or false.");
+    expect(error({ project: "Greeter", name: "X", runner: "human", pushBeforeRun: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", review: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", autoRun: true })).toMatch(/done by a person/);
   });
@@ -77,14 +79,14 @@ describe("planTasks", () => {
       project: "Greeter",
       tasks: [
         { name: "Build", checkCommand: "npm run build", autoRun: true },
-        { name: "Test", checkCommand: "npm test", independent: true, review: true, autoRun: true, dependsOn: ["Build"] },
+        { name: "Test", checkCommand: "npm test", independent: true, review: true, autoRun: true, pushBeforeRun: true, dependsOn: ["Build"] },
       ],
     });
     const [build, test] = state.tasks;
     expect(build).toMatchObject({ autoRun: true });
     expect(build!.independent).toBeUndefined();
     expect(build!.verification.map((check) => check.kind)).toEqual(["command"]);
-    expect(test).toMatchObject({ autoRun: true, independent: true });
+    expect(test).toMatchObject({ autoRun: true, independent: true, pushBeforeRun: true });
     expect(test!.verification.map((check) => check.kind)).toEqual(["command", "review"]);
   });
 

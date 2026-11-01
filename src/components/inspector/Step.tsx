@@ -336,7 +336,7 @@ function MoreOptions({ task }: { task: Task }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const agent = task.runner === "agent";
   const review = task.verification.some((check) => check.kind === "review");
-  const extras = task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent;
+  const extras = task.acceptance.length > 0 || !!task.checkCommand || review || !!task.independent || !!task.pushBeforeRun;
   const [open, setOpen] = useState(extras);
   const [checkCommand, setCheckCommand] = useState(task.checkCommand ?? "");
   useEffect(() => setCheckCommand(task.checkCommand ?? ""), [task.checkCommand]);
@@ -391,6 +391,13 @@ function MoreOptions({ task }: { task: Task }) {
                 onChange={(on) => dispatch({ type: "setReview", id: task.id, on })}
                 label="Ask me to review it"
                 hint="The plan waits for you to accept the work before the next steps start."
+              />
+              <Toggle
+                checked={!!task.pushBeforeRun}
+                disabled={task.status === "running"}
+                onChange={(pushBeforeRun) => dispatch({ type: "updateTask", id: task.id, patch: { pushBeforeRun } })}
+                label="Push task branch before running"
+                hint="Shepherd pushes to the remote the base branch tracks, or origin. If the push fails, this step stops before the agent starts."
               />
               <Toggle
                 checked={!!task.independent}

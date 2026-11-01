@@ -38,6 +38,7 @@ export function blankTask(args: {
   review?: boolean;
   autoRun?: boolean;
   independent?: boolean;
+  pushBeforeRun?: boolean;
 }): Task {
   const runner = args.runner ?? "agent";
   const command = args.checkCommand?.trim() ?? "";
@@ -67,6 +68,7 @@ export function blankTask(args: {
     ...(command ? { checkCommand: command } : {}),
     ...(agent && args.autoRun ? { autoRun: true } : {}),
     ...(agent && args.independent ? { independent: true } : {}),
+    ...(agent && args.pushBeforeRun ? { pushBeforeRun: true } : {}),
   };
 }
 

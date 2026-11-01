@@ -1,4 +1,5 @@
 import { openIssues } from "../model/stage";
+import { dependencyOrder } from "../model/outline";
 import type { OrchestrationState, Task } from "../model/types";
 
 export interface UpstreamContext {
@@ -14,6 +15,7 @@ export interface PromptOptions {
   /** The agent can ask Shepherd for screenshots with $SHEPHERD_LOOK. */
   look?: boolean;
   taskBranch?: string;
+  pushed?: { remote: string; branch: string; base: string };
 }
 
 export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
@@ -27,7 +29,18 @@ export function upstreamTasks(state: OrchestrationState, task: Task): Task[] {
 const REPORT_LIMIT = 4000;
 
 export function upstreamContext(state: OrchestrationState, task: Task): UpstreamContext[] {
-  return upstreamTasks(state, task).map((item) => {
+  let steps = upstreamTasks(state, task);
+  if (task.pushBeforeRun) {
+    const seen = new Set<string>([task.id]);
+    const visit = (step: Task) => {
+      if (seen.has(step.id) || step.goalId !== task.goalId) return;
+      seen.add(step.id);
+      for (const earlier of upstreamTasks(state, step)) visit(earlier);
+    };
+    for (const step of steps) visit(step);
+    steps = dependencyOrder(state.tasks.filter((step) => step.id !== task.id && seen.has(step.id)), state.dependencies);
+  }
+  return steps.map((item) => {
     const report = item.status === "completed" ? (item.output ?? item.activity) : "";
     const issues = openIssues(item, state.tasks)
       .filter((issue) => issue.stepId !== task.id)
@@ -91,6 +104,9 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
     options.taskBranch ? `This step belongs to task branch ${options.taskBranch}. Accepted work collects there; the project checkout stays untouched.` : "",
+    options.pushed
+      ? `Shepherd has pushed the task branch ${options.pushed.branch} to remote ${options.pushed.remote}. Its base branch is ${options.pushed.base}. You may create or update a merge request (or pull request) from that task branch into its base with glab, gh or your own tools. Use the named remote's repository. Do not commit or push yourself. Finish with the merge request's full URL on its own line.`
+      : "",
     `Task: ${task.name}`,
     `Objective: ${task.objective || task.name}`,
     task.description && task.description !== task.objective ? `Context: ${task.description}` : "",

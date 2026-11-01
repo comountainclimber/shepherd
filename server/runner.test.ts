@@ -29,13 +29,13 @@ say({ type: "item.completed", item: { type: "agent_message", text: "Report from 
 say({ type: "turn.completed" });
 `;
 
-function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"]) {
+function planServer(board: OrchestrationState, checklist?: RunnerOptions["checklist"], agentSource = FAKE_AGENT) {
   const root = mkdtempSync(path.join(tmpdir(), "shepherd-plan-"));
   const sandbox = path.join(root, "sandbox");
   mkdirSync(path.join(sandbox, "workspace"), { recursive: true });
   const agent = path.join(root, "agent.mjs");
   const log = path.join(root, "prompts.jsonl");
-  writeFileSync(agent, FAKE_AGENT);
+  writeFileSync(agent, agentSource);
   const file = path.join(root, "state.json");
   writeFileSync(file, JSON.stringify(envelope(board)));
   const engine = createEngine(file);
@@ -191,6 +191,84 @@ describe("scheduler", () => {
 });
 
 describe("plans", () => {
+  it("pushes accepted task work before the last agent, passes all reports, and saves its MR link", async () => {
+    const board = outlined("Build\nReview\nMR");
+    board.tasks[2]!.pushBeforeRun = true;
+    const url = "https://gitlab.example.test/team/app/-/merge_requests/17";
+    const source = FAKE_AGENT + `
+if (name === "mr") {
+  const { execFileSync } = await import("node:child_process");
+  const pushed = execFileSync("git", ["ls-remote", "--exit-code", "publish", "refs/heads/" + process.env.SHEPHERD_TASK_BRANCH], { encoding: "utf8" }).trim().split(/\\s/)[0];
+  const accepted = execFileSync("git", ["rev-parse", process.env.SHEPHERD_TASK_BRANCH], { encoding: "utf8" }).trim();
+  if (pushed !== accepted) process.exit(1);
+  for (const file of ["build.txt", "review.txt"]) execFileSync("git", ["cat-file", "-e", pushed + ":" + file]);
+  say({ type: "item.completed", item: { type: "agent_message", text: "Updated the merge request.\\n${url}" } });
+}
+`;
+    const { engine, runner, project, prompts } = planServer(board, undefined, source);
+    try {
+      await ensureRepo(project);
+      const remote = path.join(path.dirname(project), "remote.git");
+      gitOut(project, "init", "--bare", "-q", remote);
+      gitOut(project, "remote", "add", "publish", remote);
+      const base = gitOut(project, "branch", "--show-current");
+      gitOut(project, "config", `branch.${base}.remote`, "publish");
+      gitOut(project, "config", `branch.${base}.merge`, `refs/heads/${base}`);
+      const initial = gitOut(project, "rev-parse", "HEAD");
+      await runner.handle({ command: "runPlan", goalId: board.goals[0]!.id });
+      await runner.idle();
+      const goal = engine.get().goals[0]!;
+      expect(engine.get().tasks.map((step) => step.status)).toEqual(["completed", "completed", "completed"]);
+      const prompt = prompts().find((item) => item.name === "mr")!.prompt;
+      expect(prompt).toContain(`Shepherd has pushed the task branch ${goal.branch} to remote publish. Its base branch is ${base}.`);
+      expect(prompt).toContain("Report from build");
+      expect(prompt).toContain("Report from review");
+      expect(goal.mergeRequestUrl).toBe(url);
+      expect(gitOut(remote, "for-each-ref", "--format=%(refname)")).toBe(`refs/heads/${goal.branch}`);
+      expect(gitOut(project, "rev-parse", "HEAD")).toBe(initial);
+      expect(gitOut(project, "status", "--porcelain")).toBe("");
+    } finally { runner.close(); engine.close(); }
+  }, 60_000);
+
+  it("fails without a remote before creating branches, collecting work or starting the agent", async () => {
+    const board = outlined("MR");
+    board.tasks[0]!.pushBeforeRun = true;
+    const { engine, runner, project, prompts } = planServer(board);
+    try {
+      await ensureRepo(project);
+      writeFileSync(path.join(project, "mine.txt"), "mine");
+      gitOut(project, "add", ".");
+      const status = gitOut(project, "status", "--porcelain");
+      const refs = gitOut(project, "show-ref");
+      await runner.handle({ command: "runPlan", goalId: board.goals[0]!.id });
+      await runner.idle();
+      expect(engine.get().tasks[0]!.status).toBe("failed");
+      expect(engine.get().tasks[0]!.blocker).toContain("remote origin is not available");
+      expect(engine.get().tasks[0]!.git).toBeUndefined();
+      expect(engine.get().goals[0]!.branch).toBeUndefined();
+      expect(() => prompts()).toThrow();
+      expect(gitOut(project, "status", "--porcelain")).toBe(status);
+      expect(gitOut(project, "show-ref")).toBe(refs);
+    } finally { runner.close(); engine.close(); }
+  });
+
+  it("does not start an agent after git rejects the push", async () => {
+    const board = outlined("MR");
+    board.tasks[0]!.pushBeforeRun = true;
+    const { engine, runner, project, prompts } = planServer(board);
+    try {
+      await ensureRepo(project);
+      gitOut(project, "remote", "add", "origin", path.join(path.dirname(project), "missing.git"));
+      await runner.handle({ command: "runPlan", goalId: board.goals[0]!.id });
+      await runner.idle();
+      expect(engine.get().tasks[0]!.status).toBe("failed");
+      expect(engine.get().tasks[0]!.blocker).toContain("does not appear to be a git repository");
+      expect(engine.get().tasks[0]!.git).toBeUndefined();
+      expect(engine.get().goals[0]!.mergeRequestUrl).toBeUndefined();
+      expect(() => prompts()).toThrow();
+    } finally { runner.close(); engine.close(); }
+  });
+
   it("runs the outline in order, hands each step the work and reports before it, and stops when done", async () => {
     const { engine, runner, prompts } = planServer(outlined("Plan\n  Front\n  Back\nShip"));
     expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });

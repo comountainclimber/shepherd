@@ -97,6 +97,8 @@ export interface Task {
   autoRun?: boolean;
   /** Leave the upstream agents' own summaries out of this task's prompt, so it judges their work from the files. */
   independent?: boolean;
+  /** Shepherd pushes the task branch before starting this agent. */
+  pushBeforeRun?: boolean;
   /** Why the task's verification no longer counts: upstream work changed after it ran. */
   outdated?: string;
   /** Automatic retries since its check last passed. */
@@ -148,6 +150,8 @@ export interface SavedStepItem {
   checkCommand?: string;
   review?: boolean;
   independent?: boolean;
+  /** Shepherd pushes the task branch before starting this agent. */
+  pushBeforeRun?: boolean;
   /** Its indent in the block. Steps at 1 run side by side under the step they are added after. */
   depth: number;
 }
@@ -239,6 +243,7 @@ export interface Goal {
   base?: string;
   blocker?: string | null;
   merged?: { into: string; sha: string; at: number };
+  mergeRequestUrl?: string;
 }
 
 export interface OrchestrationState {
@@ -306,7 +311,7 @@ export type Action =
   | { type: "createProject"; project: Project }
   | { type: "createGoal"; goal: Goal }
   | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal">> }
-  | { type: "goalRuntime"; id: string; patch: Partial<Pick<Goal, "branch" | "folder" | "base" | "blocker" | "merged">> }
+  | { type: "goalRuntime"; id: string; patch: Partial<Pick<Goal, "branch" | "folder" | "base" | "blocker" | "merged" | "mergeRequestUrl">> }
   | { type: "finishGoal"; id: string }
   | { type: "archiveGoal"; id: string }
   | { type: "reopenGoal"; id: string }

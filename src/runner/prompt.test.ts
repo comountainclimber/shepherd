@@ -52,4 +52,23 @@ describe("prompts", () => {
     expect(taskPrompt(task)).not.toContain(again);
     expect(taskPrompt({ ...task, sessionId: "chat-1" })).toContain(again);
   });
+
+  it("names the pushed task branch, remote and base, while forbidding agent commits and pushes", () => {
+    const task = get(board(), "b");
+    const prompt = taskPrompt(task, undefined, [], { pushed: { remote: "upstream", branch: "shepherd/fix", base: "release" } });
+    expect(prompt).toContain("Shepherd has pushed the task branch shepherd/fix to remote upstream. Its base branch is release.");
+    expect(prompt).toContain("glab, gh or your own tools");
+    expect(prompt).toContain("Do not commit or push yourself");
+    expect(prompt).toContain("full URL on its own line");
+    expect(taskPrompt(task)).not.toContain("Shepherd has pushed");
+  });
+
+  it("gives a push-enabled step all its ancestors' reports once, in order, within its task", () => {
+    let state = board({ type: "createTask", task: step("c"), dependsOn: [{ source: "b" }, { source: "a" }] });
+    state = reducer(state, { type: "updateTask", id: "c", patch: { pushBeforeRun: true } });
+    const context = upstreamContext(state, get(state, "c"));
+    expect(context.map((item) => item.name)).toEqual(["a", "b"]);
+    expect(context[0]?.summary).toBeTruthy();
+    expect(upstreamContext(state, get(state, "b")).map((item) => item.name)).toEqual(["a"]);
+  });
 });

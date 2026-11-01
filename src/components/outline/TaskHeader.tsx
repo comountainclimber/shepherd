@@ -1,4 +1,4 @@
-import { Check, Copy, FolderOpen, GitBranch, GitMerge, MoreHorizontal, Plus, Terminal } from "lucide-react";
+import { Check, Copy, ExternalLink, FolderOpen, GitBranch, GitMerge, MoreHorizontal, Plus, Terminal } from "lucide-react";
 import { useState } from "react";
 import { goalSummary } from "../../model/goals";
 import { mergePlan, openTaskFolder } from "../../runner/live";
@@ -80,6 +80,13 @@ export function TaskHeader() {
       ) : (
         <p className="mt-2 text-[11px] text-faint">Branch and folder are made when the first step needs them.</p>
       )}
+      {task.mergeRequestUrl ? (
+        <a href={task.mergeRequestUrl} target="_blank" rel="noreferrer"
+          className="mt-2 inline-flex max-w-full items-center gap-1.5 text-[12px] text-brass hover:underline">
+          <ExternalLink size={13} className="shrink-0" />
+          <span className="min-w-0 break-all">{task.mergeRequestUrl}</span>
+        </a>
+      ) : null}
       {task.folder ? (
         <div className="mt-2 flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
           <code title={task.folder}

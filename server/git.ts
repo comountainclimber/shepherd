@@ -48,6 +48,25 @@ export function isTaskBranch(branch: string): boolean {
   return BRANCH.test(branch);
 }
 
+/** A local tracking branch (remote ".") cannot receive a hosted merge request. */
+export async function taskPushRemote(repo: string, base?: string): Promise<string> {
+  const tracked = base ? await git(repo, ["config", "--get", `branch.${base}.remote`]) : null;
+  const name = tracked?.code === 0 ? tracked.stdout.trim() : "";
+  const remote = name && name !== "." ? name : "origin";
+  const result = await git(repo, ["remote", "get-url", "--push", "--", remote]);
+  if (result.code !== 0) {
+    throw new GitError(`Cannot push the task branch: remote ${remote} is not available. Add it or set the base branch's tracking remote.\n${(result.stderr || result.stdout).trim()}`);
+  }
+  return remote;
+}
+
+/** Explicit refs keep push.default and custom push refspecs from pushing other branches. */
+export async function pushTaskBranch(repo: string, branch: string, remote: string): Promise<void> {
+  if (!isTaskBranch(branch)) throw new GitError(`Not a Shepherd task branch: ${branch}`);
+  const result = await git(repo, ["push", "--", remote, `refs/heads/${branch}:refs/heads/${branch}`]);
+  if (result.code !== 0) throw new GitError(`Could not push ${branch} to ${remote}:\n${(result.stderr || result.stdout).trim()}`);
+}
+
 export function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): Promise<Result> {
   return new Promise((resolve) => {
     const child = spawn("git", [...BASE_ARGS, ...args], {

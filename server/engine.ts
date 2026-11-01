@@ -42,7 +42,7 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
 ]);
 
 /** Fields of a task a tab may edit directly. The rest change only through runs, checks and merges. */
-const EDITABLE = new Set(["name", "objective", "description", "acceptance", "autoRun", "independent"]);
+const EDITABLE = new Set(["name", "objective", "description", "acceptance", "autoRun", "independent", "pushBeforeRun"]);
 
 export interface Engine {
   get(): OrchestrationState;
@@ -124,10 +124,11 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
   if (action.type === "updateTask") {
     const blocked = Object.keys(action.patch ?? {}).filter((key) => !EDITABLE.has(key));
     if (blocked.length) return { error: `A tab cannot change ${blocked.join(", ")} directly.` };
+    if (action.patch?.pushBeforeRun !== undefined && typeof action.patch.pushBeforeRun !== "boolean") return { error: "pushBeforeRun must be true or false." };
   }
   if (action.type === "createGoal") {
     const goal = action.goal;
-    if (goal && ["branch", "folder", "base", "blocker", "merged"].some((key) => key in goal)) return { error: "A new task starts with no branch. Shepherd creates it when needed." };
+    if (goal && ["branch", "folder", "base", "blocker", "merged", "mergeRequestUrl"].some((key) => key in goal)) return { error: "A new task starts with no branch. Shepherd creates it when needed." };
     if (!goal || typeof goal.id !== "string" || !goal.id || typeof goal.name !== "string" || !goal.name.trim() || typeof goal.goal !== "string" || !state.projects.some((project) => project.id === goal.projectId)) {
       return { error: "A new task needs an id, name, goal text and a project." };
     }
@@ -166,6 +167,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
   if (created.some((task) => (task.model !== undefined && !isModelId(task.model)) || (task.effort !== undefined && !isEffort(task.effort)))) {
     return { error: "That is not a model or thinking level an agent can use." };
   }
+  if (created.some((task) => task.pushBeforeRun !== undefined && typeof task.pushBeforeRun !== "boolean")) return { error: "pushBeforeRun must be true or false." };
   return action;
 }
 

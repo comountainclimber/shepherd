@@ -56,6 +56,26 @@ export const STARTERS: SavedStep[] = [
     starter: true,
     steps: [{ name: "Check it yourself", runner: "human", agentId: null, objective: "", description: "", acceptance: [], depth: 0 }],
   },
+  {
+    id: "starter-merge-request",
+    name: "Open a merge request",
+    version: 1,
+    updatedAt: 0,
+    starter: true,
+    steps: [
+      {
+        name: "Open a merge request",
+        runner: "agent",
+        agentId: "agent-codex",
+        pushBeforeRun: true,
+        objective:
+          "Do not change any files. Open or update a merge request for the task branch Shepherd has pushed, targeting the task's base branch. Read the named remote's URL to determine whether it is GitLab or GitHub, including self-hosted instances. Use glab, gh or your own tools for that remote's repository. Look for an existing open merge request from this source branch into this base and update it rather than making a duplicate. Write the title and description from the earlier steps' reports and the task's diff, including what changed and how it was verified. Follow this repository's merge request conventions, templates and any applicable skills. Do not commit or push. Finish with the merge request's full URL on its own line. If you cannot create or update it, report the error plainly and do not claim success.",
+        description: "Add this as the task's last step, after its work and checks.",
+        acceptance: [],
+        depth: 0,
+      },
+    ],
+  },
 ];
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -87,6 +107,7 @@ function item(raw: unknown): SavedStepItem | null {
     ...(checkCommand ? { checkCommand } : {}),
     ...(agent && step.review === true ? { review: true } : {}),
     ...(agent && step.independent === true ? { independent: true } : {}),
+    ...(agent && step.pushBeforeRun === true ? { pushBeforeRun: true } : {}),
     depth: Number.isInteger(step.depth) ? Math.max(0, Math.min(step.depth as number, MAX_DEPTH)) : 0,
   };
 }
@@ -131,6 +152,7 @@ export function toSavedItem(task: Task, depth: number, keepChecklist = true): Sa
     ...(checkCommand ? { checkCommand } : {}),
     ...(agent && task.verification.some((check) => check.kind === "review") ? { review: true } : {}),
     ...(agent && task.independent ? { independent: true } : {}),
+    ...(agent && task.pushBeforeRun ? { pushBeforeRun: true } : {}),
     depth,
   };
 }
@@ -207,6 +229,7 @@ export function fromSaved(
       checkCommand: entry.checkCommand,
       review: entry.review,
       independent: entry.independent,
+      pushBeforeRun: entry.pushBeforeRun,
       runner: entry.runner,
       agentId: entry.agentId,
       worktree: id,

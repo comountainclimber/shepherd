@@ -744,6 +744,7 @@ function reassign(state: OrchestrationState, id: string, agentId: string | null,
     if (human) {
       delete next.autoRun;
       delete next.independent;
+      delete next.pushBeforeRun;
     }
   }
   return log.finish({ tasks: replaceTask(state.tasks, next) });

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { resolveGoal } from "../src/model/goals";
+import { reportedMergeRequest } from "../src/model/mergeRequest";
 import { slugify } from "../src/model/factory";
 import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
 import { dependencyOrder } from "../src/model/outline";
@@ -27,7 +28,9 @@ import {
   openWorktree,
   personAuthor,
   prepareRun,
+  pushTaskBranch,
   serialized,
+  taskPushRemote,
   worktreeFolder,
   type Author,
   type Changes,
@@ -171,13 +174,22 @@ export function createRunner(options: RunnerOptions): Runner {
     const attempt: Attempt = { stopped: false, child: null, scheduled: !manual };
     runs.set(taskId, attempt);
     try {
+      // Refuse a missing remote before collecting work or creating any git branches.
+      let pushRemote: string | undefined;
+      if (task.pushBeforeRun) {
+        const dir = await folderFor(task);
+        if ("error" in dir) return fail(taskId, dir.error);
+        const goal = state().goals.find((item) => item.id === task.goalId);
+        pushRemote = await taskPushRemote(dir.path, goal?.base ?? (await inspectRepo(dir.path)).branch);
+        if (attempt.stopped) return null;
+      }
       for (const upstream of upstreamTasks(state(), task)) {
         if (isFullyVerified(upstream) && upstream.git && !collected(upstream)) {
           const error = await merge(upstream.id);
           if (error) return fail(taskId, error);
         }
       }
-      return await execute(task, attempt, extra, manual);
+      return await execute(task, attempt, extra, manual, pushRemote);
     } catch (error) {
       return attempt.stopped ? null : fail(taskId, `Shepherd hit an error running this task: ${message(error)}`);
     } finally {
@@ -186,7 +198,7 @@ export function createRunner(options: RunnerOptions): Runner {
     }
   }
 
-  async function execute(task: Task, attempt: Attempt, extra: string | undefined, manual: boolean): Promise<string | null> {
+  async function execute(task: Task, attempt: Attempt, extra: string | undefined, manual: boolean, pushRemote?: string): Promise<string | null> {
     const taskId = task.id;
     if (manual && task.retries) dispatch({ type: "updateTask", id: taskId, patch: { retries: undefined } });
     dispatch({ type: "setStatus", id: taskId, status: "running" });
@@ -215,6 +227,12 @@ export function createRunner(options: RunnerOptions): Runner {
           ? (await inspectRepo(dir.path)).repo
           : await ensureRepo(dir.path);
         const goal = await taskTree(current, repo);
+        if (attempt.stopped) throw new Error("The step was stopped.");
+        if (pushRemote) {
+          dispatch({ type: "updateTask", id: taskId, patch: { activity: `Pushing ${goal.branch} to ${pushRemote}…` } });
+          await pushTaskBranch(repo, goal.branch, pushRemote);
+          if (attempt.stopped) throw new Error("The step was stopped.");
+        }
         const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch, { start: goal.branch, prefix: "shepherd-step" });
         return [opened, await prepareRun(opened, [goal.branch, ...branches(upstreamTasks(state(), current))], author)] as const;
       });
@@ -231,7 +249,12 @@ export function createRunner(options: RunnerOptions): Runner {
 
     const latest = find(taskId)!;
     const tools = lookEnv(taskId);
-    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK, taskBranch: taskEnv(latest).SHEPHERD_TASK_BRANCH });
+    const goal = state().goals.find((item) => item.id === latest.goalId)!;
+    const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), {
+      look: !!tools.SHEPHERD_LOOK,
+      taskBranch: goal.branch,
+      ...(pushRemote ? { pushed: { remote: pushRemote, branch: goal.branch!, base: goal.base! } } : {}),
+    });
     const spec = command(provider, prompt, latest.sessionId ?? null, agentChoice({ model: latest.model, effort: latest.effort }, models()[provider].default));
     const child = spawn(spec.cmd, spec.args, {
       cwd: tree.folder,
@@ -317,6 +340,10 @@ export function createRunner(options: RunnerOptions): Runner {
       const error = exitError(stderrTail);
       fail(taskId, error ? `The agent exited with code ${code}: ${error}` : `The agent exited with code ${code}.`);
     } else finish(taskId, outcome?.summary || files);
+    if (pushRemote && find(taskId)?.status === "completed") {
+      const mergeRequestUrl = reportedMergeRequest(report || outcome?.summary || "");
+      if (mergeRequestUrl) dispatch({ type: "goalRuntime", id: latest.goalId, patch: { mergeRequestUrl } });
+    }
     // The agent is done; what follows is the check, which a new run may replace.
     if (runs.get(taskId) === attempt) runs.delete(taskId);
 

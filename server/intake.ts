@@ -59,12 +59,13 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const review = flag(request.review, field("review"), false);
     const autoRun = flag(request.autoRun, field("autoRun"), false);
     const independent = flag(request.independent, field("independent"), false);
+    const pushBeforeRun = flag(request.pushBeforeRun, field("pushBeforeRun"), false);
     const model = text(request.model, field("model"));
     if (model && !isModelId(model)) fail(`${field("model")} is not a model name, such as gpt-6-astra or opus.`);
     const effort = text(request.thinking, field("thinking"));
     if (effort && !isEffort(effort)) fail(`${field("thinking")} must be one of: ${EFFORTS.join(", ")}.`);
-    if (runner === "human" && (autoRun || independent || review || model || effort)) {
-      fail(`${where} is done by a person, so autoRun, independent, review, model and thinking do not apply to it.`);
+    if (runner === "human" && (autoRun || independent || pushBeforeRun || review || model || effort)) {
+      fail(`${where} is done by a person, so autoRun, independent, pushBeforeRun, review, model and thinking do not apply to it.`);
     }
     const dependsOn = dependencies(scratch, goal.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
@@ -81,6 +82,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
         review,
         autoRun,
         independent,
+        pushBeforeRun,
         runner,
         agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
         worktree: freeWorktree(scratch, project.id, name),

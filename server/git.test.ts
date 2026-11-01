@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, markAccepted, openGoalWorktree, openWorktree, prepareRun } from "./git";
+import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, markAccepted, openGoalWorktree, openWorktree, prepareRun, pushTaskBranch, taskPushRemote } from "./git";
 
 const AGENT = { name: "Codex", email: "codex@shepherd.local" };
 let temps: string[] = [];
@@ -221,6 +221,63 @@ describe("mergeBranch", () => {
 });
 
 describe("task branches", () => {
+  it("pushes only the task branch to the base's tracking remote, with origin as fallback", async () => {
+    const { repo, worktrees } = await project();
+    const origin = path.join(temp(), "origin.git");
+    const tracked = path.join(temp(), "tracked.git");
+    gitOut(repo, "init", "--bare", "-q", origin);
+    gitOut(repo, "init", "--bare", "-q", tracked);
+    gitOut(repo, "remote", "add", "origin", origin);
+    gitOut(repo, "remote", "add", "publish", tracked);
+    const task = await openGoalWorktree(repo, worktrees, "goal", "publish");
+    expect(await taskPushRemote(repo, task.target)).toBe("origin");
+    gitOut(repo, "config", `branch.${task.target}.remote`, ".");
+    expect(await taskPushRemote(repo, task.target)).toBe("origin");
+    gitOut(repo, "config", `branch.${task.target}.remote`, "publish");
+    gitOut(repo, "config", `branch.${task.target}.merge`, `refs/heads/${task.target}`);
+    expect(await taskPushRemote(repo, task.target)).toBe("publish");
+    write(task.folder, "done.txt", "done");
+    await commitAll(task.folder, ["Done"], AGENT);
+    const before = gitOut(repo, "rev-parse", "HEAD");
+    // Even broad push configuration must not send the project or step branches.
+    gitOut(repo, "config", "remote.publish.push", "refs/heads/*:refs/heads/*");
+    await pushTaskBranch(repo, task.branch, await taskPushRemote(repo, task.target));
+    expect(gitOut(tracked, "for-each-ref", "--format=%(refname)")).toBe(`refs/heads/${task.branch}`);
+    expect(gitOut(tracked, "rev-parse", task.branch)).toBe(gitOut(task.folder, "rev-parse", "HEAD"));
+    expect(gitOut(origin, "for-each-ref")).toBe("");
+    expect(gitOut(repo, "rev-parse", "HEAD")).toBe(before);
+    expect(gitOut(repo, "config", "--get-regexp", `branch.${task.branch}.*`)).not.toContain("remote");
+    await expect(pushTaskBranch(repo, task.target, "publish")).rejects.toThrow("Not a Shepherd task branch");
+  });
+
+  it("refuses a missing remote without changing refs, files or the index", async () => {
+    const { repo } = await project();
+    write(repo, "mine.txt", "staged");
+    gitOut(repo, "add", ".");
+    const refs = gitOut(repo, "show-ref");
+    const status = gitOut(repo, "status", "--porcelain");
+    await expect(taskPushRemote(repo, "main")).rejects.toThrow(/remote origin is not available/);
+    expect(gitOut(repo, "show-ref")).toBe(refs);
+    expect(gitOut(repo, "status", "--porcelain")).toBe(status);
+  });
+
+  it("fails a rejected push with git's message and does not force it", async () => {
+    const { repo, worktrees } = await project();
+    const remote = path.join(temp(), "remote.git");
+    gitOut(repo, "init", "--bare", "-q", remote);
+    gitOut(repo, "remote", "add", "origin", remote);
+    const task = await openGoalWorktree(repo, worktrees, "goal", "reject");
+    write(task.folder, "first.txt", "first");
+    await commitAll(task.folder, ["First"], AGENT);
+    await pushTaskBranch(repo, task.branch, "origin");
+    const remoteHead = gitOut(remote, "rev-parse", task.branch);
+    gitOut(task.folder, "reset", "--hard", "HEAD~1");
+    write(task.folder, "other.txt", "other");
+    await commitAll(task.folder, ["Other"], AGENT);
+    await expect(pushTaskBranch(repo, task.branch, "origin")).rejects.toThrow(/\[rejected\].*non-fast-forward/s);
+    expect(gitOut(remote, "rev-parse", task.branch)).toBe(remoteHead);
+  });
+
   it("picks a free task name, keeps its base, and separates new and legacy step names", async () => {
     const { repo, worktrees } = await project();
     const base = gitOut(repo, "branch", "--show-current");

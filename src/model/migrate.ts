@@ -1,3 +1,4 @@
+import { mergeRequestUrl } from "./mergeRequest";
 import { blankGoal } from "./factory";
 import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
@@ -161,6 +162,7 @@ function task(raw: Raw): Task {
     ...(git ? { git } : {}),
     ...(raw.autoRun === true ? { autoRun: true } : {}),
     ...(raw.independent === true ? { independent: true } : {}),
+    ...(raw.runner !== "human" && raw.pushBeforeRun === true ? { pushBeforeRun: true } : {}),
     ...(typeof raw.outdated === "string" && raw.outdated ? { outdated: raw.outdated } : {}),
     ...(typeof raw.retries === "number" && raw.retries > 0 ? { retries: raw.retries } : {}),
     ...(typeof raw.output === "string" && raw.output ? { output: raw.output } : {}),
@@ -226,6 +228,7 @@ export function loadState(saved: unknown): OrchestrationState | null {
           ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
           ...(typeof value.folder === "string" ? { folder: value.folder } : {}),
           ...(typeof value.base === "string" ? { base: value.base } : {}),
+          ...(mergeRequestUrl(value.mergeRequestUrl) ? { mergeRequestUrl: mergeRequestUrl(value.mergeRequestUrl)! } : {}),
           ...(typeof value.blocker === "string" ? { blocker: value.blocker } : {}),
           ...(merged && typeof merged.into === "string" && typeof merged.sha === "string" && typeof merged.at === "number" ? { merged: { into: merged.into, sha: merged.sha, at: merged.at } } : {}),
         } as Goal];
