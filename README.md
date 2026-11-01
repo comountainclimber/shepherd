@@ -143,7 +143,7 @@ curl -X POST "$SHEPHERD_URL/api/tasks" -H "Authorization: Bearer $SHEPHERD_TOKEN
 - `goal` is a task's id or name; `project` optionally scopes the lookup to a repository. For adding steps, drafting or plan commands, a request naming only a project uses its only open task. If there are several open tasks, the error lists them and asks which to use; if there are none, add or reopen one. Plan commands use `goalId` and also accept the older `projectId` when there is only one open task.
 - Each step needs a `name`. `objective` (the prompt) defaults to the name.
 - Optional fields are `description`, `acceptance` (a list of "done when" lines), `checkCommand`, `runner` (`agent` or `human`), and `agent` (`codex` or `claude`, default `codex`).
-- Agent steps also take `model` (such as `gpt-6-astra`, or `opus` for Claude Code; `GET /api/models` lists them with your defaults) and `thinking` (`low`, `medium`, `high`, `xhigh`, `max`, or `ultra` where the model offers it). Leave them out to use your defaults.
+- Agent steps also take `model` (`GET /api/models` lists the choices with your defaults, including `opus` for Claude Code) and `thinking` (`low`, `medium`, `high`, `xhigh`, `max`, or `ultra` where the model offers it). Leave them out to use your defaults.
 - Agent steps also take `workCheck: true` for the optional Codex work check (default `false`), `review: true` to wait for your review, `independent: true` to keep earlier agents' reports out of their prompt, `pushBeforeRun: true` to have Shepherd push the task branch before the agent starts, and `autoRun: true` to start on their own once what they wait for is done, without running the whole plan.
 - `dependsOn` lists steps by id or name, in the same task or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
 - A bad request gets a 400 that says what is wrong.
@@ -162,5 +162,5 @@ The paths below use `.shepherd/` as shorthand for the configured data folder: `~
 ## Limits
 
 - Shepherd pushes only for agent steps with **Push task branch before running** on. An agent creates the merge request; Shepherd keeps the link it reports. Shepherd does not resolve merge conflicts.
-- Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting checklists always uses your Codex default.
+- Claude Code's models are a fixed list: Opus, Sonnet and Haiku. Drafting checklists always uses your Codex default.
 - Saved steps belong to the configured data folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.

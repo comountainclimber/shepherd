@@ -47,7 +47,7 @@ describe("agent commands", () => {
   });
 
   it("gives Codex an npm cache its sandbox can write to, and leaves Claude's environment alone", () => {
-    const env = { PATH: "/bin", NPM_CONFIG_CACHE: "/home/me/.npm" };
+    const env = { PATH: "/bin", NPM_CONFIG_CACHE: "/example/cache/npm" };
     const codex = agentEnv("codex", env);
     expect(codex.NPM_CONFIG_CACHE).toBeUndefined();
     expect(codex.npm_config_cache).toBe(path.join(tmpdir(), "shepherd-npm-cache"));

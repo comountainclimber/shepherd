@@ -101,11 +101,11 @@ describe("loadState", () => {
     const [kept, dropped] = loadState({
       ...schemaOne,
       tasks: [
-        { ...schemaOneTask, model: "gpt-6-astra", effort: "max", savedFrom: { id: "saved-1", version: 2 } },
+        { ...schemaOneTask, model: "example-codex-current", effort: "max", savedFrom: { id: "saved-1", version: 2 } },
         { ...schemaOneTask, id: "other", model: "-x", effort: "lots", savedFrom: { id: "saved-1" } },
       ],
     })!.tasks;
-    expect(kept).toMatchObject({ model: "gpt-6-astra", effort: "max", savedFrom: { id: "saved-1", version: 2 } });
+    expect(kept).toMatchObject({ model: "example-codex-current", effort: "max", savedFrom: { id: "saved-1", version: 2 } });
     for (const gone of ["model", "effort", "savedFrom"]) expect(dropped).not.toHaveProperty(gone);
   });
 
@@ -134,7 +134,7 @@ describe("loadState", () => {
 
   it("keeps an external repository path without adding a workspace folder", () => {
     const state = workspace(1);
-    state.projects[0] = { id: state.projects[0].id, name: "Existing", summary: "", repo: "/Users/person/projects/app" };
+    state.projects[0] = { id: state.projects[0].id, name: "Existing", summary: "", repo: "/example/projects/app" };
     expect(loadState(state)?.projects).toEqual(state.projects);
   });
 

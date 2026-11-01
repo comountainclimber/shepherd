@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node bin/check-node.mjs && vite",
+    "typecheck": "tsc -b",
     "build": "tsc --noEmit && vite build && node scripts/build-server.mjs",
     "test": "vitest run",
     "start": "node bin/shepherd.mjs",
@@ -28,10 +29,22 @@
     "vitest": "^3.2.4"
   },
   "description": "Run multi-step coding-agent work locally with Codex and Claude Code.",
+  "keywords": [
+    "coding-agents",
+    "codex",
+    "claude-code",
+    "local-first",
+    "workflow",
+    "git-worktrees"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/OWNER/shepherd"
+  },
+  "homepage": "https://github.com/OWNER/shepherd#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/shepherd/issues"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -40,7 +53,8 @@
     "shepherd": "bin/shepherd.mjs"
   },
   "files": [
-    "bin/",
+    "bin/shepherd.mjs",
+    "bin/check-node.mjs",
     "dist/",
     "dist-server/"
   ]

@@ -209,6 +209,16 @@ describe("fromSaved", () => {
     expect(unavailable).toEqual(["gpt-elsewhere"]);
   });
 
+  it("keeps public Claude choices and falls back for an unavailable saved model", () => {
+    const claude: SavedStep = {
+      ...saved,
+      steps: ["opus", "sonnet", "haiku", "example-claude-private"].map((model) => ({ ...saved.steps[0]!, agentId: "agent-claude", model })),
+    };
+    const { steps, unavailable } = fromSaved(claude, P, 0, catalog, (index) => `new-${index}`);
+    expect(steps.map((entry) => entry.task.model)).toEqual(["opus", "sonnet", "haiku", undefined]);
+    expect(unavailable).toEqual(["example-claude-private"]);
+  });
+
   it("indents the block from where it is added, no deeper than the outline goes", () => {
     const { steps } = fromSaved(saved, P, 1, catalog, (index) => `new-${index}`);
     expect(steps.map((entry) => entry.depth)).toEqual([1, 2, 2]);

@@ -62,7 +62,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const independent = flag(request.independent, field("independent"), false);
     const pushBeforeRun = flag(request.pushBeforeRun, field("pushBeforeRun"), false);
     const model = text(request.model, field("model"));
-    if (model && !isModelId(model)) fail(`${field("model")} is not a model name, such as gpt-6-astra or opus.`);
+    if (model && !isModelId(model)) fail(`${field("model")} is not a model name, as listed by /api/models.`);
     const effort = text(request.thinking, field("thinking"));
     if (effort && !isEffort(effort)) fail(`${field("thinking")} must be one of: ${EFFORTS.join(", ")}.`);
     if (runner === "human" && (autoRun || independent || pushBeforeRun || workCheck || review || model || effort)) {

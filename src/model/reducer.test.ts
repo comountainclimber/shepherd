@@ -439,10 +439,10 @@ describe("known issues", () => {
 
 describe("models", () => {
   it("sets a step's model and thinking, and goes back to the defaults with null", () => {
-    let state = reducer(chain("verified"), { type: "setModel", id: "a", model: "gpt-6-astra", effort: "max" });
-    expect(task(state, "a")).toMatchObject({ model: "gpt-6-astra", effort: "max" });
+    let state = reducer(chain("verified"), { type: "setModel", id: "a", model: "example-codex-current", effort: "max" });
+    expect(task(state, "a")).toMatchObject({ model: "example-codex-current", effort: "max" });
     state = finishRun(state, "a");
-    expect(state.events.find((event) => event.message.startsWith("Started a"))!.message).toBe("Started a with gpt-6-astra, max thinking");
+    expect(state.events.find((event) => event.message.startsWith("Started a"))!.message).toBe("Started a with example-codex-current, max thinking");
 
     state = reducer(state, { type: "setModel", id: "a", model: null, effort: null });
     expect(task(state, "a").model).toBeUndefined();
@@ -454,13 +454,13 @@ describe("models", () => {
     expect(reducer(state, { type: "setModel", id: "a", model: "--yolo", effort: null })).toBe(state);
     expect(reducer(state, { type: "setModel", id: "you", model: "opus", effort: null })).toBe(state);
     const running = reducer(state, { type: "setStatus", id: "a", status: "running" });
-    expect(reducer(running, { type: "setModel", id: "a", model: "gpt-6-luna", effort: null })).toBe(running);
+    expect(reducer(running, { type: "setModel", id: "a", model: "example-codex-fast", effort: null })).toBe(running);
   });
 
   it("forgets the model and the conversation when another agent takes the step", () => {
     let state = apply(
       chain("verified"),
-      { type: "setModel", id: "a", model: "gpt-6-astra", effort: "high" },
+      { type: "setModel", id: "a", model: "example-codex-current", effort: "high" },
       { type: "updateTask", id: "a", patch: { sessionId: "codex-session" } },
     );
     state = reducer(state, { type: "reassign", id: "a", agentId: "agent-claude", runner: "agent" });

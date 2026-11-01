@@ -300,7 +300,7 @@ async function route(
     if (!goal) throw new BadRequest("Say what you want done in the task's goal text or as prompt.");
     if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
     const { model = null, thinking = null } = body;
-    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
+    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, as listed by /api/models.");
     if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
     const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
     const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);

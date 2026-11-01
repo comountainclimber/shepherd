@@ -22,7 +22,7 @@ const ORDER: Record<Stage, number> = {
   verified: 8,
 };
 
-/** "your default, GPT-6.1-Sol at High", or just "your default" when the agent's settings do not say. */
+/** "your default, Example Codex Previous at High", or just "your default" when the agent's settings do not say. */
 function defaults(catalog: ModelCatalog | null, provider: "codex" | "claude"): string {
   const own = catalog?.[provider].default;
   if (!own?.model) return "your default model";
