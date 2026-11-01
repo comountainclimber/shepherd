@@ -33,11 +33,11 @@ export function dependencyOrder(tasks: Task[], deps: Dependency[]): Task[] {
   return order;
 }
 
-/** A project's steps in outline order. Steps added some other way, such as through the API, come last. */
-export function outlineOf(state: OrchestrationState, projectId: string): OutlineItem[] {
-  const tasks = state.tasks.filter((task) => task.projectId === projectId);
+/** A task's steps in outline order. Steps added some other way, such as through the API, come last. */
+export function outlineOf(state: OrchestrationState, goalId: string): OutlineItem[] {
+  const tasks = state.tasks.filter((task) => task.goalId === goalId);
   const ids = new Set(tasks.map((task) => task.id));
-  const stored = (state.projects.find((project) => project.id === projectId)?.outline ?? []).filter((item) => ids.has(item.id));
+  const stored = (state.goals.find((goal) => goal.id === goalId)?.outline ?? []).filter((item) => ids.has(item.id));
   const listed = new Set(stored.map((item) => item.id));
   const rest = dependencyOrder(
     tasks.filter((task) => !listed.has(task.id)),
@@ -93,26 +93,26 @@ function reaches(from: string, to: string, deps: { source: string; target: strin
 }
 
 /**
- * Redraws the arrows the outline implies for every project that has an outline. A step wired by
+ * Redraws the arrows the outline implies for every task that has an outline. A step wired by
  * hand keeps its own arrows, and an arrow that would make a loop is left out.
  */
 export function syncOutlines(state: OrchestrationState): OrchestrationState {
   let next = state;
-  for (const project of state.projects) {
-    if (project.outline) next = syncProject(next, project.id);
+  for (const goal of state.goals) {
+    if (goal.outline) next = syncGoal(next, goal.id);
   }
   return next;
 }
 
-function syncProject(state: OrchestrationState, projectId: string): OrchestrationState {
-  const tasks = state.tasks.filter((task) => task.projectId === projectId);
+function syncGoal(state: OrchestrationState, goalId: string): OrchestrationState {
+  const tasks = state.tasks.filter((task) => task.goalId === goalId);
   const ids = new Set(tasks.map((task) => task.id));
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const ours = (dep: Dependency) => dep.outline && ids.has(dep.target);
   const kept = state.dependencies.filter((dep) => !ours(dep));
   const handWired = new Set(kept.filter((dep) => ids.has(dep.target)).map((dep) => dep.target));
   const wanted: Dependency[] = [];
-  for (const [target, sources] of outlineInputs(outlineOf(state, projectId))) {
+  for (const [target, sources] of outlineInputs(outlineOf(state, goalId))) {
     if (byId.get(target)?.wired || handWired.has(target)) continue;
     for (const source of sources) {
       if (reaches(target, source, [...kept, ...wanted])) continue;
@@ -125,11 +125,11 @@ function syncProject(state: OrchestrationState, projectId: string): Orchestratio
 }
 
 /**
- * Places a project's steps left to right in the order they run: each step one column past the
+ * Places a task's steps left to right in the order they run: each step one column past the
  * latest step it waits for, steps in the same column stacked in outline order and centred.
  */
-export function layoutProject(state: OrchestrationState, projectId: string): OrchestrationState {
-  const items = outlineOf(state, projectId);
+export function layoutGoal(state: OrchestrationState, goalId: string): OrchestrationState {
+  const items = outlineOf(state, goalId);
   if (!items.length) return state;
   const ids = new Set(items.map((item) => item.id));
   const deps = state.dependencies.filter((dep) => ids.has(dep.source) && ids.has(dep.target));

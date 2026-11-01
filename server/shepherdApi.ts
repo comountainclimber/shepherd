@@ -3,12 +3,13 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Plugin } from "vite";
+import { resolveGoal } from "../src/model/goals";
 import { agentChoice, isEffort, isModelId } from "../src/model/models";
 import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
-import { boardSummary, planProject, planTasks } from "./intake";
+import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
@@ -140,6 +141,12 @@ async function route(
         continue;
       }
       if (action.type === "deleteTask") runner.cancel(action.id);
+      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal") {
+        for (const step of engine.get().tasks.filter((step) => step.goalId === action.id)) {
+          runner.cancel(step.id);
+          if (step.status === "running" && action.type !== "deleteGoal") engine.dispatch({ type: "setStatus", id: step.id, status: "blocked" });
+        }
+      }
       if (action.type === "reset") runner.cancelAll();
       engine.dispatch(action);
     }
@@ -163,7 +170,20 @@ async function route(
       return true;
     }
     planned.actions.forEach((action: Action) => engine.dispatch(action));
-    sendJson(res, 201, { project: planned.projectId, tasks: planned.tasks, note: "Added to the board." });
+    sendJson(res, 201, { project: planned.projectId, goal: planned.goalId, tasks: planned.tasks, note: "Added to the board." });
+    return true;
+  }
+  if (pathname === "/api/goals" && method === "GET") {
+    sendJson(res, 200, { goals: engine.get().goals });
+    return true;
+  }
+  if (pathname === "/api/goals" && method === "POST") {
+    const planned = planGoal(engine.get(), await readJson(req), `goal-api-${stamp()}`);
+    if ("error" in planned) sendJson(res, 400, planned);
+    else {
+      engine.dispatch(planned.action);
+      sendJson(res, 201, { goal: planned.goal });
+    }
     return true;
   }
   if (pathname === "/api/projects" && method === "POST") {
@@ -177,12 +197,14 @@ async function route(
     return true;
   }
   if (pathname === "/api/draft" && method === "POST") {
-    const body = (await readJson(req)) as { projectId?: unknown; goal?: unknown; model?: unknown; thinking?: unknown };
+    const body = (await readJson(req)) as { project?: unknown; projectId?: unknown; goal?: unknown; prompt?: unknown; model?: unknown; thinking?: unknown };
     const board = engine.get();
-    const project = board.projects.find((item) => item.id === body.projectId);
-    const goal = typeof body.goal === "string" ? body.goal.trim() : "";
-    if (!project) throw new BadRequest("Say which project, as projectId.");
-    if (!goal) throw new BadRequest("Say what you want done, as goal.");
+    const selected = resolveGoal(board, body.goal, body.project ?? body.projectId);
+    if ("error" in selected) throw new BadRequest(selected.error);
+    if (selected.status !== "open") throw new BadRequest("Reopen this task before drafting steps.");
+    const project = board.projects.find((item) => item.id === selected.projectId)!;
+    const goal = typeof body.prompt === "string" ? body.prompt.trim() : selected.goal;
+    if (!goal) throw new BadRequest("Say what you want done in the task's goal text or as prompt.");
     if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
     const { model = null, thinking = null } = body;
     if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");

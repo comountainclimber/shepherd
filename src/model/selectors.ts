@@ -2,8 +2,8 @@ import { needsYou } from "./stage";
 import type { Dependency, Filters, OrchestrationState, Task } from "./types";
 import { isFullyVerified, unmetDependencies } from "./verify";
 
-export function tasksForProject(state: OrchestrationState, projectId: string): Task[] {
-  return state.tasks.filter((task) => task.projectId === projectId);
+export function tasksForGoal(state: OrchestrationState, goalId: string): Task[] {
+  return state.tasks.filter((task) => task.goalId === goalId);
 }
 
 export function taskMatches(task: Task, filters: Filters, tasks: Task[], deps: Dependency[]): boolean {

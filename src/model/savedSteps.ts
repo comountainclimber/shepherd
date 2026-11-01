@@ -137,7 +137,7 @@ export function toSavedItem(task: Task, depth: number, keepChecklist = true): Sa
 
 /** The steps you can save along with one: those side by side with it, and those under it. */
 export function relatives(state: OrchestrationState, taskId: string): { siblings: string[]; children: string[] } {
-  const items = outlineOf(state, state.tasks.find((task) => task.id === taskId)?.projectId ?? "");
+  const items = outlineOf(state, state.tasks.find((task) => task.id === taskId)?.goalId ?? "");
   const index = items.findIndex((entry) => entry.id === taskId);
   if (index < 0) return { siblings: [], children: [] };
   const depth = items[index]!.depth;
@@ -162,7 +162,7 @@ export function blockOf(state: OrchestrationState, ids: string[], checklistFor: 
   const first = state.tasks.find((task) => task.id === ids[0]);
   if (!first) return [];
   const wanted = new Set(ids);
-  const items = outlineOf(state, first.projectId).filter((entry) => wanted.has(entry.id));
+  const items = outlineOf(state, first.goalId).filter((entry) => wanted.has(entry.id));
   if (!items.length) return [];
   const base = Math.min(...items.map((entry) => entry.depth));
   const sideBySide = base > 0 && items.filter((entry) => entry.depth === base).length > 1;
@@ -173,8 +173,8 @@ export function blockOf(state: OrchestrationState, ids: string[], checklistFor: 
 }
 
 /** Where a saved step goes when added after a row: past that row's own sub-steps, at its indent. */
-export function placeAfter(state: OrchestrationState, projectId: string, taskId: string | null): { after: string | null; depth: number } {
-  const items = outlineOf(state, projectId);
+export function placeAfter(state: OrchestrationState, goalId: string, taskId: string | null): { after: string | null; depth: number } {
+  const items = outlineOf(state, goalId);
   const index = taskId ? items.findIndex((entry) => entry.id === taskId) : -1;
   if (index < 0) return { after: items.at(-1)?.id ?? null, depth: 0 };
   return { after: items[subtreeEnd(items, index) - 1]!.id, depth: items[index]!.depth };

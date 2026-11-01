@@ -9,6 +9,7 @@ import { workspace, WORKSPACE_PROJECT_ID } from "./workspace";
 
 const NOW = 1_000_000;
 const P = WORKSPACE_PROJECT_ID;
+const G = `goal-${P}`;
 
 function step(id: string) {
   return { ...newStep(P, `Do ${id}`), id, worktree: id };
@@ -20,7 +21,7 @@ function build(spec: string): OrchestrationState {
     .trim()
     .split("\n")
     .map((line) => ({ id: line.trim(), depth: (line.length - line.trimStart().length) / 2 }));
-  return reducer(workspace(NOW), { type: "addSteps", projectId: P, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
+  return reducer(workspace(NOW), { type: "addSteps", goalId: G, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
 }
 
 function task(state: OrchestrationState, id: string) {
@@ -155,13 +156,13 @@ a
 e`);
 
   it("adds past a step's own sub-steps, at its indent", () => {
-    expect(placeAfter(state, P, "b")).toEqual({ after: "b1", depth: 1 });
-    expect(placeAfter(state, P, "a")).toEqual({ after: "b1", depth: 0 });
+    expect(placeAfter(state, G, "b")).toEqual({ after: "b1", depth: 1 });
+    expect(placeAfter(state, G, "a")).toEqual({ after: "b1", depth: 0 });
   });
 
   it("adds at the end when there is no step to add after", () => {
-    expect(placeAfter(state, P, null)).toEqual({ after: "e", depth: 0 });
-    expect(placeAfter(state, P, "gone")).toEqual({ after: "e", depth: 0 });
+    expect(placeAfter(state, G, null)).toEqual({ after: "e", depth: 0 });
+    expect(placeAfter(state, G, "gone")).toEqual({ after: "e", depth: 0 });
     expect(placeAfter(workspace(NOW), P, null)).toEqual({ after: null, depth: 0 });
   });
 });
@@ -203,10 +204,10 @@ describe("fromSaved", () => {
 a
   b
 e`);
-    const place = placeAfter(state, P, "a");
+    const place = placeAfter(state, G, "a");
     const { steps } = fromSaved(saved, P, place.depth, catalog, (index) => `new-${index}`);
-    const next = reducer(state, { type: "addSteps", projectId: P, after: place.after, steps });
-    expect(outlineOf(next, P).map((item) => `${"  ".repeat(item.depth)}${item.id}`)).toEqual(["a", "  b", "new-0", "  new-1", "    new-2", "e"]);
+    const next = reducer(state, { type: "addSteps", goalId: G, after: place.after, steps });
+    expect(outlineOf(next, G).map((item) => `${"  ".repeat(item.depth)}${item.id}`)).toEqual(["a", "  b", "new-0", "  new-1", "    new-2", "e"]);
   });
 });
 

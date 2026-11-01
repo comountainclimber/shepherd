@@ -1,4 +1,4 @@
-import { slugify } from "./factory";
+import { blankGoal, slugify } from "./factory";
 import type { Agent, OrchestrationState, Project } from "./types";
 
 export const WORKSPACE_PROJECT_ID = "proj-local";
@@ -22,14 +22,14 @@ export function projectDirectory(name: string, projects: Project[]): string {
 
 export function workspace(now = Date.now()): OrchestrationState {
   return {
-    schema: 2,
+    schema: 3,
+    goals: [blankGoal(WORKSPACE_PROJECT_ID, "Workspace")],
     projects: [
       {
         id: WORKSPACE_PROJECT_ID,
         name: "Workspace",
         summary: "Steps you add here run with Claude Code or Codex, each on its own branch of this project's repository.",
         directory: "workspace",
-        outline: [],
       },
     ],
     tasks: [],

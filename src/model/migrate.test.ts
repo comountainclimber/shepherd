@@ -46,7 +46,7 @@ const schemaOne = {
 describe("loadState", () => {
   it("migrates a schema 1 board and drops what no longer exists", () => {
     const state = loadState(schemaOne)!;
-    expect(state.schema).toBe(2);
+    expect(state.schema).toBe(3);
     expect(state).not.toHaveProperty("agents");
     expect(state.projects).toEqual([{ id: "proj-slug", name: "Slug helper", summary: "", directory: "slug-helper" }]);
 
@@ -127,14 +127,14 @@ describe("loadState", () => {
     expect(broken).not.toHaveProperty("issues");
   });
 
-  it("keeps a schema 2 board as it is", () => {
+  it("keeps a current board as it is", () => {
     const state = workspace(1);
     expect(loadState(state)).toEqual(state);
   });
 
   it("refuses demo boards, unknown schemas, and boards with no project", () => {
     expect(loadState({ ...schemaOne, projects: [{ id: "proj-checkout", name: "Checkout", summary: "" }] })).toBeNull();
-    expect(loadState({ ...schemaOne, schema: 3 })).toBeNull();
+    expect(loadState({ ...schemaOne, schema: 4 })).toBeNull();
     expect(loadState({ ...schemaOne, projects: [] })).toBeNull();
     expect(loadState("nonsense")).toBeNull();
   });
@@ -157,5 +157,37 @@ describe("interruptWork", () => {
     const task = interruptWork(state).tasks[0]!;
     expect(task.status).toBe("failed");
     expect(task.blocker).toBe("Shepherd restarted while this was running. Retry it.");
+  });
+});
+
+describe("boards before tasks", () => {
+  it("gives each project one open task with its outline, running flag and unchanged steps", () => {
+    const git = { branch: "shepherd/existing-branch", folder: "/tmp/existing-worktree", target: "feature/original", head: "abc" };
+    const raw = {
+      ...schemaOne, schema: 2,
+      projects: [
+        { id: "proj-slug", name: "Slug helper", summary: "", directory: "slug-helper", outline: [{ id: "task-1", depth: 0 }], running: true },
+        { id: "empty", name: "Empty", summary: "", directory: "empty", outline: [], running: false },
+        { id: "hand", name: "By hand", summary: "", directory: "hand" },
+      ],
+      tasks: [{ ...schemaOneTask, git }],
+    };
+    const state = loadState(raw)!;
+    expect(state.schema).toBe(3);
+    expect(state.goals).toEqual([
+      { id: "goal-proj-slug", projectId: "proj-slug", name: "Slug helper", goal: "", status: "open", outline: raw.projects[0]!.outline, running: true },
+      { id: "goal-empty", projectId: "empty", name: "Empty", goal: "", status: "open", outline: [], running: false },
+      { id: "goal-hand", projectId: "hand", name: "By hand", goal: "", status: "open", running: false },
+    ]);
+    expect(state.tasks[0]).toMatchObject({ id: "task-1", projectId: "proj-slug", goalId: "goal-proj-slug", worktree: "slugify", git });
+    expect(state.projects.every((project) => !("outline" in project) && !("running" in project))).toBe(true);
+    expect(state.dependencies).toEqual(raw.dependencies);
+    expect(loadState(state)).toEqual(state);
+  });
+
+  it("round-trips multiple tasks and their future git fields without collapsing them", () => {
+    const board = workspace(1);
+    board.goals.push({ id: "second", projectId: board.projects[0]!.id, name: "Second", goal: "Fix it", running: false, status: "archived", branch: "feature/task", folder: "/tmp/task", base: "develop", outline: [] });
+    expect(loadState(board)).toEqual(board);
   });
 });

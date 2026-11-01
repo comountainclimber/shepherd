@@ -10,8 +10,8 @@ import { useSavedSteps } from "../saved/useSavedSteps";
 
 export function CommandPalette() {
   const open = useShepherd((store) => store.ui.paletteOpen);
-  const projectId = useShepherd((store) => store.ui.projectId);
-  const running = useShepherd((store) => !!store.state.projects.find((project) => project.id === projectId)?.running);
+  const goalId = useShepherd((store) => store.ui.goalId);
+  const running = useShepherd((store) => !!store.state.goals.find((project) => project.id === goalId)?.running);
   const setOpen = useShepherd((store) => store.setPaletteOpen);
   const setView = useShepherd((store) => store.setView);
   const setFilters = useShepherd((store) => store.setFilters);
@@ -22,7 +22,7 @@ export function CommandPalette() {
   const selectedName = useShepherd((store) => store.state.tasks.find((task) => task.id === selectedTaskId)?.name.trim());
   const setSaveFor = useShepherd((store) => store.setSaveFor);
   const setManageSaved = useShepherd((store) => store.setManageSaved);
-  const hasSteps = useShepherd((store) => store.state.tasks.some((task) => task.projectId === projectId));
+  const hasSteps = useShepherd((store) => store.state.tasks.some((task) => task.goalId === goalId));
   const saved = useSavedSteps();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -39,16 +39,16 @@ export function CommandPalette() {
       setFilters({ ...initialFilters, ...filters });
     };
     const target = selectedTaskId && selectedName !== undefined ? selectedTaskId : null;
-    const place = placeFor(projectId, target);
+    const place = placeFor(goalId, target);
     const addSavedCommands = (saved ?? [])
       .filter((entry) => !needsAbove(entry, place, !hasSteps))
-      .map((entry) => ({ id: `saved-${entry.id}`, label: `Add saved step: ${entry.name}`, run: () => void addSaved(entry, placeFor(projectId, target)) }));
+      .map((entry) => ({ id: `saved-${entry.id}`, label: `Add saved step: ${entry.name}`, run: () => void addSaved(entry, placeFor(goalId, target)) }));
     return [
-      { id: "add", label: "Add a step", hint: "N", run: () => appendStep(projectId) },
+      { id: "add", label: "Add a step", hint: "N", run: () => appendStep(goalId) },
       { id: "draft", label: "Draft steps from a goal", run: () => requestDraft() },
       running
-        ? { id: "stop", label: "Stop the plan", run: () => void stopPlan(projectId) }
-        : { id: "run", label: "Run the plan", run: () => void runPlan(projectId) },
+        ? { id: "stop", label: "Stop the plan", run: () => void stopPlan(goalId) }
+        : { id: "run", label: "Run the plan", run: () => void runPlan(goalId) },
       { id: "new-project", label: "New project", run: () => setNewProjectOpen(true) },
       { id: "canvas", label: "Go to the map", hint: "1", run: () => setView("canvas") },
       { id: "agents", label: "Go to agents", hint: "2", run: () => setView("agents") },
@@ -62,7 +62,7 @@ export function CommandPalette() {
       ...addSavedCommands,
       { id: "reset", label: "Clear the whole board", run: clearWorkspace },
     ];
-  }, [hasSteps, projectId, requestDraft, requestFit, running, saved, selectedName, selectedTaskId, setFilters, setManageSaved, setNewProjectOpen, setSaveFor, setView]);
+  }, [hasSteps, goalId, requestDraft, requestFit, running, saved, selectedName, selectedTaskId, setFilters, setManageSaved, setNewProjectOpen, setSaveFor, setView]);
 
   const filtered = commands.filter((command) => command.label.toLowerCase().includes(query.trim().toLowerCase()));
   const draftRow = query.trim() && filtered.length === 0;

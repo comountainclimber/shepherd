@@ -1,4 +1,5 @@
-import { blankTask, nextPosition, slugify } from "../src/model/factory";
+import { blankGoal, blankTask, nextPosition, slugify } from "../src/model/factory";
+import { resolveGoal } from "../src/model/goals";
 import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
 import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
@@ -9,6 +10,7 @@ export const MAX_TASKS = 50;
 
 export interface Planned {
   projectId: string;
+  goalId: string;
   tasks: { id: string; name: string }[];
   actions: Action[];
 }
@@ -34,7 +36,10 @@ export function planTasks(state: OrchestrationState, body: unknown, newId: (inde
 
 function plan(state: OrchestrationState, body: unknown, newId: (index: number) => string): Planned {
   const raw = record(body) ?? fail("Send a JSON object.");
-  const project = findProject(state, raw.project);
+  const goal = resolveGoal(state, raw.goal, raw.project);
+  if ("error" in goal) fail(goal.error);
+  if (goal.status !== "open") fail("Reopen this task before adding steps.");
+  const project = state.projects.find((project) => project.id === goal.projectId)!;
   const batch = Array.isArray(raw.tasks);
   const items: unknown[] = batch ? (raw.tasks as unknown[]) : [raw];
   if (!items.length) fail("There are no tasks to add.");
@@ -60,12 +65,13 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     if (runner === "human" && (autoRun || independent || review || model || effort)) {
       fail(`${where} is done by a person, so autoRun, independent, review, model and thinking do not apply to it.`);
     }
-    const dependsOn = dependencies(scratch, project.id, request.dependsOn, where, field("dependsOn"));
+    const dependsOn = dependencies(scratch, goal.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
     const task = {
       ...blankTask({
         id,
         projectId: project.id,
+        goalId: goal.id,
         name,
         objective: text(request.objective, field("objective")) || name,
         description: text(request.description, field("description")),
@@ -77,7 +83,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
         runner,
         agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
         worktree: freeWorktree(scratch, project.id, name),
-        position: nextPosition(scratch.tasks, project.id, dependsOn.map((dep) => dep.source)),
+        position: nextPosition(scratch.tasks, goal.id, dependsOn.map((dep) => dep.source)),
       }),
       ...(model ? { model } : {}),
       ...(effort ? { effort: effort as Effort } : {}),
@@ -87,7 +93,7 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     actions.push(action);
     tasks.push({ id, name });
   });
-  return { projectId: project.id, tasks, actions };
+  return { projectId: project.id, goalId: goal.id, tasks, actions };
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -159,14 +165,14 @@ function agentFor(value: unknown, field: string): string {
 
 function dependencies(
   state: OrchestrationState,
-  projectId: string,
+  goalId: string,
   value: unknown,
   where: string,
   field: string,
 ): { source: string; gate: Gate }[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) fail(`${field} must be a list.`);
-  const tasks = state.tasks.filter((task) => task.projectId === projectId);
+  const tasks = state.tasks.filter((task) => task.goalId === goalId);
   const found = new Map<string, Gate>();
   for (const entry of value) {
     const spec: Record<string, unknown> =
@@ -177,7 +183,7 @@ function dependencies(
     const byId = tasks.find((task) => task.id === key);
     const byName = byId ? [byId] : tasks.filter((task) => task.name.toLowerCase() === key.toLowerCase());
     if (byName.length > 1) fail(`${where} depends on ${key}, but more than one task has that name. Use its id.`);
-    const source = byName[0] ?? fail(`${where} depends on ${key}, which is not a task in this project.`);
+    const source = byName[0] ?? fail(`${where} depends on ${key}, which is not a step in this task.`);
     found.set(source.id, gate as Gate);
   }
   return [...found].map(([source, gate]) => ({ source, gate }));
@@ -198,11 +204,13 @@ export function boardSummary(state: OrchestrationState) {
       id: project.id,
       name: project.name,
       directory: project.directory ?? null,
+      goals: state.goals.filter((goal) => goal.projectId === project.id),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)
         .map((task) => ({
           id: task.id,
           name: task.name,
+          goalId: task.goalId,
           status: task.status,
           runner: task.runner,
           agent: task.runner === "human" ? null : (agentById(task.agentId)?.name ?? null),
@@ -212,4 +220,17 @@ export function boardSummary(state: OrchestrationState) {
         })),
     })),
   };
+}
+
+export function planGoal(state: OrchestrationState, body: unknown, id: string) {
+  try {
+    const raw = record(body) ?? fail("Send a JSON object.");
+    const project = findProject(state, raw.project);
+    const name = text(raw.name, "name") || fail("The task needs a name.");
+    const goal = blankGoal(project.id, name, id, text(raw.goal, "goal"));
+    return { goal, action: { type: "createGoal", goal } as Action };
+  } catch (error) {
+    if (error instanceof Invalid) return { error: error.message };
+    throw error;
+  }
 }

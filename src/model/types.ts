@@ -64,9 +64,11 @@ export interface TaskGit {
   merged?: { into: string; sha: string; at: number };
 }
 
+/** A Task is a step in the UI; Goal is the task that holds those steps. */
 export interface Task {
   id: string;
   projectId: string;
+  goalId: string;
   name: string;
   objective: string;
   description: string;
@@ -178,7 +180,7 @@ export interface Dependency {
   outline?: boolean;
 }
 
-/** A step's place in a project's outline. Indented steps run side by side after the step above them. */
+/** A step's place in a task's outline. Indented steps run side by side after the step above them. */
 export interface OutlineItem {
   id: string;
   depth: number;
@@ -214,14 +216,27 @@ export interface Project {
   name: string;
   summary: string;
   directory?: string;
-  /** The steps in order. Unset for older projects, whose arrows were all drawn by hand. */
+}
+
+export type GoalStatus = "open" | "done" | "archived";
+
+export interface Goal {
+  id: string;
+  projectId: string;
+  name: string;
+  goal: string;
+  /** Unset when older steps keep their hand-drawn arrows. */
   outline?: OutlineItem[];
-  /** Shepherd starts each step as soon as the steps before it are done. */
-  running?: boolean;
+  running: boolean;
+  status: GoalStatus;
+  branch?: string;
+  folder?: string;
+  base?: string;
 }
 
 export interface OrchestrationState {
-  schema: 2;
+  schema: 3;
+  goals: Goal[];
   projects: Project[];
   tasks: Task[];
   dependencies: Dependency[];
@@ -244,6 +259,7 @@ export interface Filters {
 export interface UiState {
   view: ViewId;
   projectId: string;
+  goalId: string;
   selectedTaskId: string | null;
   selectedAgentId: string | null;
   selectedEdgeId: string | null;
@@ -280,6 +296,12 @@ export type Action =
   | { type: "connect"; source: string; target: string; gate?: Gate }
   | { type: "disconnect"; id: string }
   | { type: "createProject"; project: Project }
+  | { type: "createGoal"; goal: Goal }
+  | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal">> }
+  | { type: "finishGoal"; id: string }
+  | { type: "archiveGoal"; id: string }
+  | { type: "reopenGoal"; id: string }
+  | { type: "deleteGoal"; id: string }
   | { type: "createTask"; task: Task; dependsOn?: { source: string; gate?: Gate }[] }
   | { type: "updateTask"; id: string; patch: Partial<Task> }
   | { type: "setStatus"; id: string; status: TaskStatus }
@@ -289,11 +311,11 @@ export type Action =
   | { type: "recordCheck"; taskId: string; run: CheckRun }
   | { type: "reassign"; id: string; agentId: string | null; runner?: Runner }
   /** Inserts steps into the outline after the step `after`, or at the top when it is null. */
-  | { type: "addSteps"; projectId: string; after: string | null; steps: { task: Task; depth: number }[] }
-  | { type: "setOutline"; projectId: string; items: OutlineItem[] }
+  | { type: "addSteps"; goalId: string; after: string | null; steps: { task: Task; depth: number }[] }
+  | { type: "setOutline"; goalId: string; items: OutlineItem[] }
   | { type: "followOutline"; id: string }
   | { type: "setReview"; id: string; on: boolean }
-  | { type: "setPlanRunning"; projectId: string; running: boolean }
+  | { type: "setPlanRunning"; goalId: string; running: boolean }
   | { type: "instruct"; id: string; text: string }
   | { type: "merged"; id: string; into: string; sha: string }
   | { type: "setWorkspace"; path: string }
@@ -343,7 +365,7 @@ export const GATE_LABEL: Record<Gate, string> = {
 };
 
 export const SAVED_VIEWS: { id: Filters["savedView"]; label: string }[] = [
-  { id: "all", label: "All tasks" },
+  { id: "all", label: "All steps" },
   { id: "needs-me", label: "Needs me" },
   { id: "running", label: "Running" },
   { id: "unverified", label: "Unverified" },

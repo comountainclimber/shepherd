@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cx } from "../../model/format";
 import { assigneeFor, stageHint, stageOf, type AssigneeKind, type Stage } from "../../model/stage";
-import { tasksForProject } from "../../model/selectors";
+import { tasksForGoal } from "../../model/selectors";
 import type { Task } from "../../model/types";
 import { EFFORT_LABEL, modelName, type ModelCatalog } from "../../model/models";
 import { isFullyVerified } from "../../model/verify";
@@ -31,13 +31,13 @@ function defaults(catalog: ModelCatalog | null, provider: "codex" | "claude"): s
   return `your default, ${modelName(own.model, catalog, provider)}${effort}${instead}`;
 }
 
-/** Who can take steps, what each is doing in this project, and how much of it is done. */
+/** Who can take steps, what each is doing in this task, and how much of it is done. */
 export function AgentActivity() {
   const state = useShepherd((store) => store.state);
-  const projectId = useShepherd((store) => store.ui.projectId);
+  const goalId = useShepherd((store) => store.ui.goalId);
   const [online, setOnline] = useState<{ claude: boolean; codex: boolean } | null>(null);
   const catalog = useModels();
-  const tasks = tasksForProject(state, projectId);
+  const tasks = tasksForGoal(state, goalId);
   const members: { kind: AssigneeKind; name: string; role: string }[] = [
     { kind: "codex", name: "Codex", role: `OpenAI · ${defaults(catalog, "codex")}` },
     { kind: "claude", name: "Claude Code", role: `Anthropic · ${defaults(catalog, "claude")}` },
@@ -109,7 +109,7 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
       <div className="px-4 pt-3">
         <ProgressBar percent={tasks.length ? (done / tasks.length) * 100 : 0} />
         <div className="mt-1 text-right text-[11px] text-faint">
-          {tasks.length ? `${done} of ${tasks.length} ${tasks.length === 1 ? "step" : "steps"} in this project done` : "No steps in this project"}
+          {tasks.length ? `${done} of ${tasks.length} ${tasks.length === 1 ? "step" : "steps"} in this task done` : "No steps in this task"}
         </div>
       </div>
       <ul className="min-h-0 flex-1 space-y-0.5 px-2 pb-3 pt-2">

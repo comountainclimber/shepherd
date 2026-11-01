@@ -7,6 +7,7 @@ import { workspace, WORKSPACE_PROJECT_ID } from "./workspace";
 
 const NOW = 1_000_000;
 const P = WORKSPACE_PROJECT_ID;
+const G = `goal-${P}`;
 
 function outline(spec: string): OutlineItem[] {
   return spec
@@ -25,7 +26,7 @@ function step(id: string) {
 
 function build(spec: string): OrchestrationState {
   const items = outline(spec);
-  return reducer(workspace(NOW), { type: "addSteps", projectId: P, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
+  return reducer(workspace(NOW), { type: "addSteps", goalId: G, after: null, steps: items.map((item) => ({ task: step(item.id), depth: item.depth })) });
 }
 
 function apply(state: OrchestrationState, ...actions: Action[]) {
@@ -102,23 +103,23 @@ describe("outline arrows", () => {
 
   it("redraws them when a step moves or is indented", () => {
     let state = build("a\nb\nc");
-    state = reducer(state, { type: "setOutline", projectId: P, items: outline("a\n  b\n  c") });
+    state = reducer(state, { type: "setOutline", goalId: G, items: outline("a\n  b\n  c") });
     expect(arrows(state)).toEqual(["a->b", "a->c"]);
-    state = reducer(state, { type: "setOutline", projectId: P, items: outline("c\na\nb") });
+    state = reducer(state, { type: "setOutline", goalId: G, items: outline("c\na\nb") });
     expect(arrows(state)).toEqual(["a->b", "c->a"]);
   });
 
   it("inserts new steps after a given step, or at the top", () => {
     let state = build("a\nc");
-    state = reducer(state, { type: "addSteps", projectId: P, after: "a", steps: [{ task: step("b"), depth: 0 }] });
-    state = reducer(state, { type: "addSteps", projectId: P, after: null, steps: [{ task: step("first"), depth: 3 }] });
-    expect(show(outlineOf(state, P))).toBe("first\na\nb\nc");
+    state = reducer(state, { type: "addSteps", goalId: G, after: "a", steps: [{ task: step("b"), depth: 0 }] });
+    state = reducer(state, { type: "addSteps", goalId: G, after: null, steps: [{ task: step("first"), depth: 3 }] });
+    expect(show(outlineOf(state, G))).toBe("first\na\nb\nc");
     expect(arrows(state)).toEqual(["a->b", "b->c", "first->a"]);
   });
 
   it("closes the gap when a step is deleted", () => {
     const state = reducer(build("a\nb\nc"), { type: "deleteTask", id: "b" });
-    expect(show(outlineOf(state, P))).toBe("a\nc");
+    expect(show(outlineOf(state, G))).toBe("a\nc");
     expect(arrows(state)).toEqual(["a->c"]);
   });
 
@@ -133,7 +134,7 @@ describe("outline arrows", () => {
     let state = build("a\nb\nc");
     state = reducer(state, { type: "connect", source: "a", target: "c" });
     expect(arrows(state)).toEqual(["a->b", "a->c (by hand)", "b->c (by hand)"]);
-    state = reducer(state, { type: "setOutline", projectId: P, items: outline("c\nb\na") });
+    state = reducer(state, { type: "setOutline", goalId: G, items: outline("c\nb\na") });
     expect(arrows(state)).toEqual(["a->c (by hand)", "b->a", "b->c (by hand)"]);
     state = reducer(state, { type: "followOutline", id: "c" });
     expect(arrows(state)).toEqual(["b->a", "c->b"]);
@@ -144,7 +145,7 @@ describe("outline arrows", () => {
     state = reducer(state, { type: "disconnect", id: state.dependencies[0]!.id });
     expect(state.dependencies).toEqual([]);
     expect(state.tasks.find((task) => task.id === "b")!.wired).toBe(true);
-    state = reducer(state, { type: "addSteps", projectId: P, after: "b", steps: [{ task: step("c"), depth: 0 }] });
+    state = reducer(state, { type: "addSteps", goalId: G, after: "b", steps: [{ task: step("c"), depth: 0 }] });
     expect(arrows(state)).toEqual(["b->c"]);
   });
 
@@ -156,7 +157,7 @@ describe("outline arrows", () => {
 
   it("keeps an older project's hand-drawn arrows when it first gets an outline", () => {
     const legacy = (id: string) => blankTask({ id, projectId: P, name: id, objective: id, agentId: "agent-codex", position: { x: 0, y: 0 } });
-    let state: OrchestrationState = { ...workspace(NOW), projects: workspace(NOW).projects.map(({ outline: _none, ...project }) => project) };
+    let state: OrchestrationState = { ...workspace(NOW), goals: workspace(NOW).goals.map(({ outline: _none, ...project }) => project) };
     state = apply(
       state,
       { type: "createTask", task: legacy("x") },
@@ -164,8 +165,8 @@ describe("outline arrows", () => {
       { type: "createTask", task: legacy("z"), dependsOn: [{ source: "x" }] },
     );
     expect(arrows(state)).toEqual(["x->z (by hand)"]);
-    state = reducer(state, { type: "addSteps", projectId: P, after: "z", steps: [{ task: step("w"), depth: 0 }] });
-    expect(show(outlineOf(state, P))).toBe("x\ny\nz\nw");
+    state = reducer(state, { type: "addSteps", goalId: G, after: "z", steps: [{ task: step("w"), depth: 0 }] });
+    expect(show(outlineOf(state, G))).toBe("x\ny\nz\nw");
     expect(arrows(state)).toEqual(["x->z (by hand)", "z->w"]);
   });
 });

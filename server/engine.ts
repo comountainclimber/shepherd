@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { interruptWork, loadState } from "../src/model/migrate";
 import { isEffort, isModelId } from "../src/model/models";
@@ -12,6 +12,12 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "connect",
   "disconnect",
   "createProject",
+  "createGoal",
+  "updateGoal",
+  "finishGoal",
+  "archiveGoal",
+  "reopenGoal",
+  "deleteGoal",
   "createTask",
   "updateTask",
   "setCheck",
@@ -110,6 +116,20 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
     const blocked = Object.keys(action.patch ?? {}).filter((key) => !EDITABLE.has(key));
     if (blocked.length) return { error: `A tab cannot change ${blocked.join(", ")} directly.` };
   }
+  if (action.type === "createGoal") {
+    const goal = action.goal;
+    if (!goal || typeof goal.id !== "string" || !goal.id || typeof goal.name !== "string" || !goal.name.trim() || typeof goal.goal !== "string" || !state.projects.some((project) => project.id === goal.projectId)) {
+      return { error: "A new task needs an id, name, goal text and a project." };
+    }
+  }
+  if (action.type === "updateGoal") {
+    if (!action.patch || Object.keys(action.patch).some((key) => key !== "name" && key !== "goal")) {
+      return { error: "A tab can only edit a task's name and goal directly." };
+    }
+    if ((action.patch.name !== undefined && (typeof action.patch.name !== "string" || !action.patch.name.trim())) || (action.patch.goal !== undefined && typeof action.patch.goal !== "string")) {
+      return { error: "Use a nonempty name and text for the task's goal." };
+    }
+  }
   if (action.type === "setCheck") {
     const check = state.tasks.find((task) => task.id === action.taskId)?.verification.find((item) => item.id === action.checkId);
     if (check && check.kind !== "review") return { error: "Only reviews are accepted or rejected by hand. Checks pass by running." };
@@ -127,6 +147,12 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
   if (created.some((task) => !task || task.git || task.status === "running" || !Array.isArray(task.verification) || task.verification.some((check) => check.state !== "pending"))) {
     return { error: "A new task starts unverified, with no branch." };
   }
+  if (created.some((task) => !state.goals.some((goal) => goal.id === task.goalId && goal.projectId === task.projectId))) {
+    return { error: "A new step needs a task in its project, as goalId." };
+  }
+  if (action.type === "addSteps" && created.some((task) => task.goalId !== action.goalId)) {
+    return { error: "Every new step must belong to the task receiving the steps." };
+  }
   if (created.some((task) => (task.model !== undefined && !isModelId(task.model)) || (task.effort !== undefined && !isEffort(task.effort)))) {
     return { error: "That is not a model or thinking level an agent can use." };
   }
@@ -134,7 +160,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
 }
 
 export function envelope(state: OrchestrationState) {
-  return { state: { state }, version: 2 };
+  return { state: { state }, version: 3 };
 }
 
 function load(file: string): OrchestrationState {
@@ -147,7 +173,13 @@ function load(file: string): OrchestrationState {
   }
   const saved = (raw as { state?: { state?: unknown } } | undefined)?.state?.state;
   const state = loadState(saved);
-  if (state) return state;
+  if (state) {
+    if ((saved as { schema?: number }).schema !== 3) {
+      const before = path.join(path.dirname(file), "state.pre-tasks.json");
+      if (!existsSync(before)) copyFileSync(file, before);
+    }
+    return state;
+  }
   if (saved && typeof saved === "object" && Array.isArray((saved as { tasks?: unknown }).tasks)) {
     // Not the demo board and not readable: keep it rather than writing an empty board over it.
     const aside = `${file}.unreadable-${new Date(Date.now()).toISOString().replace(/[:.]/g, "-")}`;

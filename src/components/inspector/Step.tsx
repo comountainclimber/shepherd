@@ -260,7 +260,7 @@ function StepModel({ task }: { task: Task }) {
 function Order({ task }: { task: Task }) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
-  const project = useShepherd((store) => store.state.projects.find((item) => item.id === task.projectId));
+  const project = useShepherd((store) => store.state.goals.find((item) => item.id === task.goalId));
   const dispatch = useShepherd((store) => store.dispatch);
   const [adding, setAdding] = useState("");
   const name = (id: string) => tasks.find((item) => item.id === id)?.name || "Untitled step";
@@ -268,7 +268,7 @@ function Order({ task }: { task: Task }) {
   const after = outgoing(task.id, deps);
   const byHand = !!project?.outline && (!!task.wired || before.some((dep) => !dep.outline));
   const candidates = tasks
-    .filter((item) => item.projectId === task.projectId && item.id !== task.id)
+    .filter((item) => item.goalId === task.goalId && item.id !== task.id)
     .filter((item) => !before.some((dep) => dep.source === item.id))
     .filter((item) => !hasCycle([...deps, { source: item.id, target: task.id }]));
 

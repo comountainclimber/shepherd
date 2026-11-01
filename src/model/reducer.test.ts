@@ -418,7 +418,7 @@ describe("known issues", () => {
     const fix = make("fix", { review: false });
     state = reducer(state, { type: "fixIssue", id: "a", issueId: issue.id, task: fix });
     expect(task(state, "a").issues![0]!.stepId).toBe("fix");
-    expect(state.projects.find((project) => project.id === "proj-local")!.outline!.map((item) => item.id)).toEqual(["a", "b", "fix"]);
+    expect(state.goals.find((goal) => goal.id === "goal-proj-local")!.outline!.map((item) => item.id)).toEqual(["a", "b", "fix"]);
     expect(waitingOn(task(state, "fix"), state.tasks, state.dependencies)).toBeNull();
     expect(state.dependencies.filter((dep) => dep.target === "fix").map((dep) => dep.source)).toEqual(["b"]);
     expect(openIssues(task(state, "a"), state.tasks)).toHaveLength(1);

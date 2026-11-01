@@ -100,17 +100,17 @@ export function sendBack(taskId: string, to: string, text: string): Promise<stri
 }
 
 /** Runs every step that is not done, each as soon as the steps before it are done. */
-export function runPlan(projectId: string) {
-  return command({ command: "runPlan", projectId });
+export function runPlan(goalId: string) {
+  return command({ command: "runPlan", goalId });
 }
 
-export function stopPlan(projectId: string) {
-  return command({ command: "stopPlan", projectId });
+export function stopPlan(goalId: string) {
+  return command({ command: "stopPlan", goalId });
 }
 
 /** Merges the finished plan's branches into the project folder's branch. */
-export function mergePlan(projectId: string) {
-  return command({ command: "mergePlan", projectId });
+export function mergePlan(goalId: string) {
+  return command({ command: "mergePlan", goalId });
 }
 
 export interface DraftStep {
@@ -121,7 +121,7 @@ export interface DraftStep {
 
 /** Asks Codex to break a goal into steps. It can read the project folder but changes nothing. */
 export async function draftSteps(
-  projectId: string,
+  goalId: string,
   goal: string,
   choice: Pick<Task, "model" | "effort">,
   signal?: AbortSignal,
@@ -130,7 +130,7 @@ export async function draftSteps(
     const response = await fetch("/api/draft", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId, goal, model: choice.model ?? null, thinking: choice.effort ?? null }),
+      body: JSON.stringify({ goal: goalId, prompt: goal, model: choice.model ?? null, thinking: choice.effort ?? null }),
       signal,
     });
     const body = (await response.json()) as { steps?: DraftStep[]; error?: string };

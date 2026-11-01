@@ -1,8 +1,8 @@
 import { ChevronDown, CircleX, LayoutGrid, Plus, ScrollText, Settings, UserRound, Users, Zap } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx, formatClock } from "../../model/format";
-import { needsYou, progress } from "../../model/stage";
-import { tasksForProject } from "../../model/selectors";
+import { needsYou } from "../../model/stage";
+import { tasksForGoal } from "../../model/selectors";
 import { agentStatus, setWorkspacePath, workspacePath } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
 
@@ -11,7 +11,7 @@ export function Hud() {
   const state = useShepherd((store) => store.state);
   const setView = useShepherd((store) => store.setView);
   const setFilters = useShepherd((store) => store.setFilters);
-  const tasks = tasksForProject(state, ui.projectId);
+  const tasks = tasksForGoal(state, ui.goalId);
   const running = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, state.tasks, state.dependencies)).length;
   const failed = tasks.filter((task) => task.status === "failed").length;
@@ -22,10 +22,10 @@ export function Hud() {
   };
 
   return (
-    <header className="relative z-20 flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
+    <header className="relative z-20 flex min-h-14 shrink-0 flex-wrap items-center gap-2 py-2 sm:flex-nowrap sm:gap-3 sm:py-0 border-b border-line bg-surface px-4">
       <div className="flex items-center gap-2">
         <Sheep size={26} />
-        <span className="text-[15px] font-semibold text-text">Shepherd</span>
+        <span className="hidden md:inline text-[15px] font-semibold text-text">Shepherd</span>
       </div>
       <ProjectPicker />
       <div className="flex items-center gap-1">
@@ -85,7 +85,7 @@ function Counter({
     <button
       type="button"
       onClick={onClick}
-      title={active ? "Show every task" : `Show only tasks that ${label}`}
+      title={active ? "Show every step" : `Show only steps that ${label}`}
       className={cx(
         "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] transition-colors",
         count ? tone : "text-faint",
@@ -152,7 +152,7 @@ function ProjectPicker() {
       {open ? (
         <div className={cx(POPOVER, "left-0 w-72 p-1")}>
           {state.projects.map((project) => {
-            const score = progress(state.tasks.filter((task) => task.projectId === project.id));
+            const count = state.goals.filter((goal) => goal.projectId === project.id && goal.status === "open").length;
             return (
               <button
                 key={project.id}
@@ -167,8 +167,8 @@ function ProjectPicker() {
                 )}
               >
                 <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-                <span className={cx("font-mono text-[11px]", score.complete ? "text-completed" : "text-faint")}>
-                  {score.total ? `${score.done}/${score.total}` : "empty"}
+                <span className="font-mono text-[11px] text-faint">
+                  {count} {count === 1 ? "task" : "tasks"}
                 </span>
               </button>
             );
@@ -191,15 +191,17 @@ function ProjectPicker() {
 
 const FEED_TONE = { info: "bg-queued", success: "bg-completed", warning: "bg-running", failure: "bg-failed" } as const;
 
-/** Everything that happened in this project, newest first. */
+/** Everything that happened in the selected task, newest first. */
 function Feed() {
   const { open, setOpen, ref } = usePopover();
-  const projectId = useShepherd((store) => store.ui.projectId);
+  const goalId = useShepherd((store) => store.ui.goalId);
   const allEvents = useShepherd((store) => store.state.events);
   const unread = useShepherd((store) => store.state.notifications.filter((item) => !item.read).length);
   const dispatch = useShepherd((store) => store.dispatch);
   const selectTask = useShepherd((store) => store.selectTask);
-  const events = allEvents.filter((event) => event.projectId === projectId).slice(-40).reverse();
+  const steps = useShepherd((store) => store.state.tasks);
+  const ids = new Set(steps.filter((step) => step.goalId === goalId).map((step) => step.id));
+  const events = allEvents.filter((event) => ids.has(event.taskId)).slice(-40).reverse();
 
   return (
     <div ref={ref} className="relative">

@@ -28,8 +28,8 @@ export function needsAbove(saved: SavedStep, place: SavedPlace, empty: boolean):
 /** Your saved steps, to search and pick one to add where the outline says. */
 export function SavedPicker({ place }: { place: SavedPlace }) {
   const saved = useSavedSteps();
-  const projectId = useShepherd((store) => store.ui.projectId);
-  const empty = useShepherd((store) => !store.state.tasks.some((task) => task.projectId === projectId && task.id !== place.replace));
+  const goalId = useShepherd((store) => store.ui.goalId);
+  const empty = useShepherd((store) => !store.state.tasks.some((task) => task.goalId === goalId && task.id !== place.replace));
   const setAddSaved = useShepherd((store) => store.setAddSaved);
   const setManageSaved = useShepherd((store) => store.setManageSaved);
   const [query, setQuery] = useState("");

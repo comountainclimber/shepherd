@@ -91,7 +91,8 @@ describe("screenshots", () => {
 
 const browser = findBrowser();
 
-describe.skipIf(!browser)("a real browser", () => {
+// Seatbelt blocks starting Chrome; UI checks use the browser tool or Shepherd screenshots there.
+describe.skipIf(!browser || process.env.CODEX_SANDBOX === "seatbelt")("a real browser", () => {
   let server: Server;
   let base = "";
   beforeAll(async () => {

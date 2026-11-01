@@ -1,3 +1,4 @@
+import { TaskPicker } from "./TaskPicker";
 import { BookmarkPlus, ChevronRight, GitMerge, GripVertical, LoaderCircle, Play, Plus, Sparkles, Square, Waypoints } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
@@ -22,13 +23,13 @@ const INDENT_PX = 20;
 const PICKABLE = [...AGENTS].sort((a, b) => (a.provider === "codex" ? -1 : b.provider === "codex" ? 1 : 0));
 
 /** A line too long for a name keeps the whole line as the step's prompt. */
-function stepFrom(projectId: string, line: string, prompt: string, agentId: string | null, context = ""): Task {
+function stepFrom(goalId: string, line: string, prompt: string, agentId: string | null, context = ""): Task {
   let name = line;
   if (line.length > NAME_LIMIT) {
     const cut = line.slice(0, NAME_LIMIT);
     name = `${cut.slice(0, cut.lastIndexOf(" ") > 40 ? cut.lastIndexOf(" ") : NAME_LIMIT)}…`;
   }
-  const task = newStep(projectId, name, prompt || (name === line ? "" : line), agentId);
+  const task = newStep(useShepherd.getState().state.goals.find((goal) => goal.id === goalId)!.projectId, name, prompt || (name === line ? "" : line), agentId, goalId);
   return context ? { ...task, description: context } : task;
 }
 
@@ -39,14 +40,14 @@ function editable(target: EventTarget | null): boolean {
 
 /** The project's steps as an indented list you type into. The map beside it follows it. */
 export function Outline() {
-  const projectId = useShepherd((store) => store.ui.projectId);
+  const goalId = useShepherd((store) => store.ui.goalId);
   const state = useShepherd((store) => store.state);
   const selectedTaskId = useShepherd((store) => store.ui.selectedTaskId);
   const addSaved = useShepherd((store) => store.ui.addSaved);
   const setAddSaved = useShepherd((store) => store.setAddSaved);
   const dispatch = useShepherd((store) => store.dispatch);
-  const project = state.projects.find((item) => item.id === projectId);
-  const items = useMemo(() => outlineOf(state, projectId), [state, projectId]);
+  const project = state.goals.find((item) => item.id === goalId);
+  const items = useMemo(() => outlineOf(state, goalId), [state, goalId]);
   const byId = useMemo(() => new Map(state.tasks.map((task) => [task.id, task])), [state.tasks]);
   const inputs = useRef(new Map<string, HTMLInputElement>());
   const [pendingFocus, setPendingFocus] = useState<{ id: string; at: "start" | "end" } | null>(null);
@@ -65,13 +66,13 @@ export function Outline() {
   }, [pendingFocus, items]);
 
   const save = (next: OutlineItem[] | null) => {
-    if (next) dispatch({ type: "setOutline", projectId, items: next });
+    if (next) dispatch({ type: "setOutline", goalId, items: next });
   };
 
   const add = (after: string | null, depth: number, from?: Task) => {
     const agentId = from?.runner === "agent" ? from.agentId : DEFAULT_AGENT_ID;
-    const task = newStep(projectId, "", "", agentId);
-    dispatch({ type: "addSteps", projectId, after, steps: [{ task, depth }] });
+    const task = newStep(project!.projectId, "", "", agentId, goalId);
+    dispatch({ type: "addSteps", goalId, after, steps: [{ task, depth }] });
     setPendingFocus({ id: task.id, at: "start" });
   };
 
@@ -81,7 +82,7 @@ export function Outline() {
       const { ui } = useShepherd.getState();
       if (ui.paletteOpen || ui.newProjectOpen) return;
       event.preventDefault();
-      appendStep(ui.projectId);
+      appendStep(ui.goalId);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -93,7 +94,7 @@ export function Outline() {
     if (task && !task.name && !editable(document.activeElement)) setPendingFocus({ id: task.id, at: "start" });
   }, [selectedTaskId]);
 
-  if (!project) return null;
+  if (!project) return <aside className="w-full sm:w-[340px] shrink-0 border-r border-line bg-surface"><TaskPicker /></aside>;
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>, index: number) => {
     const item = items[index]!;
@@ -144,13 +145,13 @@ export function Outline() {
     const base = item.depth - lines[0]!.depth;
     let rest = lines;
     if (!task.name.trim()) {
-      const first = stepFrom(projectId, lines[0]!.name, "", agentId);
+      const first = stepFrom(goalId, lines[0]!.name, "", agentId);
       dispatch({ type: "updateTask", id: task.id, patch: { name: first.name, objective: first.objective } });
       rest = lines.slice(1);
     }
-    const steps = rest.map((line) => ({ task: stepFrom(projectId, line.name, "", agentId), depth: Math.max(0, base + line.depth) }));
+    const steps = rest.map((line) => ({ task: stepFrom(goalId, line.name, "", agentId), depth: Math.max(0, base + line.depth) }));
     const after = items[subtreeEnd(items, index) - 1]!.id;
-    dispatch({ type: "addSteps", projectId, after, steps });
+    dispatch({ type: "addSteps", goalId, after, steps });
     const last = steps.at(-1);
     if (last) setPendingFocus({ id: last.task.id, at: "end" });
   };
@@ -160,14 +161,15 @@ export function Outline() {
   /** The row the saved-step picker opens under: the blank row it replaces, or the row it adds after unless that is the last. */
   const pickerUnder = addSaved ? (addSaved.replace ?? (addSaved.after !== items.at(-1)?.id ? addSaved.after : null)) : null;
   return (
-    <aside className="flex w-[340px] shrink-0 flex-col border-r border-line bg-surface">
+    <aside className="flex w-full sm:w-[340px] shrink-0 flex-col border-r border-line bg-surface">
+      <TaskPicker />
       <div className="flex items-baseline justify-between px-4 pb-1 pt-3.5">
         <h2 className="text-[13px] font-semibold text-text">Steps</h2>
         {items.length ? <span className="text-[11px] text-faint">Enter adds · Tab runs side by side</span> : null}
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
         {items.length === 0 ? (
-          <Start projectId={projectId} onWrite={() => add(null, 0)} />
+          <Start goalId={goalId} onWrite={() => add(null, 0)} />
         ) : (
           <>
             {!project.outline ? (
@@ -219,7 +221,7 @@ export function Outline() {
             </ol>
             <button
               type="button"
-              onClick={() => appendStep(projectId)}
+              onClick={() => appendStep(goalId)}
               className="mt-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-surface-2 hover:text-text"
             >
               <Plus size={14} /> Add step
@@ -229,17 +231,17 @@ export function Outline() {
             ) : (
               <button
                 type="button"
-                onClick={() => setAddSaved(placeFor(projectId, null))}
+                onClick={() => setAddSaved(placeFor(goalId, null))}
                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-surface-2 hover:text-text"
               >
                 <BookmarkPlus size={14} /> Add a saved step
               </button>
             )}
-            <Draft projectId={projectId} big={false} />
+            <Draft key={goalId} goalId={goalId} big={false} />
           </>
         )}
       </div>
-      {items.length ? <PlanBar projectId={projectId} /> : null}
+      {items.length ? <PlanBar goalId={goalId} /> : null}
     </aside>
   );
 }
@@ -407,12 +409,12 @@ function AgentPicker({ task }: { task: Task }) {
   );
 }
 
-function Start({ projectId, onWrite }: { projectId: string; onWrite: () => void }) {
+function Start({ goalId, onWrite }: { goalId: string; onWrite: () => void }) {
   const addSaved = useShepherd((store) => store.ui.addSaved);
   const setAddSaved = useShepherd((store) => store.setAddSaved);
   return (
     <div className="space-y-3 px-2 pt-2">
-      <Draft projectId={projectId} big />
+      <Draft key={goalId} goalId={goalId} big />
       <div className="flex items-center gap-2 text-[11px] text-faint">
         <span className="h-px flex-1 bg-line" />
         or
@@ -427,7 +429,7 @@ function Start({ projectId, onWrite }: { projectId: string; onWrite: () => void 
         <button
           type="button"
           className="block w-full text-center text-[12px] text-brass hover:underline"
-          onClick={() => setAddSaved(placeFor(projectId, null))}
+          onClick={() => setAddSaved(placeFor(goalId, null))}
         >
           or add a saved step
         </button>
@@ -453,14 +455,14 @@ function lastDraftChoice(): Pick<Task, "model" | "effort"> {
 }
 
 /** Asks Codex to break a goal into steps, then adds them to the end of the outline. */
-function Draft({ projectId, big }: { projectId: string; big: boolean }) {
+function Draft({ goalId, big }: { goalId: string; big: boolean }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const draftToken = useShepherd((store) => store.ui.draftToken);
   const requestFit = useShepherd((store) => store.requestFit);
   const catalog = useModels();
   const [choice, setChoice] = useState(lastDraftChoice);
   const [open, setOpen] = useState(big);
-  const [goal, setGoal] = useState("");
+  const [goal, setGoal] = useState(() => useShepherd.getState().state.goals.find((goal) => goal.id === goalId)?.goal ?? "");
   const [started, setStarted] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -479,7 +481,7 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [started]);
-  useEffect(() => () => abort.current?.abort(), [projectId]);
+  useEffect(() => () => abort.current?.abort(), [goalId]);
 
   const submit = async () => {
     const text = goal.trim();
@@ -489,16 +491,18 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
     setNow(Date.now());
     const controller = new AbortController();
     abort.current = controller;
-    const result = await draftSteps(projectId, text, choice, controller.signal);
+    dispatch({ type: "updateGoal", id: goalId, patch: { goal: text } });
+    const result = await draftSteps(goalId, text, choice, controller.signal);
+    if (controller.signal.aborted) return;
     abort.current = null;
     setStarted(null);
     if (!Array.isArray(result)) {
       if (!controller.signal.aborted) setError(result.error);
       return;
     }
-    const after = outlineOf(useShepherd.getState().state, projectId).at(-1)?.id ?? null;
-    const steps = result.map((step) => ({ task: stepFrom(projectId, step.name, step.prompt, DEFAULT_AGENT_ID, text), depth: step.depth }));
-    dispatch({ type: "addSteps", projectId, after, steps });
+    const after = outlineOf(useShepherd.getState().state, goalId).at(-1)?.id ?? null;
+    const steps = result.map((step) => ({ task: stepFrom(goalId, step.name, step.prompt, DEFAULT_AGENT_ID, text), depth: step.depth }));
+    dispatch({ type: "addSteps", goalId, after, steps });
     setGoal("");
     if (!big) setOpen(false);
     requestFit();
@@ -574,12 +578,12 @@ function Draft({ projectId, big }: { projectId: string; big: boolean }) {
 }
 
 /** How far the plan has got, and the one button that runs, stops or merges it. */
-function PlanBar({ projectId }: { projectId: string }) {
-  const project = useShepherd((store) => store.state.projects.find((item) => item.id === projectId));
+function PlanBar({ goalId }: { goalId: string }) {
+  const project = useShepherd((store) => store.state.goals.find((item) => item.id === goalId));
   const allTasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
   const [busy, setBusy] = useState(false);
-  const tasks = allTasks.filter((task) => task.projectId === projectId);
+  const tasks = allTasks.filter((task) => task.goalId === goalId);
   const score = progress(tasks);
   const working = tasks.filter((task) => task.status === "running").length;
   const yours = tasks.filter((task) => needsYou(task, allTasks, deps)).length;
@@ -621,20 +625,20 @@ function PlanBar({ projectId }: { projectId: string }) {
         </span>
       </div>
       <ProgressBar percent={score.percent} tone={cx(score.complete ? "bg-completed" : "bg-running", running && "stripes")} />
-      {running ? (
-        <Button size="lg" className="w-full" disabled={busy} onClick={() => void act(() => stopPlan(projectId))}>
+      {project?.status !== "open" && !score.complete ? <p className="text-center text-[12px] text-muted">Reopen this task to run its steps.</p> : running ? (
+        <Button size="lg" className="w-full" disabled={busy} onClick={() => void act(() => stopPlan(goalId))}>
           <Square size={13} /> Stop
         </Button>
       ) : score.complete ? (
         unmerged.length ? (
-          <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => mergePlan(projectId))}>
+          <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => mergePlan(goalId))}>
             <GitMerge size={15} /> {busy ? "Merging…" : `Merge the result into ${target}`}
           </Button>
         ) : (
           <p className="text-center text-[12px] text-faint">{tasks.some((task) => task.git) ? `Merged into ${target}.` : "Nothing to merge."}</p>
         )
       ) : (
-        <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => runPlan(projectId))}>
+        <Button size="lg" variant="primary" className="w-full" disabled={busy} onClick={() => void act(() => runPlan(goalId))}>
           <Play size={15} /> {started ? "Run the rest" : "Run"}
         </Button>
       )}

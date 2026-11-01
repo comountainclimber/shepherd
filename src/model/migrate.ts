@@ -1,7 +1,9 @@
+import { blankGoal } from "./factory";
 import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
 import type {
   Dependency,
+  Goal,
   ExecutionEvent,
   FilePreview,
   Issue,
@@ -33,19 +35,11 @@ function text(value: unknown, fallback = ""): string {
 
 function project(raw: Raw): Project {
   const directory = text(raw.directory);
-  const outline = Array.isArray(raw.outline)
-    ? raw.outline.flatMap((item) => {
-        const step = record(item);
-        return step && typeof step.id === "string" ? [{ id: step.id, depth: Number.isInteger(step.depth) ? (step.depth as number) : 0 }] : [];
-      })
-    : null;
   return {
     id: text(raw.id),
     name: text(raw.name),
     summary: text(raw.summary),
     ...(directory ? { directory } : {}),
-    ...(outline ? { outline } : {}),
-    ...(raw.running === true ? { running: true } : {}),
   };
 }
 
@@ -134,6 +128,7 @@ function task(raw: Raw): Task {
   return {
     id,
     projectId: text(raw.projectId),
+    goalId: text(raw.goalId),
     name: text(raw.name),
     objective: text(raw.objective),
     description: text(raw.description),
@@ -210,15 +205,38 @@ function issue(value: unknown): Issue[] {
 /** Reads a saved board from any earlier schema. Returns null when there is nothing worth keeping. */
 export function loadState(saved: unknown): OrchestrationState | null {
   const raw = record(saved);
-  if (!raw || (raw.schema !== 1 && raw.schema !== 2) || isDemoState(raw)) return null;
+  if (!raw || (raw.schema !== 1 && raw.schema !== 2 && raw.schema !== 3) || isDemoState(raw)) return null;
   const projects = list(raw.projects).flatMap((item) => (record(item) ? [project(item as Raw)] : []));
   if (!projects.length) return null;
   // The workspace folder holds every project, so it cannot be one project's repository.
   for (const item of projects) item.directory ||= projectDirectory(item.name, projects);
+  const goals: Goal[] = raw.schema === 3
+    ? list(raw.goals).flatMap((item) => {
+        const value = record(item);
+        if (!value || !projects.some((project) => project.id === value.projectId)) return [];
+        const { outline: _empty, ...goal } = blankGoal(text(value.projectId), text(value.name), text(value.id), text(value.goal));
+        return [{
+          ...goal,
+          ...parseOutline(value),
+          running: value.running === true,
+          status: value.status === "done" || value.status === "archived" ? value.status : "open",
+          ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
+          ...(typeof value.folder === "string" ? { folder: value.folder } : {}),
+          ...(typeof value.base === "string" ? { base: value.base } : {}),
+        } as Goal];
+      })
+    : projects.map((project) => {
+        const value = list(raw.projects).map(record).find((item) => item?.id === project.id)!;
+        const { outline: _empty, ...goal } = blankGoal(project.id, project.name);
+        return { ...goal, ...parseOutline(value), running: value.running === true };
+      });
+  const tasks = list(raw.tasks).flatMap((item) => (record(item) ? [task(item as Raw)] : []));
+  if (raw.schema !== 3) for (const task of tasks) task.goalId = goals.find((goal) => goal.projectId === task.projectId)?.id ?? "";
   return {
-    schema: 2,
+    schema: 3,
+    goals,
     projects,
-    tasks: list(raw.tasks).flatMap((item) => (record(item) ? [task(item as Raw)] : [])),
+    tasks,
     dependencies: list(raw.dependencies) as Dependency[],
     events: list(raw.events) as ExecutionEvent[],
     notifications: list(raw.notifications) as Notification[],
@@ -226,4 +244,11 @@ export function loadState(saved: unknown): OrchestrationState | null {
     seq: typeof raw.seq === "number" ? raw.seq : 1,
     ...(typeof raw.workspace === "string" && raw.workspace.trim() ? { workspace: raw.workspace.trim() } : {}),
   };
+}
+
+function parseOutline(raw: Raw): Pick<Goal, "outline"> {
+  return Array.isArray(raw.outline) ? { outline: raw.outline.flatMap((item) => {
+    const step = record(item);
+    return step && typeof step.id === "string" ? [{ id: step.id, depth: Number.isInteger(step.depth) ? step.depth as number : 0 }] : [];
+  }) } : {};
 }

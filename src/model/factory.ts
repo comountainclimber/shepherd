@@ -1,4 +1,4 @@
-import type { Runner, Task, VerificationCheck, VerificationKind, VerificationState } from "./types";
+import type { Goal, Runner, Task, VerificationCheck, VerificationKind, VerificationState } from "./types";
 
 export function slugify(text: string, fallback = "task"): string {
   const slug = text
@@ -24,6 +24,7 @@ export function commandCheck(taskId: string, command: string): VerificationCheck
 export function blankTask(args: {
   id: string;
   projectId: string;
+  goalId?: string;
   name: string;
   objective: string;
   agentId: string | null;
@@ -45,6 +46,7 @@ export function blankTask(args: {
   return {
     id: args.id,
     projectId: args.projectId,
+    goalId: args.goalId ?? defaultGoalId(args.projectId),
     name: args.name,
     objective: args.objective,
     description: args.description ?? "",
@@ -71,9 +73,9 @@ export function blankTask(args: {
 export const DEFAULT_AGENT_ID = "agent-codex";
 
 /** A new outline step: just a name, done by Codex unless you pick otherwise. An empty prompt means its name is the prompt. */
-export function newStep(projectId: string, name = "", prompt = "", agentId: string | null = DEFAULT_AGENT_ID): Task {
+export function newStep(projectId: string, name = "", prompt = "", agentId: string | null = DEFAULT_AGENT_ID, goalId = defaultGoalId(projectId)): Task {
   const id = `step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  return blankTask({ id, projectId, name, objective: prompt, agentId, worktree: id, position: { x: 0, y: 0 } });
+  return blankTask({ id, projectId, goalId, name, objective: prompt, agentId, worktree: id, position: { x: 0, y: 0 } });
 }
 
 export function reviewCheck(taskId: string): VerificationCheck {
@@ -82,10 +84,10 @@ export function reviewCheck(taskId: string): VerificationCheck {
 
 export function nextPosition(
   tasks: Task[],
-  projectId: string,
+  goalId: string,
   dependsOn: string[],
 ): { x: number; y: number } {
-  const mine = tasks.filter((task) => task.projectId === projectId);
+  const mine = tasks.filter((task) => task.goalId === goalId);
   const anchors = mine.filter((task) => dependsOn.includes(task.id));
   const baseX = anchors.length
     ? Math.max(...anchors.map((task) => task.position.x))
@@ -96,4 +98,12 @@ export function nextPosition(
   const siblings = mine.filter((task) => Math.abs(task.position.x - x) < 80);
   const y = siblings.length ? Math.max(...siblings.map((task) => task.position.y)) + 156 : 24;
   return { x, y };
+}
+
+export function defaultGoalId(projectId: string): string {
+  return `goal-${projectId}`;
+}
+
+export function blankGoal(projectId: string, name: string, id = defaultGoalId(projectId), goal = ""): Goal {
+  return { id, projectId, name, goal, outline: [], running: false, status: "open" };
 }

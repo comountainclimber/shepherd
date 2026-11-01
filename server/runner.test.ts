@@ -56,7 +56,7 @@ function outlined(spec: string): OrchestrationState {
     const name = line.trim();
     return { task: { ...newStep(WORKSPACE_PROJECT_ID, name, `Do ${name}`), id: `step-${name.toLowerCase()}` }, depth: (line.length - line.trimStart().length) / 2 };
   });
-  return reducer(workspace(0), { type: "addSteps", projectId: WORKSPACE_PROJECT_ID, after: null, steps });
+  return reducer(workspace(0), { type: "addSteps", goalId: `goal-${WORKSPACE_PROJECT_ID}`, after: null, steps });
 }
 
 /** A server starting on a saved board, with no agent signed in so nothing but checks can run. */
@@ -137,13 +137,13 @@ describe("plans", () => {
   it("runs the outline in order, hands each step the work and reports before it, and stops when done", async () => {
     const { engine, runner, prompts } = planServer(outlined("Plan\n  Front\n  Back\nShip"));
     expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
-    expect(engine.get().projects[0]!.running).toBe(true);
+    expect(engine.get().goals[0]!.running).toBe(true);
     await runner.idle();
 
     const board = engine.get();
     const step = (name: string) => board.tasks.find((task) => task.name === name)!;
     expect(board.tasks.every(isFullyVerified)).toBe(true);
-    expect(board.projects[0]!.running).toBeUndefined();
+    expect(board.goals[0]!.running).toBe(false);
 
     const order = prompts().map((item) => item.name);
     expect(order[0]).toBe("plan");
@@ -180,7 +180,7 @@ describe("plans", () => {
     expect(step("Try").status).toBe("queued");
     expect(step("Try").git?.branch).toBe("shepherd/try");
     for (const file of ["plan.txt", "front.txt", "back.txt"]) expect(existsSync(path.join(folder, file))).toBe(true);
-    expect(engine.get().projects[0]!.running).toBe(true);
+    expect(engine.get().goals[0]!.running).toBe(true);
 
     expect(await runner.handle({ command: "sendBack", taskId: step("Try").id, to: step("Front").id, text: "The button is blue" })).toEqual({
       ok: true,
@@ -196,7 +196,7 @@ describe("plans", () => {
     await runner.idle();
     expect(step("Try").filesChanged).toEqual(["notes.txt"]);
     expect(engine.get().tasks.every(isFullyVerified)).toBe(true);
-    expect(engine.get().projects[0]!.running).toBeUndefined();
+    expect(engine.get().goals[0]!.running).toBe(false);
 
     expect(await runner.handle({ command: "mergePlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ ok: true });
     for (const file of ["plan.txt", "front.txt", "back.txt", "notes.txt"]) expect(existsSync(path.join(project, file))).toBe(true);
@@ -242,8 +242,51 @@ describe("plans", () => {
     const board = outlined("Plan");
     const { runner, engine } = planServer({ ...board, tasks: board.tasks.map((task) => ({ ...task, agentId: null })) });
     expect(await runner.handle({ command: "runPlan", projectId: WORKSPACE_PROJECT_ID })).toEqual({ error: "Pick who does Plan first." });
-    expect(engine.get().projects[0]!.running).toBeUndefined();
+    expect(engine.get().goals[0]!.running).toBe(false);
     runner.close();
     engine.close();
+  });
+});
+
+describe("separate task plans", () => {
+  it("runs and merges one task without running or merging another task's steps", async () => {
+    const first = `goal-${WORKSPACE_PROJECT_ID}`;
+    let board = outlined("Plan");
+    board = reducer(board, { type: "createGoal", goal: { id: "second", projectId: WORKSPACE_PROJECT_ID, name: "Other task", goal: "", status: "open", running: false, outline: [] } });
+    board = reducer(board, { type: "addSteps", goalId: "second", after: null, steps: [{ task: { ...newStep(WORKSPACE_PROJECT_ID, "Other", "Do Other", "agent-codex", "second"), id: "step-other" }, depth: 0 }] });
+    const { runner, engine, project, prompts } = planServer(board);
+    try {
+      expect(await runner.handle({ command: "runPlan", goalId: first })).toEqual({ ok: true });
+      await runner.idle();
+      expect(engine.get().tasks.find((task) => task.goalId === first)?.status).toBe("completed");
+      expect(engine.get().tasks.find((task) => task.goalId === "second")).toMatchObject({ status: "queued" });
+      expect(engine.get().tasks.find((task) => task.goalId === "second")?.git).toBeUndefined();
+      expect(prompts().map((item) => item.name)).toEqual(["plan"]);
+      expect(await runner.handle({ command: "runPlan", goalId: "second" })).toEqual({ ok: true });
+      await runner.idle();
+      expect(await runner.handle({ command: "mergePlan", goalId: first })).toEqual({ ok: true });
+      expect(existsSync(path.join(project, "plan.txt"))).toBe(true);
+      expect(existsSync(path.join(project, "other.txt"))).toBe(false);
+      expect(engine.get().tasks.find((task) => task.goalId === "second")?.git?.merged).toBeUndefined();
+      expect(await runner.handle({ command: "mergePlan", goalId: "second" })).toEqual({ ok: true });
+      expect(existsSync(path.join(project, "other.txt"))).toBe(true);
+    } finally {
+      runner.close();
+      engine.close();
+    }
+  });
+
+  it("stops only the selected task's running flag", async () => {
+    const board = reducer(outlined("Plan"), { type: "createGoal", goal: { id: "second", projectId: WORKSPACE_PROJECT_ID, name: "Other", goal: "", status: "open", running: false } });
+    const { runner, engine } = planServer(board);
+    try {
+      engine.dispatch({ type: "setPlanRunning", goalId: board.goals[0]!.id, running: true });
+      engine.dispatch({ type: "setPlanRunning", goalId: "second", running: true });
+      expect(await runner.handle({ command: "stopPlan", goalId: "second" })).toEqual({ ok: true });
+      expect(engine.get().goals.map((goal) => goal.running)).toEqual([true, false]);
+    } finally {
+      runner.close();
+      engine.close();
+    }
   });
 });

@@ -1,6 +1,6 @@
-import { commandCheck, reviewCheck } from "./factory";
+import { blankGoal, commandCheck, reviewCheck } from "./factory";
 import { EFFORT_LABEL, isEffort, isModelId } from "./models";
-import { layoutProject, normalize, outlineOf, syncOutlines } from "./outline";
+import { layoutGoal, normalize, outlineOf, syncOutlines } from "./outline";
 import { agentById, projectDirectory, workspace } from "./workspace";
 import { CHECK_LABEL } from "./types";
 import type {
@@ -10,6 +10,7 @@ import type {
   Effort,
   ExecutionEvent,
   Gate,
+  Goal,
   Look,
   Notification,
   OrchestrationState,
@@ -58,6 +59,7 @@ const GATE_ACTIONS = new Set<Action["type"]>([
   "startCheck",
   "recordCheck",
   "deleteTask",
+  "deleteGoal",
   "approvePlan",
   "createTask",
   "outdate",
@@ -84,16 +86,16 @@ export function reducer(state: OrchestrationState, action: Action): Orchestratio
   const outline = OUTLINE_ACTIONS.has(action.type);
   if (outline) next = syncOutlines(next);
   if (outline || GATE_ACTIONS.has(action.type)) next = refreshGates(next);
-  const projectId = laidOut(state, action);
-  if (projectId && next.projects.find((project) => project.id === projectId)?.outline) next = layoutProject(next, projectId);
+  const goalId = laidOut(state, action);
+  if (goalId && next.goals.find((goal) => goal.id === goalId)?.outline) next = layoutGoal(next, goalId);
   return next;
 }
 
-/** The project whose map follows its outline again after this action. */
+/** The task whose map follows its outline again after this action. */
 function laidOut(state: OrchestrationState, action: Action): string | null {
-  if (action.type === "addSteps" || action.type === "setOutline") return action.projectId;
+  if (action.type === "addSteps" || action.type === "setOutline") return action.goalId;
   if (action.type === "followOutline" || action.type === "deleteTask" || action.type === "fixIssue") {
-    return state.tasks.find((task) => task.id === action.id)?.projectId ?? null;
+    return state.tasks.find((task) => task.id === action.id)?.goalId ?? null;
   }
   return null;
 }
@@ -121,6 +123,31 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return disconnect(state, action.id);
     case "createProject":
       return createProject(state, action.project);
+    case "createGoal":
+      return createGoal(state, action.goal);
+    case "updateGoal": {
+      const name = typeof action.patch?.name === "string" ? action.patch.name.trim() : "";
+      return {
+        ...state,
+        goals: state.goals.map((goal) => goal.id === action.id
+          ? { ...goal, ...(name ? { name } : {}), ...(typeof action.patch?.goal === "string" ? { goal: action.patch.goal.trim() } : {}) }
+          : goal),
+      };
+    }
+    case "finishGoal":
+    case "archiveGoal":
+    case "reopenGoal":
+      return {
+        ...state,
+        goals: state.goals.map((goal) => goal.id === action.id
+          ? { ...goal, status: action.type === "finishGoal" ? "done" : action.type === "archiveGoal" ? "archived" : "open", running: false }
+          : goal),
+      };
+    case "deleteGoal": {
+      let next = state;
+      for (const task of state.tasks.filter((task) => task.goalId === action.id)) next = deleteTask(next, task.id);
+      return { ...next, goals: next.goals.filter((goal) => goal.id !== action.id) };
+    }
     case "createTask":
       return createTask(state, action.task, action.dependsOn ?? []);
     case "updateTask":
@@ -138,19 +165,17 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
     case "reassign":
       return reassign(state, action.id, action.agentId, action.runner);
     case "addSteps":
-      return addSteps(state, action.projectId, action.after, action.steps);
+      return addSteps(state, action.goalId, action.after, action.steps);
     case "setOutline":
-      return setOutline(state, action.projectId, action.items);
+      return setOutline(state, action.goalId, action.items);
     case "followOutline":
       return followOutline(state, action.id);
     case "setReview":
       return setReview(state, action.id, action.on);
     case "setPlanRunning": {
-      const project = state.projects.find((item) => item.id === action.projectId);
-      if (!project || !!project.running === action.running) return state;
-      const { running: _was, ...rest } = project;
-      const next: Project = action.running ? { ...rest, running: true } : rest;
-      return { ...state, projects: state.projects.map((item) => (item.id === project.id ? next : item)) };
+      const goal = state.goals.find((item) => item.id === action.goalId);
+      if (!goal || goal.status !== "open" || goal.running === action.running) return state;
+      return { ...state, goals: state.goals.map((item) => item.id === goal.id ? { ...item, running: action.running } : item) };
     }
     case "instruct":
       return instruct(state, action.id, action.text);
@@ -224,7 +249,7 @@ function refreshGates(state: OrchestrationState): OrchestrationState {
  */
 function wireByHand(state: OrchestrationState, taskId: string): OrchestrationState {
   const task = state.tasks.find((item) => item.id === taskId);
-  if (!task || task.wired || !state.projects.find((project) => project.id === task.projectId)?.outline) return state;
+  if (!task || task.wired || !state.goals.find((goal) => goal.id === task.goalId)?.outline) return state;
   return {
     ...state,
     tasks: replaceTask(state.tasks, { ...task, wired: true }),
@@ -240,6 +265,7 @@ function connect(state: OrchestrationState, source: string, target: string, gate
   if (!source || !target || source === target) return state;
   const ids = new Set(state.tasks.map((task) => task.id));
   if (!ids.has(source) || !ids.has(target)) return state;
+  if (state.tasks.find((task) => task.id === source)?.goalId !== state.tasks.find((task) => task.id === target)?.goalId) return state;
   const existing = state.dependencies.find((dep) => dep.source === source && dep.target === target);
   if (existing && (!gate || existing.gate === gate)) return state;
   const wired = wireByHand(state, target);
@@ -272,6 +298,7 @@ function createProject(state: OrchestrationState, project: Project): Orchestrati
   return {
     ...state,
     seq: state.seq + 1,
+    goals: [...state.goals, blankGoal(project.id, name)],
     projects: [
       ...state.projects,
       {
@@ -279,57 +306,63 @@ function createProject(state: OrchestrationState, project: Project): Orchestrati
         name,
         summary: project.summary.trim(),
         directory: project.directory?.trim() || projectDirectory(name, state.projects),
-        outline: [],
       },
     ],
   };
 }
 
 /**
- * Gives an older project, whose arrows were all drawn by hand, an outline in the order its steps
+ * Gives an older task, whose arrows were all drawn by hand, an outline in the order its steps
  * run. Its existing steps keep their arrows; only steps added from now on follow the outline.
  */
-function adopt(state: OrchestrationState, projectId: string): OrchestrationState {
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project || project.outline) return state;
-  const outline = outlineOf(state, projectId);
+function adopt(state: OrchestrationState, goalId: string): OrchestrationState {
+  const goal = state.goals.find((item) => item.id === goalId);
+  if (!goal || goal.outline) return state;
+  const outline = outlineOf(state, goalId);
   return {
     ...state,
-    projects: state.projects.map((item) => (item.id === projectId ? { ...item, outline } : item)),
-    tasks: state.tasks.map((task) => (task.projectId === projectId && !task.wired ? { ...task, wired: true } : task)),
+    goals: state.goals.map((item) => (item.id === goalId ? { ...item, outline } : item)),
+    tasks: state.tasks.map((task) => (task.goalId === goalId && !task.wired ? { ...task, wired: true } : task)),
   };
 }
 
-function withOutline(state: OrchestrationState, projectId: string, outline: OutlineItem[]): OrchestrationState {
-  return { ...state, projects: state.projects.map((item) => (item.id === projectId ? { ...item, outline } : item)) };
+function withOutline(state: OrchestrationState, goalId: string, outline: OutlineItem[]): OrchestrationState {
+  return { ...state, goals: state.goals.map((item) => (item.id === goalId ? { ...item, outline } : item)) };
 }
 
 function addSteps(
   state: OrchestrationState,
-  projectId: string,
+  goalId: string,
   after: string | null,
   steps: { task: Task; depth: number }[],
 ): OrchestrationState {
+  const goal = state.goals.find((goal) => goal.id === goalId);
+  if (!goal) return state;
   const known = new Set(state.tasks.map((task) => task.id));
-  const fresh = steps.filter((step) => step.task.projectId === projectId && !known.has(step.task.id));
-  if (!fresh.length || !state.projects.some((project) => project.id === projectId)) return state;
-  const base = adopt(state, projectId);
-  const items = outlineOf(base, projectId);
+  const fresh = steps.filter((step) => {
+    if (step.task.goalId !== goalId || step.task.projectId !== goal.projectId || known.has(step.task.id)) return false;
+    known.add(step.task.id);
+    return true;
+  });
+  if (!fresh.length) return state;
+  const base = adopt(state, goalId);
+  const items = outlineOf(base, goalId);
   const found = after ? items.findIndex((item) => item.id === after) : -1;
   const at = after === null ? 0 : found >= 0 ? found + 1 : items.length;
   const inserted = fresh.map((step) => ({ id: step.task.id, depth: Math.max(0, Math.floor(step.depth) || 0) }));
   const outline = normalize([...items.slice(0, at), ...inserted, ...items.slice(at)]);
-  const log = createLog(withOutline(base, projectId, outline), state.now);
+  const projectId = goal.projectId;
+  const log = createLog(withOutline(base, goalId, outline), state.now);
   if (fresh.length > 1) {
     log.event({ taskId: fresh[0]!.task.id, projectId, message: `Added ${fresh.length} steps`, tone: "info" });
   }
   return log.finish({ tasks: [...base.tasks, ...fresh.map((step) => step.task)] });
 }
 
-function setOutline(state: OrchestrationState, projectId: string, items: OutlineItem[]): OrchestrationState {
-  const project = state.projects.find((item) => item.id === projectId);
-  if (!project || !Array.isArray(items)) return state;
-  const ids = new Set(state.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
+function setOutline(state: OrchestrationState, goalId: string, items: OutlineItem[]): OrchestrationState {
+  const goal = state.goals.find((item) => item.id === goalId);
+  if (!goal || !Array.isArray(items)) return state;
+  const ids = new Set(state.tasks.filter((task) => task.goalId === goalId).map((task) => task.id));
   const seen = new Set<string>();
   const listed: OutlineItem[] = [];
   for (const item of items) {
@@ -337,18 +370,18 @@ function setOutline(state: OrchestrationState, projectId: string, items: Outline
     seen.add(item.id);
     listed.push({ id: item.id, depth: Number.isInteger(item.depth) ? item.depth : 0 });
   }
-  const base = adopt(state, projectId);
-  const outline = normalize([...listed, ...outlineOf(base, projectId).filter((item) => !seen.has(item.id))]);
-  const current = base.projects.find((item) => item.id === projectId)!.outline ?? [];
+  const base = adopt(state, goalId);
+  const outline = normalize([...listed, ...outlineOf(base, goalId).filter((item) => !seen.has(item.id))]);
+  const current = base.goals.find((item) => item.id === goalId)!.outline ?? [];
   const same = current.length === outline.length && outline.every((item, index) => item.id === current[index]?.id && item.depth === current[index]?.depth);
-  return same ? base : withOutline(base, projectId, outline);
+  return same ? base : withOutline(base, goalId, outline);
 }
 
 /** Drops the arrows drawn by hand into a step, so it waits for what the outline says again. */
 function followOutline(state: OrchestrationState, id: string): OrchestrationState {
   const task = state.tasks.find((item) => item.id === id);
   if (!task) return state;
-  const base = adopt(state, task.projectId);
+  const base = adopt(state, task.goalId);
   const current = base.tasks.find((item) => item.id === id)!;
   const own = base.dependencies.some((dep) => dep.target === id && !dep.outline);
   if (!current.wired && !own) return base;
@@ -382,9 +415,9 @@ function createTask(
   task: Task,
   dependsOn: { source: string; gate?: Dependency["gate"] }[],
 ): OrchestrationState {
-  if (state.tasks.some((item) => item.id === task.id)) return state;
+  if (!state.goals.some((goal) => goal.id === task.goalId && goal.projectId === task.projectId) || state.tasks.some((item) => item.id === task.id)) return state;
   const log = createLog(state, state.now);
-  const known = new Set(state.tasks.map((item) => item.id));
+  const known = new Set(state.tasks.filter((item) => item.goalId === task.goalId).map((item) => item.id));
   const dependencies = [
     ...state.dependencies,
     ...dependsOn
@@ -423,6 +456,7 @@ function updateTask(state: OrchestrationState, id: string, patch: Partial<Task>)
   const nextPatch = { ...patch };
   delete nextPatch.id;
   delete nextPatch.projectId;
+  delete nextPatch.goalId;
   delete nextPatch.status;
   delete nextPatch.agentId;
   delete nextPatch.checkCommand;
@@ -829,10 +863,10 @@ function dropIssue(state: OrchestrationState, id: string, issueId: string): Orch
 function fixIssue(state: OrchestrationState, id: string, issueId: string, step: Task): OrchestrationState {
   const task = state.tasks.find((item) => item.id === id);
   const issue = task?.issues?.find((item) => item.id === issueId);
-  if (!task || !issue || !step || step.projectId !== task.projectId) return state;
+  if (!task || !issue || !step || step.goalId !== task.goalId || step.projectId !== task.projectId) return state;
   if (issue.stepId && state.tasks.some((item) => item.id === issue.stepId)) return state;
-  const last = outlineOf(state, task.projectId).at(-1)?.id ?? null;
-  const added = addSteps(state, task.projectId, last, [{ task: step, depth: 0 }]);
+  const last = outlineOf(state, task.goalId).at(-1)?.id ?? null;
+  const added = addSteps(state, task.goalId, last, [{ task: step, depth: 0 }]);
   if (added === state) return state;
   const current = added.tasks.find((item) => item.id === id)!;
   const issues = (current.issues ?? []).map((item) => (item.id === issueId ? { ...item, stepId: step.id } : item));
@@ -842,11 +876,12 @@ function fixIssue(state: OrchestrationState, id: string, issueId: string, step: 
 function approvePlan(state: OrchestrationState, tasks: Task[], dependencies: Dependency[]): OrchestrationState {
   const log = createLog(state, state.now);
   const known = new Set(state.tasks.map((task) => task.id));
-  const fresh = tasks.filter((task) => !known.has(task.id));
+  const fresh = tasks.filter((task) => !known.has(task.id) && state.goals.some((goal) => goal.id === task.goalId && goal.projectId === task.projectId));
   for (const task of fresh) known.add(task.id);
   const depIds = new Set(state.dependencies.map((dep) => dep.id));
+  const byId = new Map([...state.tasks, ...fresh].map((task) => [task.id, task]));
   const freshDeps = dependencies.filter(
-    (dep) => !depIds.has(dep.id) && known.has(dep.source) && known.has(dep.target) && dep.source !== dep.target,
+    (dep) => !depIds.has(dep.id) && known.has(dep.source) && known.has(dep.target) && dep.source !== dep.target && byId.get(dep.source)?.goalId === byId.get(dep.target)?.goalId,
   );
   if (fresh[0]) {
     log.event({
@@ -879,8 +914,13 @@ function deleteTask(state: OrchestrationState, id: string): OrchestrationState {
   return log.finish({
     tasks: state.tasks.filter((item) => item.id !== id).map(unlink),
     dependencies: state.dependencies.filter((dep) => dep.source !== id && dep.target !== id),
-    projects: state.projects.map((project) =>
-      project.outline?.some((item) => item.id === id) ? { ...project, outline: project.outline.filter((item) => item.id !== id) } : project,
+    goals: state.goals.map((goal) =>
+      goal.outline?.some((item) => item.id === id) ? { ...goal, outline: goal.outline.filter((item) => item.id !== id) } : goal,
     ),
   });
+}
+
+function createGoal(state: OrchestrationState, goal: Goal): OrchestrationState {
+  if (!goal || !goal.id || (typeof goal.name !== "string" || !goal.name.trim()) || !state.projects.some((project) => project.id === goal.projectId) || state.goals.some((item) => item.id === goal.id)) return state;
+  return { ...state, seq: state.seq + 1, goals: [...state.goals, blankGoal(goal.projectId, goal.name.trim(), goal.id, typeof goal.goal === "string" ? goal.goal.trim() : "")] };
 }

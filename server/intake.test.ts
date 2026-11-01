@@ -53,7 +53,7 @@ describe("planTasks", () => {
   it("explains what is wrong with a request", () => {
     const state = apply(board(), { project: "Greeter", tasks: [{ name: "Same" }, { name: "Same" }] });
     const error = (body: unknown) => (planTasks(state, body, ids) as { error: string }).error;
-    expect(error({ name: "X" })).toBe("Say which project, by id or name. Projects: Workspace (proj-local), Greeter (proj-2).");
+    expect(error({ name: "X" })).toBe("Say which task, as goal, or which project.");
     expect(error({ project: "Nope", name: "X" })).toMatch(/^There is no project Nope\./);
     expect(error({ project: "Greeter", tasks: [] })).toBe("There are no tasks to add.");
     expect(error({ project: "Greeter", tasks: [{ objective: "no name" }] })).toBe("tasks[0] needs a name.");
@@ -61,12 +61,12 @@ describe("planTasks", () => {
     expect(error({ project: "Greeter", tasks: [{ name: "X", checkCommand: ["npm", "test"] }] })).toBe("tasks[0].checkCommand must be a string.");
     expect(error({ project: "Greeter", name: "X", agent: "gpt" })).toBe("agent must be one of: codex, claude.");
     expect(error({ project: "Greeter", name: "X", runner: "robot" })).toBe('runner must be "agent" or "human".');
-    expect(error({ project: "Greeter", name: "X", dependsOn: ["Missing"] })).toBe("The task depends on Missing, which is not a task in this project.");
+    expect(error({ project: "Greeter", name: "X", dependsOn: ["Missing"] })).toBe("The task depends on Missing, which is not a step in this task.");
     expect(error({ project: "Greeter", name: "X", dependsOn: ["Same"] })).toBe("The task depends on Same, but more than one task has that name. Use its id.");
     expect(error({ project: "Greeter", name: "X", dependsOn: [{ task: "api-1", gate: "soon" }] })).toBe(
       'A dependsOn gate must be "completed" or "verified".',
     );
-    expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a task in this project/);
+    expect(error({ project: "Workspace", name: "X", dependsOn: ["api-1"] })).toMatch(/not a step in this task/);
     expect(error({ project: "Greeter", name: "X", autoRun: "yes" })).toBe("autoRun must be true or false.");
     expect(error({ project: "Greeter", name: "X", runner: "human", review: true })).toMatch(/done by a person/);
     expect(error({ project: "Greeter", name: "X", runner: "human", autoRun: true })).toMatch(/done by a person/);

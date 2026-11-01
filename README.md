@@ -21,6 +21,8 @@ Settings (the gear) shows which ones Shepherd can use.
 
 ## Using it
 
+A project is a repository. Each project has tasks, and each task has its own goal, outline, steps and running flag. New projects start with one task named after the project. Pick a task above the outline, or choose New task to add another. Edit task changes its name and goal; Finish task and Archive stop its plan, and Reopen task makes it open again. The outline, map, counters and command palette follow the selected task.
+
 - **Write the outline.** The list on the left is the plan. Enter adds a step, Tab indents it, Shift+Tab outdents it, Alt+↑/↓ moves it, Backspace on an empty step deletes it, and the grip drags it. Pasting a bulleted or numbered list makes one step per line, keeping its indents. `N` adds a step from anywhere.
 - **Draft from a goal.** Type what you want done and press Draft steps. Codex reads the project folder (read-only) and suggests steps, which land at the end of the outline for you to edit. Nothing runs until you press Run.
 - **What runs when.** Steps run top to bottom. An indented step runs after the step it sits under, at the same time as the other steps indented under it. The next step at the left edge waits for all of them. The map draws exactly these arrows and lays itself out left to right.
@@ -28,8 +30,8 @@ Settings (the gear) shows which ones Shepherd can use.
 - **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
 - **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab has the agent's report, the files it changed with their diff, and a merge button for that step alone. The Log tab lets you send the agent an instruction.
 - **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. If your Codex settings name a model that list no longer offers, steps on Default use Codex's first current model instead, and the picker says so. "Draft steps from a goal" has its own Model and Thinking, remembered in this browser. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
-- **Saved steps.** A step you want in other projects, such as checking the page in Chrome, can be saved: "Save for reuse" at the bottom of its Step tab, or on its menu on the map. It keeps who does it, the model, the prompt and More options, and can bring along the steps under it or side by side with it. "Add a saved step" under the outline, typing `/` in an empty step, the map menu's "Add a saved step after this…", or ⌘K adds a copy. The copy is that project's own: changing it, or the saved step, leaves the other alone. A changed copy offers to save its changes back. A person's checklist is left out unless you keep it, so each project gets one written from its own earlier steps. Shepherd starts you with "Check it in Chrome", "Audit the code" and "Check it yourself"; "Manage saved steps" edits, renames and deletes them, and brings back the starters.
-- **Run.** Run, at the bottom of the list, starts every step that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses the agents where they are. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
+- **Saved steps.** A step you want in other projects, such as checking the page in Chrome, can be saved: "Save for reuse" at the bottom of its Step tab, or on its menu on the map. It keeps who does it, the model, the prompt and More options, and can bring along the steps under it or side by side with it. "Add a saved step" under the outline, typing `/` in an empty step, the map menu's "Add a saved step after this…", or ⌘K adds a copy. The copy belongs to the selected task: changing it, or the saved step, leaves the other alone. A changed copy offers to save its changes back. A person's checklist is left out unless you keep it, so each task gets one written from its own earlier steps. Shepherd starts you with "Check it in Chrome", "Audit the code" and "Check it yourself"; "Manage saved steps" edits, renames and deletes them, and brings back the starters.
+- **Run.** Run, at the bottom of the list, starts every step in the selected task that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses that task's agents where they are. Other tasks keep their own running state. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
 - **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
 - **Your steps.** When the steps before one of yours are done, Shepherd merges their work into a folder for it, on its own branch, and the step shows the path. Try the result there. Anything you change in that folder is committed under your git name when you mark the step done. If earlier work changes after that, the folder is brought up to date and the step asks you again. "Found a problem? Send it back" reruns an earlier agent step with your note, and the folder picks up its fix.
 - **Your checklist.** If your step says nothing beyond its name when its folder is first made, Codex reads the folder and the earlier steps' prompts, reports and known issues, and writes the checklist into it: how to start the work, then the checks tests miss, such as how it looks, real clicks, reloads and links, and a narrow window. "Draft it from the earlier steps' work" under the prompt asks again at any time. The draft waits on the step, even if you look elsewhere or reload, until you use or discard it.
@@ -68,18 +70,21 @@ Under More options on the Step tab:
 Everything the UI does goes through these, so agents and scripts can use them too. They live on the dev server and run agents and shell commands on your machine, so keep it bound to localhost. Every POST needs `content-type: application/json`.
 
 - `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
-- `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "projectId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
-- `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "projectId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note. `{ "command": "checklist", "taskId": "<your step>" }` has Codex suggest a checklist, which waits on the step as `checklist` until a `settleChecklist` edit uses or discards it.
-- `POST /api/draft` with `{ "projectId": "...", "goal": "..." }`, and optionally `model` and `thinking`, returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them.
+- `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "goalId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
+- `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "goalId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note. `{ "command": "checklist", "taskId": "<your step>" }` has Codex suggest a checklist, which waits on the step as `checklist` until a `settleChecklist` edit uses or discards it.
+- `POST /api/draft` with `{ "goal": "<task id or name>" }`, and optionally `prompt`, `model` and `thinking`, returns `{ "steps": [{ "name", "prompt", "depth" }] }` from Codex without adding them. It uses the task's saved goal text unless `prompt` is supplied.
 - `POST /api/look` with `{ "taskId": "...", "url": "http://localhost:8130/", "width": 390, "full": true, "steps": [{ "click": "#go" }, { "type": "e4" }, { "press": "Enter" }, { "wait": 300 }] }` screenshots a local page for that step and returns `{ "path", "view", "title", "url", "width", "height", "errors" }`. `GET /api/looks/<taskId>/<file>` serves it.
 - Known issues are edits: `{ "type": "noteIssue", "id": "<step>", "text": "..." }`, `dropIssue` with an `issueId`, and `fixIssue` with an `issueId` and the new `task`.
-- `GET /api/tasks` lists every project and its steps, with ids, status, whether each is done, its branch, and what it waits for.
+- `GET /api/goals` lists tasks as `{ "goals": [...] }`. `POST /api/goals` adds one: `{ "project": "<project id or name>", "name": "Fix timeout", "goal": "Keep checkout fast" }`. A task has status `open`, `done` or `archived`.
+- Task edits use `createGoal` with a `goal` object, `updateGoal` with an `id` and a `patch` of `name` and/or `goal`, and `finishGoal`, `archiveGoal`, `reopenGoal` or `deleteGoal` with an `id`. Deleting a task deletes its steps from the board.
+- `GET /api/tasks` lists every project, its tasks as `goals`, and its steps, with ids, status, whether each is done, its branch, and what it waits for.
 - `POST /api/projects` adds a project: `{ "name": "Hello counter", "summary": "...", "directory": "hello-counter" }`. The folder is optional and defaults to one named after the project. Project names must be unique.
 - `POST /api/tasks` adds one step, or several with a `tasks` list:
 
 ```sh
 curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json' -d '{
   "project": "Greeter",
+  "goal": "<task id or name>",
   "tasks": [
     { "name": "Wave CLI", "objective": "Create wave.mjs ...", "checkCommand": "npm test", "agent": "codex" },
     { "name": "Try the wave", "runner": "human", "dependsOn": [{ "task": "Wave CLI", "gate": "verified" }] }
@@ -87,11 +92,12 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 }'
 ```
 
-- `project` is a project's id or name. Each step needs a `name`. `objective` (the prompt) defaults to the name.
+- `goal` is a task's id or name; `project` optionally scopes the lookup to a repository. For adding steps, drafting or plan commands, a request naming only a project uses its only open task. If there are several open tasks, the error lists them and asks which to use; if there are none, add or reopen one. Plan commands use `goalId` and also accept the older `projectId` when there is only one open task.
+- Each step needs a `name`. `objective` (the prompt) defaults to the name.
 - Optional fields are `description`, `acceptance` (a list of "done when" lines), `checkCommand`, `runner` (`agent` or `human`), and `agent` (`codex` or `claude`, default `codex`).
 - Agent steps also take `model` (such as `gpt-6-astra`, or `opus` for Claude Code; `GET /api/models` lists them with your defaults) and `thinking` (`low`, `medium`, `high`, `xhigh`, `max`, or `ultra` where the model offers it). Leave them out to use your defaults.
 - Agent steps also take `review: true` to wait for your review, `independent: true` to keep earlier agents' reports out of their prompt, and `autoRun: true` to start on their own once what they wait for is done, without running the whole plan.
-- `dependsOn` lists steps by id or name, in the project or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
+- `dependsOn` lists steps by id or name, in the same task or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
 - A bad request gets a 400 that says what is wrong.
 
 `GET /api/saved-steps` returns `{ steps }`, your saved steps. `PUT /api/saved-steps` with `{ steps }` replaces them all and returns what it kept; entries it cannot add to a project, such as one with no steps, are left out.
@@ -99,8 +105,9 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 ## Where things are stored
 
 - Saved steps are in `.shepherd/saved-steps.json`, apart from the board, so clearing the board keeps them. Each save keeps the one before as `saved-steps.json.bak`. A file Shepherd cannot read is moved aside, not overwritten.
+- Boards saved before tasks are upgraded to schema 3: each project gets one open task named after it, holding its outline, running flag and steps. Step ids, worktree folders and git branches stay the same. Before the server first writes the upgraded board, it keeps the exact old file beside it as `.shepherd/state.pre-tasks.json`.
 - The board is in `.shepherd/state.json`. Worktrees are in `.shepherd/worktrees/`, check evidence in `.shepherd/evidence/`, screenshots in `.shepherd/looks/`. Branches live in each project's repository.
-- Deleting a step or clearing the board removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
+- Deleting a task or step, or clearing the board removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
 
 ## Limits
 

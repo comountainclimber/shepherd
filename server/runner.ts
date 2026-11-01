@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
+import { resolveGoal } from "../src/model/goals";
 import { slugify } from "../src/model/factory";
 import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
 import { dependencyOrder } from "../src/model/outline";
@@ -506,7 +507,7 @@ export function createRunner(options: RunnerOptions): Runner {
     }
     const after = find(taskId);
     const failed = after?.verification.some((item) => item.kind === "command" && item.state === "failed");
-    const automatic = after && (after.autoRun || planRunning(after.projectId));
+    const automatic = after && (after.autoRun || planRunning(after.goalId));
     if (after && failed && automatic && after.runner === "agent" && after.status === "failed" && (after.retries ?? 0) < MAX_RETRIES) {
       const attempt = (after.retries ?? 0) + 1;
       dispatch({ type: "updateTask", id: taskId, patch: { retries: attempt } });
@@ -585,8 +586,8 @@ export function createRunner(options: RunnerOptions): Runner {
     }, 0);
   }
 
-  function planRunning(projectId: string): boolean {
-    return !!state().projects.find((project) => project.id === projectId)?.running;
+  function planRunning(goalId: string): boolean {
+    return !!state().goals.find((goal) => goal.id === goalId)?.running;
   }
 
   /**
@@ -596,10 +597,11 @@ export function createRunner(options: RunnerOptions): Runner {
    * running once every step in it is done.
    */
   function startReady() {
-    const { tasks, dependencies, projects } = state();
-    const planned = new Set(projects.filter((project) => project.running).map((project) => project.id));
+    const { tasks, dependencies, goals } = state();
+    const planned = new Set(goals.filter((goal) => goal.running && goal.status === "open").map((goal) => goal.id));
     let started = [...runs.values()].filter((attempt) => attempt.scheduled).length;
     for (const task of tasks) {
+      if (state().goals.find((goal) => goal.id === task.goalId)?.status !== "open") continue;
       if (runs.has(task.id) || checks.has(task.id) || refreshing.has(task.id)) continue;
       if (task.status === "completed" && !task.outdated && task.checkCommand && uncheckedCommand(task)) {
         track(check(task.id));
@@ -616,21 +618,21 @@ export function createRunner(options: RunnerOptions): Runner {
         continue;
       }
       const fresh = !task.git && !task.sessionId;
-      const wanted = planned.has(task.projectId) || (task.autoRun && fresh);
+      const wanted = planned.has(task.goalId) || (task.autoRun && fresh);
       if (!wanted || !task.agentId || started >= MAX_PARALLEL_RUNS) continue;
       started += 1;
       track(run(task.id, undefined, false));
     }
-    for (const projectId of planned) {
-      const steps = tasks.filter((task) => task.projectId === projectId);
+    for (const goalId of planned) {
+      const steps = tasks.filter((task) => task.goalId === goalId);
       if (steps.length && !steps.every(isFullyVerified)) continue;
-      dispatch({ type: "setPlanRunning", projectId, running: false });
+      dispatch({ type: "setPlanRunning", goalId, running: false });
     }
   }
 
-  /** Runs every step of a project that is not done yet, each as soon as the steps before it are done. */
-  function runPlan(projectId: string): string | null {
-    const steps = state().tasks.filter((task) => task.projectId === projectId);
+  /** Runs every step of a task that is not done yet, each as soon as the steps before it are done. */
+  function runPlan(goalId: string): string | null {
+    const steps = state().tasks.filter((task) => task.goalId === goalId);
     if (!steps.length) return "Add a step first.";
     const todo = steps.filter((task) => !isFullyVerified(task));
     if (!todo.length) return "Every step is already done.";
@@ -638,7 +640,7 @@ export function createRunner(options: RunnerOptions): Runner {
     if (nobody) return `Pick who does ${nobody.name || "the unnamed step"} first.`;
     const unnamed = todo.find((task) => !task.name.trim() && !task.objective.trim());
     if (unnamed) return "One step has no name or prompt yet. Give it one or delete it.";
-    dispatch({ type: "setPlanRunning", projectId, running: true });
+    dispatch({ type: "setPlanRunning", goalId, running: true });
     const { tasks, dependencies } = state();
     for (const task of todo) {
       if (task.runner !== "agent" || runs.has(task.id) || unmetDependencies(task.id, tasks, dependencies).length) continue;
@@ -650,10 +652,10 @@ export function createRunner(options: RunnerOptions): Runner {
   }
 
   /** Stops a running plan: its agents are paused where they are, and nothing new starts. */
-  function stopPlan(projectId: string) {
-    dispatch({ type: "setPlanRunning", projectId, running: false });
+  function stopPlan(goalId: string) {
+    dispatch({ type: "setPlanRunning", goalId, running: false });
     for (const task of state().tasks) {
-      if (task.projectId !== projectId || !runs.has(task.id)) continue;
+      if (task.goalId !== goalId || !runs.has(task.id)) continue;
       kill(task.id);
       dispatch({ type: "setStatus", id: task.id, status: "blocked" });
     }
@@ -663,9 +665,9 @@ export function createRunner(options: RunnerOptions): Runner {
    * Merges every finished step's branch into the project folder's branch. The last steps go first:
    * their branches already hold the work of the steps before them, so those need no merge of their own.
    */
-  async function mergePlan(projectId: string): Promise<string | null> {
+  async function mergePlan(goalId: string): Promise<string | null> {
     const { tasks, dependencies } = state();
-    const steps = tasks.filter((task) => task.projectId === projectId);
+    const steps = tasks.filter((task) => task.goalId === goalId);
     const waiting = steps.filter((task) => !isFullyVerified(task));
     if (waiting.length) return `${waiting[0]!.name || "A step"} is not done yet.`;
     const open = dependencyOrder(steps, dependencies)
@@ -683,17 +685,17 @@ export function createRunner(options: RunnerOptions): Runner {
     const raw = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
     const outcome = (error: string | null) => (error ? { error } : ({ ok: true } as const));
     if (raw.command === "runPlan" || raw.command === "stopPlan" || raw.command === "mergePlan") {
-      const projectId = typeof raw.projectId === "string" ? raw.projectId : "";
-      if (!state().projects.some((project) => project.id === projectId)) {
-        return { error: projectId ? `There is no project ${projectId}.` : "Say which project, as projectId." };
-      }
+      const goal = resolveGoal(state(), raw.goalId ?? raw.goal, raw.projectId ?? raw.project);
+      if ("error" in goal) return goal;
+      if (raw.command === "runPlan" && goal.status !== "open") return { error: "Reopen this task before running it." };
+      const goalId = goal.id;
       if (closed()) return { error: "Shepherd is restarting. Try again in a moment." };
-      if (raw.command === "runPlan") return outcome(runPlan(projectId));
+      if (raw.command === "runPlan") return outcome(runPlan(goalId));
       if (raw.command === "stopPlan") {
-        stopPlan(projectId);
+        stopPlan(goalId);
         return { ok: true };
       }
-      return outcome(await mergePlan(projectId));
+      return outcome(await mergePlan(goalId));
     }
     const taskId = typeof raw.taskId === "string" ? raw.taskId : "";
     const task = find(taskId);
