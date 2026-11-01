@@ -1,16 +1,17 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/logo-dark.svg">
-  <img src="docs/brand/logo.svg" width="276" height="72" alt="">
-</picture>
+<p align="center">
+  <img src="docs/brand/mark.svg" width="96" height="96" alt="">
+</p>
 
-# Shepherd
+<h1 align="center">Shepherd</h1>
 
-**Long tasks. Clear next steps.**
+<p align="center"><strong>Long tasks. Clear next steps.</strong></p>
 
-[![MIT license](docs/badges/license.svg)](LICENSE)
-[![CI workflow: macOS and Ubuntu](docs/badges/ci.svg)](.github/workflows/ci.yml)
-[![npm source version: 0.1.0](docs/badges/npm.svg)](package.json)
-[![PRs welcome](docs/badges/prs.svg)](CONTRIBUTING.md)
+<p align="center">
+  <a href="https://www.npmjs.com/package/shepherd-agents"><img src="https://img.shields.io/npm/v/shepherd-agents?label=npm&labelColor=243E34&color=F3F0E5" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/shepherd-agents"><img src="https://img.shields.io/npm/d18m/shepherd-agents?label=downloads&labelColor=243E34&color=F3F0E5" alt="npm downloads"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-F3F0E5?labelColor=243E34" alt="MIT license"></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-F3F0E5?labelColor=243E34" alt="PRs welcome"></a>
+</p>
 
 Shepherd is a free, open-source app that runs on your machine to plan, run and check long coding-agent work with Codex and Claude Code.
 
@@ -161,11 +162,11 @@ Shepherd is free and open source under the MIT license. Agent usage follows your
 
 **What happens when I close the tab?** Runs continue while the terminal's server process is running. Restarting records interrupted runs as stopped. Deleting a task removes it from the board but leaves its branches, folders and files on disk. [Storage and cleanup →](docs/storage.md)
 
-**Is the package published yet?** Publication and creation of the public repository are final launch steps. The npm badge shows the version in this checkout's `package.json`; the CI badge links to the configured workflow, not a live result. Before publication, use the [source setup](docs/setup.md).
+**Is the package published yet?** Publishing `shepherd-agents` is a final launch step; until then the npm badges read "package not found". Before publication, use the [source setup](docs/setup.md).
 
 ## Roadmap
 
-The next milestone is the open-source launch: assign the public repository owner, publish `shepherd-agents`, and verify the install from a clean machine. These are release steps, not actions performed by the README.
+The next milestone is the open-source launch: publish `shepherd-agents` and verify the install from a clean machine. These are release steps, not actions performed by the README.
 
 After that, the direction is to refine long-task planning, checking and recovery from real use, and improve portability beyond macOS. Linux should work where Mac-only features are not needed; Windows support has no promised date. Bring concrete problems and small, reviewable improvements through [contributing](CONTRIBUTING.md).
 

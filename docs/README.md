@@ -25,4 +25,4 @@ From the repository root:
 node docs/check-links.mjs
 ```
 
-The script checks local Markdown links and fragments, HTML image sources and picture sources, SVG references and CSS asset URLs throughout `README.md` and `docs/`. It ignores fenced code examples. It also checks that the npm source-version badge matches `package.json`. It makes no network requests and reports external destinations separately; it cannot establish that a package or repository has been published. The badges use local SVGs so they render before publication, without a badge service or another copy of the repository owner placeholder.
+The script checks local Markdown links and fragments, HTML image sources and picture sources, SVG references and CSS asset URLs throughout `README.md` and `docs/`. It ignores fenced code examples. It makes no network requests and reports external destinations, such as the README's badges, separately; it cannot establish that a package or repository has been published.

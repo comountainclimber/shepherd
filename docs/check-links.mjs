@@ -74,13 +74,6 @@ for (const file of files) {
   }
 }
 
-const version = JSON.parse(read(path.join(root, "package.json"))).version;
-if (!read(path.join(root, "docs/badges/npm.svg")).includes(`>v${version}</text>`)) {
-  errors.push("docs/badges/npm.svg: source version differs from package.json");
-}
-if (!read(path.join(root, "README.md")).includes(`npm source version: ${version}`)) {
-  errors.push("README.md: npm badge alt text differs from package.json");
-}
 if (errors.length) {
   console.error(errors.join("\n"));
   process.exitCode = 1;
