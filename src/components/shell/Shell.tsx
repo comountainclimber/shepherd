@@ -6,6 +6,8 @@ import { CommandPalette } from "../delegation/CommandPalette";
 import { NewProjectDialog } from "../delegation/NewProjectDialog";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { Outline } from "../outline/Outline";
+import { ManageDialog } from "../saved/ManageDialog";
+import { SaveDialog } from "../saved/SaveDialog";
 import { Hud, Sheep } from "./Hud";
 import { ServerNotice } from "./ServerNotice";
 import { Toasts, useTaskToasts } from "./Toasts";
@@ -37,6 +39,8 @@ export function Shell() {
       }
       if (event.key === "Escape") {
         if (store.ui.paletteOpen) store.setPaletteOpen(false);
+        else if (store.ui.saveFor || store.ui.manageSaved) return;
+        else if (store.ui.addSaved) store.setAddSaved(null);
         else if (store.ui.newProjectOpen) store.setNewProjectOpen(false);
         else if (store.ui.contextMenu) store.setContextMenu(null);
         else if (store.ui.inspectorOpen && !typing) store.setInspectorOpen(false);
@@ -67,6 +71,8 @@ export function Shell() {
       <Toasts />
       <CommandPalette />
       <NewProjectDialog />
+      <SaveDialog />
+      <ManageDialog />
     </div>
   );
 }

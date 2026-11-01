@@ -18,6 +18,7 @@ import { dependencySatisfied } from "../../model/verify";
 import { AGENTS } from "../../model/workspace";
 import { initialFilters, useShepherd } from "../../store";
 import { markComplete, runLabel, runTask, stopTask } from "../../runner/live";
+import { placeFor } from "../saved/addSaved";
 import { Sheep } from "../shell/Hud";
 import { Button, GateSelect } from "../ui";
 import { NODE_HEIGHT, NODE_WIDTH, TaskNodeView, type TaskFlowNode } from "./TaskNode";
@@ -302,6 +303,8 @@ function TaskMenu() {
   const dispatch = useShepherd((store) => store.dispatch);
   const setContextMenu = useShepherd((store) => store.setContextMenu);
   const selectTask = useShepherd((store) => store.selectTask);
+  const setSaveFor = useShepherd((store) => store.setSaveFor);
+  const setAddSaved = useShepherd((store) => store.setAddSaved);
   const [reassigning, setReassigning] = useState(false);
   if (!menu || !task) return null;
 
@@ -337,7 +340,6 @@ function TaskMenu() {
             <MenuItem
               key={agent.id}
               label={agent.name}
-              hint={agent.model}
               onClick={() => {
                 dispatch({ type: "reassign", id: task.id, agentId: agent.id });
                 close();
@@ -353,6 +355,8 @@ function TaskMenu() {
           />
         </div>
       ) : null}
+      <MenuItem label="Add a saved step after this…" onClick={() => setAddSaved(placeFor(task.projectId, task.id))} />
+      {task.name.trim() ? <MenuItem label="Save for reuse…" onClick={() => setSaveFor(task.id)} /> : null}
       <MenuItem
         label="Delete"
         danger

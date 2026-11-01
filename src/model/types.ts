@@ -144,7 +144,7 @@ export interface SavedStepItem {
   checkCommand?: string;
   review?: boolean;
   independent?: boolean;
-  /** Indented this far below the first step. */
+  /** Its indent in the block. Steps at 1 run side by side under the step they are added after. */
   depth: number;
 }
 
@@ -258,6 +258,21 @@ export interface UiState {
   draftToken: number;
   /** A goal to start that box with. */
   draftSeed: string;
+  /** The step whose Save for reuse dialog is open. */
+  saveFor: string | null;
+  /** Where the saved step you pick from the outline's list goes. */
+  addSaved: SavedPlace | null;
+  manageSaved: boolean;
+}
+
+/** Where a saved step is added: after a row, at that row's indent, or in place of an empty row. */
+export interface SavedPlace {
+  after: string | null;
+  depth: number;
+  /** An empty step the saved step takes the place of. */
+  replace?: string;
+  /** "Adds after “Build it”", or "Adds at the end". */
+  label: string;
 }
 
 export type Action =

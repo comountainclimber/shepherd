@@ -1,18 +1,18 @@
-import { CircleCheck, CircleX, UserRound, X } from "lucide-react";
+import { Bookmark, CircleCheck, CircleX, UserRound, X } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { cx } from "../../model/format";
 import { firstLine, progress, stageOf, type Stage } from "../../model/stage";
 import { useShepherd } from "../../store";
 
-type Tone = "verified" | "failed" | "needs-you";
+type Tone = "verified" | "failed" | "needs-you" | "saved";
 
 interface Toast {
   id: number;
   tone: Tone;
   title: string;
   detail: string;
-  taskId: string;
+  taskId?: string;
 }
 
 interface ToastStore {
@@ -33,6 +33,11 @@ const useToasts = create<ToastStore>()((set, get) => ({
   },
   dismiss: (id) => set((store) => ({ toasts: store.toasts.filter((toast) => toast.id !== id) })),
 }));
+
+/** Says that something you did worked, such as saving a step for reuse. */
+export function notify(title: string, detail = "") {
+  useToasts.getState().push({ tone: "saved", title, detail });
+}
 
 /**
  * Tells you when a step is done, fails, or starts waiting on you, and when a whole plan finishes.
@@ -78,6 +83,7 @@ const TONE: Record<Tone, { icon: typeof CircleCheck; className: string }> = {
   verified: { icon: CircleCheck, className: "text-completed" },
   failed: { icon: CircleX, className: "text-failed" },
   "needs-you": { icon: UserRound, className: "text-approval" },
+  saved: { icon: Bookmark, className: "text-brass" },
 };
 
 export function Toasts() {
@@ -98,12 +104,12 @@ export function Toasts() {
               type="button"
               className="min-w-0 flex-1 text-left"
               onClick={() => {
-                selectTask(toast.taskId);
+                if (toast.taskId) selectTask(toast.taskId);
                 dismiss(toast.id);
               }}
             >
               <div className="truncate text-[13px] font-medium text-text">{toast.title}</div>
-              <div className="line-clamp-2 text-[12px] text-muted">{toast.detail}</div>
+              {toast.detail ? <div className="line-clamp-2 text-[12px] text-muted">{toast.detail}</div> : null}
             </button>
             <button type="button" aria-label="Dismiss" className="text-faint hover:text-text" onClick={() => dismiss(toast.id)}>
               <X size={14} />

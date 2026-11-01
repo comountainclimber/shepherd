@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { loadState } from "./model/migrate";
 import { reducer } from "./model/reducer";
-import type { Action, Filters, OrchestrationState, PanelTab, UiState, ViewId } from "./model/types";
+import type { Action, Filters, OrchestrationState, PanelTab, SavedPlace, UiState, ViewId } from "./model/types";
 import { WORKSPACE_PROJECT_ID, workspace } from "./model/workspace";
 
 export const initialFilters: Filters = {
@@ -41,6 +41,9 @@ export const initialUi: UiState = {
   fitToken: 0,
   draftToken: 0,
   draftSeed: "",
+  saveFor: null,
+  addSaved: null,
+  manageSaved: false,
 };
 
 export type Connection = "connecting" | "open" | "lost";
@@ -55,6 +58,9 @@ interface ShepherdStore {
   problem: string | null;
   dispatch: (action: Action) => void;
   setProblem: (problem: string | null) => void;
+  setSaveFor: (taskId: string | null) => void;
+  setAddSaved: (place: SavedPlace | null) => void;
+  setManageSaved: (open: boolean) => void;
   setView: (view: ViewId) => void;
   setProject: (projectId: string) => void;
   selectTask: (id: string | null) => void;
@@ -133,6 +139,9 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
     void send(entry);
   },
   setProblem: (problem) => set({ problem }),
+  setSaveFor: (saveFor) => set((store) => ({ ui: { ...store.ui, saveFor, contextMenu: null, paletteOpen: false } })),
+  setAddSaved: (addSaved) => set((store) => ({ ui: { ...store.ui, addSaved, contextMenu: null, paletteOpen: false, view: addSaved ? "canvas" : store.ui.view } })),
+  setManageSaved: (manageSaved) => set((store) => ({ ui: { ...store.ui, manageSaved, addSaved: null, paletteOpen: false } })),
   setView: (view) => set((store) => ({ ui: { ...store.ui, view, contextMenu: null } })),
   setProject: (projectId) =>
     set((store) => {
@@ -145,6 +154,7 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
           selectedTaskId: selected,
           selectedEdgeId: null,
           contextMenu: null,
+          addSaved: null,
           filters: { ...store.ui.filters, agentId: "all", search: "" },
         },
       };

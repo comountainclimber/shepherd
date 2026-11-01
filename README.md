@@ -28,6 +28,7 @@ Settings (the gear) shows which ones Shepherd can use.
 - **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
 - **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab has the agent's report, the files it changed with their diff, and a merge button for that step alone. The Log tab lets you send the agent an instruction.
 - **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
+- **Saved steps.** A step you want in other projects, such as checking the page in Chrome, can be saved: "Save for reuse" at the bottom of its Step tab, or on its menu on the map. It keeps who does it, the model, the prompt and More options, and can bring along the steps under it or side by side with it. "Add a saved step" under the outline, typing `/` in an empty step, the map menu's "Add a saved step after this…", or ⌘K adds a copy. The copy is that project's own: changing it, or the saved step, leaves the other alone. A changed copy offers to save its changes back. A person's checklist is left out unless you keep it, so each project gets one written from its own earlier steps. Shepherd starts you with "Check it in Chrome", "Audit the code" and "Check it yourself"; "Manage saved steps" edits, renames and deletes them, and brings back the starters.
 - **Run.** Run, at the bottom of the list, starts every step that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses the agents where they are. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
 - **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
 - **Your steps.** When the steps before one of yours are done, Shepherd merges their work into a folder for it, on its own branch, and the step shows the path. Try the result there. Anything you change in that folder is committed under your git name when you mark the step done. If earlier work changes after that, the folder is brought up to date and the step asks you again. "Found a problem? Send it back" reruns an earlier agent step with your note, and the folder picks up its fix.
@@ -93,8 +94,11 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 - `dependsOn` lists steps by id or name, in the project or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
 - A bad request gets a 400 that says what is wrong.
 
+`GET /api/saved-steps` returns `{ steps }`, your saved steps. `PUT /api/saved-steps` with `{ steps }` replaces them all and returns what it kept; entries it cannot add to a project, such as one with no steps, are left out.
+
 ## Where things are stored
 
+- Saved steps are in `.shepherd/saved-steps.json`, apart from the board, so clearing the board keeps them. Each save keeps the one before as `saved-steps.json.bak`. A file Shepherd cannot read is moved aside, not overwritten.
 - The board is in `.shepherd/state.json`. Worktrees are in `.shepherd/worktrees/`, check evidence in `.shepherd/evidence/`, screenshots in `.shepherd/looks/`. Branches live in each project's repository.
 - Deleting a step or clearing the board removes it from the board but leaves its branch, worktree, and files on disk. Remove a worktree with `git worktree remove <folder>` in the project folder.
 
@@ -103,3 +107,4 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 - Shepherd does not push, open pull requests, or resolve merge conflicts. Merges happen locally.
 - `npm run dev` is the only way to run Shepherd, because the server is part of the Vite dev server.
 - Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting steps and checklists always uses your Codex default.
+- Saved steps belong to this Shepherd folder. A copy added to a project does not follow later changes to its saved step. A saved step whose model this machine does not offer gets your default model, and Shepherd says so.

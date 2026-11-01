@@ -1,5 +1,5 @@
-import { ChevronRight, GitMerge, GripVertical, LoaderCircle, Play, Plus, Sparkles, Square, Waypoints } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
+import { BookmarkPlus, ChevronRight, GitMerge, GripVertical, LoaderCircle, Play, Plus, Sparkles, Square, Waypoints } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
 import { cx } from "../../model/format";
 import { modelName, providerOf } from "../../model/models";
@@ -9,6 +9,8 @@ import type { OutlineItem, Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftSteps, mergePlan, runPlan, stopPlan } from "../../runner/live";
 import { useShepherd } from "../../store";
+import { placeFor } from "../saved/addSaved";
+import { SavedPicker } from "../saved/SavedPicker";
 import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
 import { Avatar, Button, ProgressBar, stageIcon, stageText } from "../ui";
@@ -39,6 +41,8 @@ export function Outline() {
   const projectId = useShepherd((store) => store.ui.projectId);
   const state = useShepherd((store) => store.state);
   const selectedTaskId = useShepherd((store) => store.ui.selectedTaskId);
+  const addSaved = useShepherd((store) => store.ui.addSaved);
+  const setAddSaved = useShepherd((store) => store.setAddSaved);
   const dispatch = useShepherd((store) => store.dispatch);
   const project = state.projects.find((item) => item.id === projectId);
   const items = useMemo(() => outlineOf(state, projectId), [state, projectId]);
@@ -152,6 +156,8 @@ export function Outline() {
 
   const drawnByHand = (task: Task) =>
     !!project.outline && (!!task.wired || state.dependencies.some((dep) => dep.target === task.id && !dep.outline));
+  /** The row the saved-step picker opens under: the blank row it replaces, or the row it adds after unless that is the last. */
+  const pickerUnder = addSaved ? (addSaved.replace ?? (addSaved.after !== items.at(-1)?.id ? addSaved.after : null)) : null;
   return (
     <aside className="flex w-[340px] shrink-0 flex-col border-r border-line bg-surface">
       <div className="flex items-baseline justify-between px-4 pb-1 pt-3.5">
@@ -173,32 +179,40 @@ export function Outline() {
                 const task = byId.get(item.id);
                 if (!task) return null;
                 return (
-                  <Row
-                    key={item.id}
-                    item={item}
-                    task={task}
-                    selected={task.id === selectedTaskId}
-                    wired={drawnByHand(task)}
-                    dropBefore={drag?.to === index}
-                    dropAfter={drag?.to === items.length && index === items.length - 1}
-                    register={(element) => {
-                      if (element) inputs.current.set(item.id, element);
-                      else inputs.current.delete(item.id);
-                    }}
-                    onKeyDown={(event) => onKeyDown(event, index)}
-                    onPaste={(event) => onPaste(event, index)}
-                    onDragStart={() => setDrag({ from: index, to: null })}
-                    onDragEnd={() => setDrag(null)}
-                    onDragOver={(before) => {
-                      if (!drag) return;
-                      const to = before ? index : index + 1;
-                      if (drag.to !== to) setDrag({ ...drag, to });
-                    }}
-                    onDrop={() => {
-                      if (drag && drag.to !== null) save(moveBlock(items, drag.from, drag.to));
-                      setDrag(null);
-                    }}
-                  />
+                  <Fragment key={item.id}>
+                    <Row
+                      item={item}
+                      task={task}
+                      selected={task.id === selectedTaskId}
+                      wired={drawnByHand(task)}
+                      dropBefore={drag?.to === index}
+                      dropAfter={drag?.to === items.length && index === items.length - 1}
+                      register={(element) => {
+                        if (element) inputs.current.set(item.id, element);
+                        else inputs.current.delete(item.id);
+                      }}
+                      onKeyDown={(event) => onKeyDown(event, index)}
+                      onPaste={(event) => onPaste(event, index)}
+                      onDragStart={() => setDrag({ from: index, to: null })}
+                      onDragEnd={() => setDrag(null)}
+                      onDragOver={(before) => {
+                        if (!drag) return;
+                        const to = before ? index : index + 1;
+                        if (drag.to !== to) setDrag({ ...drag, to });
+                      }}
+                      onDrop={() => {
+                        if (drag && drag.to !== null) save(moveBlock(items, drag.from, drag.to));
+                        setDrag(null);
+                      }}
+                      onSlash={() => {
+                        const above = index > 0 ? items[index - 1]!.id : null;
+                        const name = above ? byId.get(above)?.name : undefined;
+                        const label = above ? `Adds after “${name || "Untitled step"}”` : "Adds at the top";
+                        setAddSaved({ after: above, depth: item.depth, replace: item.id, label });
+                      }}
+                    />
+                    {addSaved && pickerUnder === item.id ? <SavedPicker place={addSaved} /> : null}
+                  </Fragment>
                 );
               })}
             </ol>
@@ -209,6 +223,17 @@ export function Outline() {
             >
               <Plus size={14} /> Add step
             </button>
+            {addSaved && !pickerUnder ? (
+              <SavedPicker place={addSaved} />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAddSaved(placeFor(projectId, null))}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-muted hover:bg-surface-2 hover:text-text"
+              >
+                <BookmarkPlus size={14} /> Add a saved step
+              </button>
+            )}
             <Draft projectId={projectId} big={false} />
           </>
         )}
@@ -232,6 +257,7 @@ function Row({
   onDragEnd,
   onDragOver,
   onDrop,
+  onSlash,
 }: {
   item: OutlineItem;
   task: Task;
@@ -246,6 +272,7 @@ function Row({
   onDragEnd: () => void;
   onDragOver: (before: boolean) => void;
   onDrop: () => void;
+  onSlash: () => void;
 }) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
@@ -297,9 +324,12 @@ function Row({
       <input
         ref={register}
         value={task.name}
-        placeholder="Name this step"
+        placeholder="Name this step, or type / for a saved step"
         aria-label="Step name"
-        onChange={(event) => dispatch({ type: "updateTask", id: task.id, patch: { name: event.target.value } })}
+        onChange={(event) => {
+          if (!task.name && event.target.value === "/" && task.status === "queued" && !task.git) onSlash();
+          else dispatch({ type: "updateTask", id: task.id, patch: { name: event.target.value } });
+        }}
         onFocus={() => focusTask(task.id)}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
@@ -377,6 +407,8 @@ function AgentPicker({ task }: { task: Task }) {
 }
 
 function Start({ projectId, onWrite }: { projectId: string; onWrite: () => void }) {
+  const addSaved = useShepherd((store) => store.ui.addSaved);
+  const setAddSaved = useShepherd((store) => store.setAddSaved);
   return (
     <div className="space-y-3 px-2 pt-2">
       <Draft projectId={projectId} big />
@@ -388,6 +420,17 @@ function Start({ projectId, onWrite }: { projectId: string; onWrite: () => void 
       <Button className="w-full" onClick={onWrite}>
         <Plus size={15} /> Write the steps yourself
       </Button>
+      {addSaved ? (
+        <SavedPicker place={addSaved} />
+      ) : (
+        <button
+          type="button"
+          className="block w-full text-center text-[12px] text-brass hover:underline"
+          onClick={() => setAddSaved(placeFor(projectId, null))}
+        >
+          or add a saved step
+        </button>
+      )}
       <p className="text-[12px] leading-5 text-faint">
         Steps run top to bottom, each with the work and report of the steps before it. Indent a step with Tab to run it at the same time as
         the steps beside it, after the step above. Pasting a list makes one step per line.

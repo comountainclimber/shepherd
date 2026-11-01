@@ -1,12 +1,15 @@
-import { ChevronDown, LoaderCircle, Trash2, X } from "lucide-react";
+import { Bookmark, ChevronDown, LoaderCircle, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { cx } from "../../model/format";
 import { modelName, providerOf } from "../../model/models";
+import { changedFrom, toSavedItem, upsertSaved } from "../../model/savedSteps";
 import { hasCycle, incoming, outgoing } from "../../model/selectors";
 import type { Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftChecklist } from "../../runner/live";
 import { useShepherd } from "../../store";
+import { putSavedSteps, useSavedSteps } from "../saved/useSavedSteps";
+import { notify } from "../shell/Toasts";
 import { Avatar, Button, Select, TextArea, TextInput } from "../ui";
 import { useModels } from "../useModels";
 import { ModelPicker } from "./ModelPicker";
@@ -59,10 +62,12 @@ export function Step() {
 
 function StepFields({ task }: { task: Task }) {
   const dispatch = useShepherd((store) => store.dispatch);
+  const setSaveFor = useShepherd((store) => store.setSaveFor);
   const agent = task.runner === "agent";
 
   return (
     <div className="space-y-4 pb-2">
+      <SavedOrigin task={task} />
       <section>
         <div className="mb-1.5 text-[12px] font-medium text-muted">Who does it</div>
         <WhoDoesIt task={task} />
@@ -90,7 +95,7 @@ function StepFields({ task }: { task: Task }) {
       </section>
       <Order task={task} />
       <MoreOptions task={task} />
-      <div className="border-t border-line pt-3">
+      <div className="flex items-center justify-between border-t border-line pt-3">
         <Button
           variant="quiet"
           className="text-failed hover:bg-failed/10"
@@ -100,6 +105,9 @@ function StepFields({ task }: { task: Task }) {
           }}
         >
           <Trash2 size={14} /> Delete this step
+        </Button>
+        <Button variant="quiet" disabled={!task.name.trim()} onClick={() => setSaveFor(task.id)}>
+          <Bookmark size={14} /> Save for reuse
         </Button>
       </div>
     </div>
@@ -196,6 +204,30 @@ function WhoDoesIt({ task }: { task: Task }) {
         </button>
       ))}
     </div>
+  );
+}
+
+/** Where a step was copied from, and a way to keep your changes to it for next time. */
+function SavedOrigin({ task }: { task: Task }) {
+  const saved = useSavedSteps();
+  const source = task.savedFrom ? saved?.find((entry) => entry.id === task.savedFrom!.id) : undefined;
+  if (!source) return null;
+  const save = async () => {
+    if (!saved || !window.confirm(`Save these changes to “${source.name}”? Steps already added to other projects keep their copy.`)) return;
+    const was = source.steps[0]!;
+    const step = toSavedItem(task, 0, was.runner !== "human" || !!was.objective);
+    if (await putSavedSteps(upsertSaved(saved, { id: source.id, name: source.name, steps: [step] }, Date.now()))) notify(`Saved “${source.name}”.`);
+  };
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-white/5 px-2.5 py-1.5 text-[12px] text-muted">
+      <Bookmark size={13} className="shrink-0 text-brass" />
+      <span>Copied from your saved step “{source.name}”.</span>
+      {changedFrom(task, source) ? (
+        <button type="button" className="text-brass hover:underline" onClick={() => void save()}>
+          Save these changes to the saved step
+        </button>
+      ) : null}
+    </p>
   );
 }
 
@@ -326,7 +358,7 @@ function MoreOptions({ task }: { task: Task }) {
             <SavedText
               value={task.description}
               onSave={(description) => dispatch({ type: "updateTask", id: task.id, patch: { description } })}
-              placeholder="Anything else worth knowing, like the overall goal"
+              placeholder="Anything this project needs, like how to start it and its address."
             />
           </label>
           <label className="block">

@@ -11,6 +11,7 @@ import { boardSummary, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
+import { createSavedSteps, type SavedSteps } from "./savedSteps";
 
 /** The longest goal Shepherd sends to an agent to plan. */
 const GOAL_LIMIT = 4000;
@@ -48,7 +49,8 @@ export function shepherdApi(): Plugin {
       };
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
-      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks) }));
+      const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
+      server.middlewares.use(apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved }));
     },
   };
 }
@@ -76,6 +78,7 @@ interface Context {
   evidence: string;
   looks: string;
   look: ReturnType<typeof createLooks>;
+  saved: SavedSteps;
 }
 
 export function apiHandler(context: Context) {
@@ -88,7 +91,7 @@ export function apiHandler(context: Context) {
       return;
     }
     // A JSON content type makes another site's request need a CORS preflight, which this server never grants.
-    if (req.method === "POST" && !/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+    if ((req.method === "POST" || req.method === "PUT") && !/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
       sendJson(res, 415, { error: "Send JSON with content-type: application/json." });
       return;
     }
@@ -103,7 +106,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence, looks, look }: Context,
+  { engine, runner, sandbox, evidence, looks, look, saved }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -215,6 +218,15 @@ async function route(
   }
   if (pathname === "/api/models" && method === "GET") {
     sendJson(res, 200, modelCatalog());
+    return true;
+  }
+  if (pathname === "/api/saved-steps" && method === "GET") {
+    sendJson(res, 200, { steps: saved.list() });
+    return true;
+  }
+  if (pathname === "/api/saved-steps" && method === "PUT") {
+    const result = saved.replace(((await readJson(req)) as { steps?: unknown }).steps);
+    sendJson(res, Array.isArray(result) ? 200 : 400, Array.isArray(result) ? { steps: result } : result);
     return true;
   }
   const file = /^\/api\/evidence\/([\w.-]+)\/(.+)$/.exec(pathname);

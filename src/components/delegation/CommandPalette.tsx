@@ -4,6 +4,9 @@ import { cx } from "../../model/format";
 import { runPlan, stopPlan } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
 import { appendStep } from "../outline/appendStep";
+import { addSaved, placeFor } from "../saved/addSaved";
+import { needsAbove } from "../saved/SavedPicker";
+import { useSavedSteps } from "../saved/useSavedSteps";
 
 export function CommandPalette() {
   const open = useShepherd((store) => store.ui.paletteOpen);
@@ -15,6 +18,12 @@ export function CommandPalette() {
   const setNewProjectOpen = useShepherd((store) => store.setNewProjectOpen);
   const requestDraft = useShepherd((store) => store.requestDraft);
   const requestFit = useShepherd((store) => store.requestFit);
+  const selectedTaskId = useShepherd((store) => store.ui.selectedTaskId);
+  const selectedName = useShepherd((store) => store.state.tasks.find((task) => task.id === selectedTaskId)?.name.trim());
+  const setSaveFor = useShepherd((store) => store.setSaveFor);
+  const setManageSaved = useShepherd((store) => store.setManageSaved);
+  const hasSteps = useShepherd((store) => store.state.tasks.some((task) => task.projectId === projectId));
+  const saved = useSavedSteps();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
 
@@ -29,6 +38,11 @@ export function CommandPalette() {
       setView("canvas");
       setFilters({ ...initialFilters, ...filters });
     };
+    const target = selectedTaskId && selectedName !== undefined ? selectedTaskId : null;
+    const place = placeFor(projectId, target);
+    const addSavedCommands = (saved ?? [])
+      .filter((entry) => !needsAbove(entry, place, !hasSteps))
+      .map((entry) => ({ id: `saved-${entry.id}`, label: `Add saved step: ${entry.name}`, run: () => void addSaved(entry, placeFor(projectId, target)) }));
     return [
       { id: "add", label: "Add a step", hint: "N", run: () => appendStep(projectId) },
       { id: "draft", label: "Draft steps from a goal", run: () => requestDraft() },
@@ -43,9 +57,12 @@ export function CommandPalette() {
       { id: "failed", label: "Show only failures", run: () => show({ status: "failed" }) },
       { id: "all", label: "Show everything", run: () => show({}) },
       { id: "fit", label: "Fit the map to the screen", hint: "F", run: () => requestFit() },
+      ...(selectedTaskId && selectedName ? [{ id: "save", label: "Save this step for reuse", run: () => setSaveFor(selectedTaskId) }] : []),
+      { id: "manage", label: "Manage saved steps", run: () => setManageSaved(true) },
+      ...addSavedCommands,
       { id: "reset", label: "Clear the whole board", run: clearWorkspace },
     ];
-  }, [projectId, requestDraft, requestFit, running, setFilters, setNewProjectOpen, setView]);
+  }, [hasSteps, projectId, requestDraft, requestFit, running, saved, selectedName, selectedTaskId, setFilters, setManageSaved, setNewProjectOpen, setSaveFor, setView]);
 
   const filtered = commands.filter((command) => command.label.toLowerCase().includes(query.trim().toLowerCase()));
   const draftRow = query.trim() && filtered.length === 0;
