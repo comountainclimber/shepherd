@@ -28,9 +28,13 @@ function folders() {
   return { root, distDir, dataDir: path.join(root, "board"), projectsDir: path.join(root, "projects"), helpersDir: path.resolve("server") };
 }
 
+// fetch keeps idle connections to a closed server and reuses them for the next server on the same port.
+let lastPort = 5194;
+const freshPort = () => (lastPort += 10);
+
 async function start() {
   const dirs = folders();
-  const app = await startServer({ ...dirs, port: 5194 });
+  const app = await startServer({ ...dirs, port: freshPort() });
   cleanup.push(() => app.close());
   const headers = { authorization: `Bearer ${app.security.token}` };
   return { ...app, ...dirs, headers };
@@ -142,7 +146,7 @@ it("protects the same routes and prints the token address in development", async
   vi.stubEnv("SHEPHERD_DATA_DIR", dirs.dataDir);
   vi.stubEnv("SHEPHERD_PROJECTS_DIR", dirs.projectsDir);
   const log = vi.spyOn(console, "log").mockImplementation(() => {});
-  const vite = await createViteServer({ configFile: false, root: dirs.distDir, plugins: [shepherdApi()], server: { host: "127.0.0.1", port: 5194, hmr: false, watch: null }, logLevel: "silent" });
+  const vite = await createViteServer({ configFile: false, root: dirs.distDir, plugins: [shepherdApi()], server: { host: "127.0.0.1", port: freshPort(), hmr: false, watch: null }, logLevel: "silent" });
   cleanup.push(() => vite.close());
   await vite.listen();
   const address = log.mock.calls.flat().join("\n").match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[a-f0-9]+/)![0];
