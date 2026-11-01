@@ -1,10 +1,12 @@
 import { Check, Clock, LoaderCircle, Play, RefreshCw, Square, Undo2, X } from "lucide-react";
 import { cx } from "../../model/format";
+import { choiceLabel } from "../../model/models";
 import { assigneeFor, failedCheck, openIssues, reviewPending, stageHint, stageOf, waitingFor, type Stage } from "../../model/stage";
 import type { PanelTab, Task } from "../../model/types";
 import { runTask, stopTask } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, Button, StageBadge, Tabs, stageBg, stageBorder } from "../ui";
+import { useModels } from "../useModels";
 import { Log } from "./Log";
 import { Output } from "./Output";
 import { Step } from "./Step";
@@ -20,9 +22,11 @@ export function TaskInspector() {
   const dispatch = useShepherd((store) => store.dispatch);
   const setPanelTab = useShepherd((store) => store.setPanelTab);
   const setInspectorOpen = useShepherd((store) => store.setInspectorOpen);
+  const catalog = useModels();
   if (!task) return null;
   const stage = stageOf(task, tasks, deps);
   const assignee = assigneeFor(task);
+  const choice = choiceLabel(task, catalog);
   const checksNeedYou = (task.status === "completed" && !!reviewPending(task)) || !!failedCheck(task);
   const hasOutput = !!task.output || task.filesChanged.length > 0;
   const tabs: { id: PanelTab; label: string; alert?: boolean }[] = [
@@ -54,7 +58,7 @@ export function TaskInspector() {
             />
             <div className="mt-1 flex items-center gap-2">
               <StageBadge stage={stage} />
-              <span className="truncate text-[12px] text-muted">{assignee.name}</span>
+              <span className="truncate text-[12px] text-muted">{choice ? `${assignee.name} · ${choice}` : assignee.name}</span>
             </div>
           </div>
           <button

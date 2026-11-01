@@ -3,10 +3,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { slugify } from "../src/model/factory";
+import { isEffort, isModelId } from "../src/model/models";
 import { dependencyOrder } from "../src/model/outline";
 import type { Action, CheckRun, GateStep, OrchestrationState, Task } from "../src/model/types";
 import { isFullyVerified, unmetDependencies } from "../src/model/verify";
-import { CODEX_MODEL, agentById } from "../src/model/workspace";
+import { agentById } from "../src/model/workspace";
 import { parseAgentLine } from "../src/runner/parse";
 import { taskPrompt, upstreamContext, upstreamTasks } from "../src/runner/prompt";
 import type { Engine } from "./engine";
@@ -50,7 +51,7 @@ export interface RunnerOptions {
   /** Shepherd's gate script, given to checks and agents as SHEPHERD_GATE. */
   gate: string;
   checkTimeoutMs?: number;
-  command?: (provider: AgentCli, prompt: string, resumeId: string | null) => { cmd: string; args: string[] };
+  command?: (provider: AgentCli, prompt: string, resumeId: string | null, choice: Pick<Task, "model" | "effort">) => { cmd: string; args: string[] };
   loggedIn?: (provider: AgentCli) => Promise<boolean>;
   /** Lets agents and checks ask for screenshots: the script they run, and Shepherd's address once it listens. */
   look?: { script: string; server: () => string | null };
@@ -188,7 +189,7 @@ export function createRunner(options: RunnerOptions): Runner {
     const latest = find(taskId)!;
     const tools = lookEnv(taskId);
     const prompt = taskPrompt(latest, extra, upstreamContext(state(), latest), { look: !!tools.SHEPHERD_LOOK });
-    const spec = command(provider, prompt, latest.sessionId ?? null);
+    const spec = command(provider, prompt, latest.sessionId ?? null, { model: latest.model, effort: latest.effort });
     const child = spawn(spec.cmd, spec.args, {
       cwd: tree.folder,
       env: agentEnv(provider, { ...process.env, SHEPHERD_GATE: gate, ...tools }),
@@ -1005,10 +1006,24 @@ function resolveWorkspace(requested: string | undefined, sandbox: string): { pat
   return { path: resolved };
 }
 
-export function agentCommand(provider: AgentCli, prompt: string, resumeId: string | null): { cmd: string; args: string[] } {
+export function agentCommand(
+  provider: AgentCli,
+  prompt: string,
+  resumeId: string | null,
+  choice: Pick<Task, "model" | "effort"> = {},
+): { cmd: string; args: string[] } {
+  const model = isModelId(choice.model) ? choice.model : null;
+  const effort = isEffort(choice.effort) ? choice.effort : null;
   if (provider === "codex") {
     // Without network the sandbox cannot install packages; agents install, build and test like a developer would.
-    const shared = ["-m", CODEX_MODEL, "--json", "--skip-git-repo-check", "-c", "sandbox_workspace_write.network_access=true"];
+    const shared = [
+      ...(model ? ["-m", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+      "--json",
+      "--skip-git-repo-check",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+    ];
     if (resumeId) {
       // `codex exec resume` has no --sandbox flag; the config override is equivalent.
       return {
@@ -1019,6 +1034,8 @@ export function agentCommand(provider: AgentCli, prompt: string, resumeId: strin
     return { cmd: "codex", args: ["exec", ...shared, "--sandbox", "workspace-write", prompt] };
   }
   const args = ["-p", "--verbose", "--output-format", "stream-json", "--permission-mode", "acceptEdits"];
+  if (model) args.push("--model", model);
+  if (effort) args.push("--effort", effort);
   if (resumeId) args.push("--resume", resumeId);
   args.push(prompt);
   return { cmd: "claude", args };

@@ -1,3 +1,4 @@
+import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
 import type {
   Dependency,
@@ -170,7 +171,15 @@ function task(raw: Raw): Task {
     ...listed("looks", list(raw.looks).flatMap(look)),
     ...listed("issues", list(raw.issues).flatMap(issue)),
     ...(typeof raw.checklist === "string" && raw.checklist.trim() ? { checklist: raw.checklist } : {}),
+    ...(isModelId(raw.model) ? { model: raw.model } : {}),
+    ...(isEffort(raw.effort) ? { effort: raw.effort } : {}),
+    ...savedFrom(raw.savedFrom),
   };
+}
+
+function savedFrom(raw: unknown): Pick<Task, "savedFrom"> {
+  const from = record(raw);
+  return from && typeof from.id === "string" && from.id && Number.isInteger(from.version) ? { savedFrom: { id: from.id, version: from.version as number } } : {};
 }
 
 function listed<K extends string, T>(key: K, items: T[]): Partial<Record<K, T[]>> {

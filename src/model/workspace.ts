@@ -3,11 +3,9 @@ import type { Agent, OrchestrationState, Project } from "./types";
 
 export const WORKSPACE_PROJECT_ID = "proj-local";
 
-export const CODEX_MODEL = "gpt-5.6-terra";
-
 export const AGENTS: Agent[] = [
-  { id: "agent-claude", name: "Claude Code", provider: "claude-code", model: "default model" },
-  { id: "agent-codex", name: "Codex", provider: "codex", model: CODEX_MODEL },
+  { id: "agent-claude", name: "Claude Code", provider: "claude-code", model: "Your Claude Code default" },
+  { id: "agent-codex", name: "Codex", provider: "codex", model: "Your Codex default" },
 ];
 
 export function agentById(id: string | null | undefined): Agent | undefined {

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { interruptWork, loadState } from "../src/model/migrate";
+import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
 import type { Action, OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
@@ -31,6 +32,7 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "dropIssue",
   "fixIssue",
   "settleChecklist",
+  "setModel",
 ]);
 
 /** Fields of a task a tab may edit directly. The rest change only through runs, checks and merges. */
@@ -124,6 +126,9 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
             : [];
   if (created.some((task) => !task || task.git || task.status === "running" || !Array.isArray(task.verification) || task.verification.some((check) => check.state !== "pending"))) {
     return { error: "A new task starts unverified, with no branch." };
+  }
+  if (created.some((task) => (task.model !== undefined && !isModelId(task.model)) || (task.effort !== undefined && !isEffort(task.effort)))) {
+    return { error: "That is not a model or thinking level an agent can use." };
   }
   return action;
 }

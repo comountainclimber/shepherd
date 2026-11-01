@@ -2,12 +2,14 @@ import { ChevronRight, GitMerge, GripVertical, LoaderCircle, Play, Plus, Sparkle
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { DEFAULT_AGENT_ID, newStep } from "../../model/factory";
 import { cx } from "../../model/format";
+import { modelName, providerOf } from "../../model/models";
 import { indent, moveBlock, moveDown, moveUp, outdent, outlineOf, parseList, subtreeEnd } from "../../model/outline";
 import { STAGE_LABEL, STEP_LABEL, assigneeFor, needsYou, nextStep, openIssues, progress, stageHint, stageOf } from "../../model/stage";
 import type { OutlineItem, Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftSteps, mergePlan, runPlan, stopPlan } from "../../runner/live";
 import { useShepherd } from "../../store";
+import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
 import { Avatar, Button, ProgressBar, stageIcon, stageText } from "../ui";
 import { appendStep } from "./appendStep";
@@ -340,8 +342,11 @@ function Row({
 function AgentPicker({ task }: { task: Task }) {
   const dispatch = useShepherd((store) => store.dispatch);
   const assignee = assigneeFor(task);
+  const catalog = useModels();
+  const provider = providerOf(task);
+  const model = provider && task.model ? `, with ${modelName(task.model, catalog, provider)}` : "";
   return (
-    <label className="relative shrink-0 cursor-pointer" title={`${assignee.name} does this. Click to change.`}>
+    <label className="relative shrink-0 cursor-pointer" title={`${assignee.name} does this${model}. Click to change who.`}>
       <Avatar kind={assignee.kind} size={22} />
       <select
         aria-label="Who does this step"

@@ -1,6 +1,7 @@
 import { blankTask, nextPosition, slugify } from "../src/model/factory";
+import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
-import { GATE_LABEL, type Action, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
+import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
 import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
 
@@ -52,27 +53,35 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const review = flag(request.review, field("review"), false);
     const autoRun = flag(request.autoRun, field("autoRun"), false);
     const independent = flag(request.independent, field("independent"), false);
-    if (runner === "human" && (autoRun || independent || review)) {
-      fail(`${where} is done by a person, so autoRun, independent and review do not apply to it.`);
+    const model = text(request.model, field("model"));
+    if (model && !isModelId(model)) fail(`${field("model")} is not a model name, such as gpt-6-astra or opus.`);
+    const effort = text(request.thinking, field("thinking"));
+    if (effort && !isEffort(effort)) fail(`${field("thinking")} must be one of: ${EFFORTS.join(", ")}.`);
+    if (runner === "human" && (autoRun || independent || review || model || effort)) {
+      fail(`${where} is done by a person, so autoRun, independent, review, model and thinking do not apply to it.`);
     }
     const dependsOn = dependencies(scratch, project.id, request.dependsOn, where, field("dependsOn"));
     const id = newId(index);
-    const task = blankTask({
-      id,
-      projectId: project.id,
-      name,
-      objective: text(request.objective, field("objective")) || name,
-      description: text(request.description, field("description")),
-      acceptance: lines(request.acceptance, field("acceptance")),
-      checkCommand,
-      review,
-      autoRun,
-      independent,
-      runner,
-      agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
-      worktree: freeWorktree(scratch, project.id, name),
-      position: nextPosition(scratch.tasks, project.id, dependsOn.map((dep) => dep.source)),
-    });
+    const task = {
+      ...blankTask({
+        id,
+        projectId: project.id,
+        name,
+        objective: text(request.objective, field("objective")) || name,
+        description: text(request.description, field("description")),
+        acceptance: lines(request.acceptance, field("acceptance")),
+        checkCommand,
+        review,
+        autoRun,
+        independent,
+        runner,
+        agentId: runner === "human" ? null : agentFor(request.agent, field("agent")),
+        worktree: freeWorktree(scratch, project.id, name),
+        position: nextPosition(scratch.tasks, project.id, dependsOn.map((dep) => dep.source)),
+      }),
+      ...(model ? { model } : {}),
+      ...(effort ? { effort: effort as Effort } : {}),
+    };
     const action: Action = { type: "createTask", task, dependsOn };
     scratch = reducer(scratch, action);
     actions.push(action);

@@ -3,11 +3,12 @@ import { cx } from "../../model/format";
 import { assigneeFor, stageHint, stageOf, type AssigneeKind, type Stage } from "../../model/stage";
 import { tasksForProject } from "../../model/selectors";
 import type { Task } from "../../model/types";
+import { EFFORT_LABEL, modelName, type ModelCatalog } from "../../model/models";
 import { isFullyVerified } from "../../model/verify";
-import { CODEX_MODEL } from "../../model/workspace";
 import { agentStatus } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, ProgressBar, StageBadge, stageText } from "../ui";
+import { useModels } from "../useModels";
 
 const ORDER: Record<Stage, number> = {
   running: 0,
@@ -21,18 +22,26 @@ const ORDER: Record<Stage, number> = {
   verified: 8,
 };
 
-const MEMBERS: { kind: AssigneeKind; name: string; role: string }[] = [
-  { kind: "codex", name: "Codex", role: `OpenAI · ${CODEX_MODEL}` },
-  { kind: "claude", name: "Claude Code", role: "Anthropic · default model" },
-  { kind: "person", name: "You", role: "Reviews, sign-offs, and anything only a person can do" },
-];
+/** "your default, GPT-6.1-Sol at High", or just "your default" when the agent's settings do not say. */
+function defaults(catalog: ModelCatalog | null, provider: "codex" | "claude"): string {
+  const own = catalog?.[provider].default;
+  if (!own?.model) return "your default model";
+  const effort = own.effort ? ` at ${EFFORT_LABEL[own.effort]}` : "";
+  return `your default, ${modelName(own.model, catalog, provider)}${effort}`;
+}
 
 /** Who can take steps, what each is doing in this project, and how much of it is done. */
 export function AgentActivity() {
   const state = useShepherd((store) => store.state);
   const projectId = useShepherd((store) => store.ui.projectId);
   const [online, setOnline] = useState<{ claude: boolean; codex: boolean } | null>(null);
+  const catalog = useModels();
   const tasks = tasksForProject(state, projectId);
+  const members: { kind: AssigneeKind; name: string; role: string }[] = [
+    { kind: "codex", name: "Codex", role: `OpenAI · ${defaults(catalog, "codex")}` },
+    { kind: "claude", name: "Claude Code", role: `Anthropic · ${defaults(catalog, "claude")}` },
+    { kind: "person", name: "You", role: "Reviews, sign-offs, and anything only a person can do" },
+  ];
 
   useEffect(() => {
     agentStatus()
@@ -43,7 +52,7 @@ export function AgentActivity() {
   return (
     <div className="h-full overflow-auto bg-bg px-6 py-6">
       <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-3">
-        {MEMBERS.map((member) => (
+        {members.map((member) => (
           <AgentCard
             key={member.kind}
             {...member}
@@ -75,7 +84,9 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
         <Avatar kind={kind} size={40} className={cx(online === false && "opacity-50")} />
         <div className="min-w-0 flex-1">
           <h2 className="text-[15px] font-semibold leading-tight text-text">{name}</h2>
-          <div className="truncate text-[12px] text-muted">{role}</div>
+          <div className="truncate text-[12px] text-muted" title={role}>
+            {role}
+          </div>
         </div>
         {kind !== "person" ? (
           <span

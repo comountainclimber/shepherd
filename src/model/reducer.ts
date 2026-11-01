@@ -1,4 +1,5 @@
 import { commandCheck, reviewCheck } from "./factory";
+import { EFFORT_LABEL, isEffort, isModelId } from "./models";
 import { layoutProject, normalize, outlineOf, syncOutlines } from "./outline";
 import { agentById, projectDirectory, workspace } from "./workspace";
 import { CHECK_LABEL } from "./types";
@@ -6,6 +7,7 @@ import type {
   Action,
   CheckRun,
   Dependency,
+  Effort,
   ExecutionEvent,
   Gate,
   Look,
@@ -174,6 +176,8 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return fixIssue(state, action.id, action.issueId, action.task);
     case "settleChecklist":
       return settleChecklist(state, action.id, action.use);
+    case "setModel":
+      return setModel(state, action.id, action.model, action.effort);
     case "approvePlan":
       return approvePlan(state, action.tasks, action.dependencies);
     case "deleteTask":
@@ -396,6 +400,16 @@ function createTask(
   return log.finish({ tasks: [...state.tasks, task], dependencies });
 }
 
+/** Picks the model and thinking for an agent's step, or goes back to the agent's defaults. */
+function setModel(state: OrchestrationState, id: string, model: string | null, effort: Effort | null): OrchestrationState {
+  const task = state.tasks.find((item) => item.id === id);
+  if (!task || task.runner !== "agent" || task.status === "running") return state;
+  if ((model !== null && !isModelId(model)) || (effort !== null && !isEffort(effort))) return state;
+  if ((task.model ?? null) === model && (task.effort ?? null) === effort) return state;
+  const { model: _model, effort: _effort, ...rest } = task;
+  return { ...state, tasks: replaceTask(state.tasks, { ...rest, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }) };
+}
+
 function settleChecklist(state: OrchestrationState, id: string, use: boolean): OrchestrationState {
   const task = state.tasks.find((item) => item.id === id);
   if (!task?.checklist) return state;
@@ -454,10 +468,11 @@ function setStatus(state: OrchestrationState, id: string, status: TaskStatus): O
           }))
         : task.verification,
     };
+    const picked = task.runner === "agent" ? [task.model, task.effort ? `${EFFORT_LABEL[task.effort].toLowerCase()} thinking` : ""].filter(Boolean).join(", ") : "";
     log.event({
       taskId: task.id,
       projectId: task.projectId,
-      message: rerun ? `Retrying ${task.name}` : `Started ${task.name}`,
+      message: `${rerun ? "Retrying" : "Started"} ${task.name}${picked ? ` with ${picked}` : ""}`,
       tone: "info",
     });
   } else if (status === "blocked") {
@@ -672,6 +687,11 @@ function reassign(state: OrchestrationState, id: string, agentId: string | null,
     tone: "info",
   });
   let next: Task = { ...task, agentId: nextAgent };
+  if (agentById(nextAgent)?.provider !== agentById(task.agentId)?.provider) {
+    // Another agent cannot resume this one's conversation, and has its own models.
+    const { model: _model, effort: _effort, ...rest } = next;
+    next = { ...rest, sessionId: null };
+  }
   if (nextRunner !== task.runner) {
     const human = nextRunner === "human";
     next = {

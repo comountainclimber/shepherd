@@ -1,7 +1,9 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { cx, formatDuration } from "../../model/format";
+import { choiceLabel } from "../../model/models";
 import { assigneeFor, needsYou, nextStep, openIssues, STEP_LABEL, stageHint, stageOf } from "../../model/stage";
 import { useShepherd } from "../../store";
+import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
 import { Avatar, CheckDots, StageBadge, stageBg, stageBorder } from "../ui";
 
@@ -16,7 +18,9 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
   const tasks = useShepherd((store) => store.state.tasks);
   const deps = useShepherd((store) => store.state.dependencies);
   const takeStep = useNextStep();
+  const catalog = useModels();
   if (!task) return null;
+  const choice = choiceLabel(task, catalog);
 
   const stage = stageOf(task, tasks, deps);
   const step = needsYou(task, tasks, deps) ? nextStep(task, stage) : null;
@@ -48,7 +52,10 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
           {hint}
         </div>
         <div className="mt-2 flex h-6 items-center justify-between gap-2">
-          <CheckDots checks={task.verification} />
+          <span className="flex min-w-0 items-center gap-2">
+            <CheckDots checks={task.verification} />
+            {choice ? <span className="truncate rounded-md bg-white/5 px-1.5 py-px text-[11px] text-muted">{choice}</span> : null}
+          </span>
           {step ? (
             <button
               type="button"

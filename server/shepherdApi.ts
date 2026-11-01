@@ -9,6 +9,7 @@ import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
+import { modelCatalog } from "./models";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 
 /** The longest goal Shepherd sends to an agent to plan. */
@@ -210,6 +211,10 @@ async function route(
   if (pathname === "/api/agents" && method === "GET") {
     const [status, git] = await Promise.all([agentStatus(), gitAvailable()]);
     sendJson(res, 200, { ...status, git, workspace: sandbox });
+    return true;
+  }
+  if (pathname === "/api/models" && method === "GET") {
+    sendJson(res, 200, modelCatalog());
     return true;
   }
   const file = /^\/api\/evidence\/([\w.-]+)\/(.+)$/.exec(pathname);

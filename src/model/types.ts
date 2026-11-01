@@ -109,6 +109,43 @@ export interface Task {
   drafting?: boolean;
   /** A checklist Shepherd suggested for this step, until you use it or discard it. */
   checklist?: string;
+  /** The model its agent uses. Unset uses the agent's own default. */
+  model?: string;
+  /** How hard its agent thinks. Unset uses the default. */
+  effort?: Effort;
+  /** The saved step it was copied from, and which version. */
+  savedFrom?: { id: string; version: number };
+}
+
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export type Effort = (typeof EFFORTS)[number];
+
+/** A step, or a few steps that run side by side, kept for adding to any project. */
+export interface SavedStep {
+  id: string;
+  name: string;
+  version: number;
+  updatedAt: number;
+  /** Came with Shepherd. */
+  starter?: boolean;
+  steps: SavedStepItem[];
+}
+
+/** What a saved step keeps of a step: what to do and who does it, but nothing from its runs. */
+export interface SavedStepItem {
+  name: string;
+  runner: Runner;
+  agentId: string | null;
+  model?: string;
+  effort?: Effort;
+  objective: string;
+  description: string;
+  acceptance: string[];
+  checkCommand?: string;
+  review?: boolean;
+  independent?: boolean;
+  /** Indented this far below the first step. */
+  depth: number;
 }
 
 /** A screenshot of a page, taken by Shepherd because a browser cannot start in an agent's sandbox. */
@@ -262,6 +299,8 @@ export type Action =
   | { type: "fixIssue"; id: string; issueId: string; task: Task }
   /** Makes the suggested checklist the step's prompt, or discards it. */
   | { type: "settleChecklist"; id: string; use: boolean }
+  /** null goes back to the agent's default. */
+  | { type: "setModel"; id: string; model: string | null; effort: Effort | null }
   | { type: "approvePlan"; tasks: Task[]; dependencies: Dependency[] }
   | { type: "deleteTask"; id: string }
   | { type: "reset" }

@@ -27,6 +27,7 @@ Settings (the gear) shows which ones Shepherd can use.
 - **The map.** Cmd (Ctrl elsewhere) with + or − zooms it, and Cmd+0 or F fits it to the screen.
 - **Arrows by hand.** Drawing or removing an arrow on the map, or changing "Starts after" in a step, sets that step's arrows by hand. The outline stops moving them, and the step shows a small marker. "Follow the outline instead" undoes it.
 - **A step.** Click a step to open it. The Step tab has who does it and the prompt. The Output tab has the agent's report, the files it changed with their diff, and a merge button for that step alone. The Log tab lets you send the agent an instruction.
+- **Models.** Under "Who does it", an agent step can pick its model and how hard it thinks. Left on Default, it uses whatever your Codex or Claude Code settings say, so changing those changes every step that did not pick. Codex's list comes from its own model cache, so new models show up as Codex learns of them. A step that picked a model shows it on the map, and its Log says what each run used. Giving the step to the other agent clears the choice and starts a fresh conversation; the work on its branch stays.
 - **Run.** Run, at the bottom of the list, starts every step that is not done as soon as the steps before it are done, up to four agents at once. It retries steps that failed or that you paused. Stop pauses the agents where they are. A step that fails holds up the steps after it until you retry it; the plan carries on from there.
 - **Done.** A step is done when its agent finishes, or when you mark your own step done. If you add checks, it is done only when they pass.
 - **Your steps.** When the steps before one of yours are done, Shepherd merges their work into a folder for it, on its own branch, and the step shows the path. Try the result there. Anything you change in that folder is committed under your git name when you mark the step done. If earlier work changes after that, the folder is brought up to date and the step asks you again. "Found a problem? Send it back" reruns an earlier agent step with your note, and the folder picks up its fix.
@@ -87,6 +88,7 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 
 - `project` is a project's id or name. Each step needs a `name`. `objective` (the prompt) defaults to the name.
 - Optional fields are `description`, `acceptance` (a list of "done when" lines), `checkCommand`, `runner` (`agent` or `human`), and `agent` (`codex` or `claude`, default `codex`).
+- Agent steps also take `model` (such as `gpt-6-astra`, or `opus` for Claude Code; `GET /api/models` lists them with your defaults) and `thinking` (`low`, `medium`, `high`, `xhigh`, `max`, or `ultra` where the model offers it). Leave them out to use your defaults.
 - Agent steps also take `review: true` to wait for your review, `independent: true` to keep earlier agents' reports out of their prompt, and `autoRun: true` to start on their own once what they wait for is done, without running the whole plan.
 - `dependsOn` lists steps by id or name, in the project or earlier in the same request. Those steps keep these arrows; the outline does not move them. The gate is `verified` (done) by default, or `completed` (finished, before its checks).
 - A bad request gets a 400 that says what is wrong.
@@ -100,4 +102,4 @@ curl -X POST http://localhost:5173/api/tasks -H 'content-type: application/json'
 
 - Shepherd does not push, open pull requests, or resolve merge conflicts. Merges happen locally.
 - `npm run dev` is the only way to run Shepherd, because the server is part of the Vite dev server.
-- The Codex model is set in `src/model/workspace.ts`. Claude Code uses its default model.
+- Claude Code's models are a fixed list: Fable, Opus, Sonnet and Haiku. Drafting steps and checklists always uses your Codex default.

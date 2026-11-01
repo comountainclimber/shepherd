@@ -87,6 +87,16 @@ describe("planTasks", () => {
     expect(test).toMatchObject({ autoRun: true, independent: true });
     expect(test!.verification.map((check) => check.kind)).toEqual(["command", "review"]);
   });
+
+  it("gives a step the model and thinking asked for, and only to an agent", () => {
+    const state = apply(board(), { project: "Greeter", tasks: [{ name: "Audit", model: "gpt-6-astra", thinking: "max" }, { name: "Plain" }] });
+    expect(state.tasks[0]).toMatchObject({ model: "gpt-6-astra", effort: "max" });
+    expect(state.tasks[1]!.model).toBeUndefined();
+    const error = (body: unknown) => (planTasks(board(), body, ids) as { error: string }).error;
+    expect(error({ project: "Greeter", name: "X", model: "--yolo" })).toMatch(/^model is not a model name/);
+    expect(error({ project: "Greeter", name: "X", thinking: "lots" })).toBe("thinking must be one of: low, medium, high, xhigh, max, ultra.");
+    expect(error({ project: "Greeter", name: "X", runner: "human", model: "opus" })).toMatch(/done by a person/);
+  });
 });
 
 describe("planProject", () => {

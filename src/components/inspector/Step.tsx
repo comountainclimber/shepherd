@@ -1,12 +1,15 @@
 import { ChevronDown, LoaderCircle, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
 import { cx } from "../../model/format";
+import { modelName, providerOf } from "../../model/models";
 import { hasCycle, incoming, outgoing } from "../../model/selectors";
 import type { Task } from "../../model/types";
 import { AGENTS } from "../../model/workspace";
 import { draftChecklist } from "../../runner/live";
 import { useShepherd } from "../../store";
 import { Avatar, Button, Select, TextArea, TextInput } from "../ui";
+import { useModels } from "../useModels";
+import { ModelPicker } from "./ModelPicker";
 import { useSelectedTask } from "./useSelectedTask";
 
 const PICKABLE = [...AGENTS].sort((a, b) => (a.provider === "codex" ? -1 : b.provider === "codex" ? 1 : 0));
@@ -63,6 +66,7 @@ function StepFields({ task }: { task: Task }) {
       <section>
         <div className="mb-1.5 text-[12px] font-medium text-muted">Who does it</div>
         <WhoDoesIt task={task} />
+        <StepModel task={task} />
       </section>
       <section>
         <div className="mb-1.5 text-[12px] font-medium text-muted">{agent ? "What to tell the agent" : "What you do"}</div>
@@ -176,6 +180,11 @@ function WhoDoesIt({ task }: { task: Task }) {
           key={choice.id}
           type="button"
           disabled={choice.disabled && !choice.active}
+          title={
+            task.sessionId && !choice.active && choice.kind !== "person"
+              ? `${choice.label} starts a fresh conversation. The work on this step's branch stays.`
+              : undefined
+          }
           onClick={() => !choice.active && choice.pick()}
           className={cx(
             "flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left text-[12px] font-medium disabled:cursor-not-allowed disabled:opacity-40",
@@ -187,6 +196,31 @@ function WhoDoesIt({ task }: { task: Task }) {
         </button>
       ))}
     </div>
+  );
+}
+
+function StepModel({ task }: { task: Task }) {
+  const dispatch = useShepherd((store) => store.dispatch);
+  const catalog = useModels();
+  const provider = providerOf(task);
+  if (!provider) return null;
+  const running = task.status === "running";
+  const picked = task.model ? modelName(task.model, catalog, provider) : null;
+  const note = running
+    ? "You can change it once this run ends."
+    : task.sessionId && picked
+      ? `Its next run picks up the earlier conversation, now with ${picked}.`
+      : undefined;
+  return (
+    <ModelPicker
+      provider={provider}
+      catalog={catalog}
+      model={task.model}
+      effort={task.effort}
+      disabled={running}
+      note={note}
+      onChange={(model, effort) => dispatch({ type: "setModel", id: task.id, model, effort })}
+    />
   );
 }
 

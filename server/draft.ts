@@ -5,7 +5,6 @@ import path from "node:path";
 import { dependencyOrder } from "../src/model/outline";
 import { openIssues } from "../src/model/stage";
 import type { OrchestrationState, Task } from "../src/model/types";
-import { CODEX_MODEL } from "../src/model/workspace";
 import { agentEnv } from "./runner";
 
 export interface DraftStep {
@@ -178,20 +177,7 @@ export async function draftChecklist(input: ChecklistInput, folder: string, sign
 function askCodex(prompt: string, folder: string, signal: AbortSignal | undefined, what: string): Promise<{ reply: string } | { error: string }> {
   const scratch = mkdtempSync(path.join(tmpdir(), "shepherd-draft-"));
   const answer = path.join(scratch, "answer.txt");
-  const args = [
-    "exec",
-    "-m",
-    CODEX_MODEL,
-    "--skip-git-repo-check",
-    "--sandbox",
-    "read-only",
-    "--ephemeral",
-    "--color",
-    "never",
-    "-o",
-    answer,
-    prompt,
-  ];
+  const args = ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--ephemeral", "--color", "never", "-o", answer, prompt];
   return new Promise((resolve) => {
     const child = spawn("codex", args, { cwd: folder, env: agentEnv("codex", process.env), stdio: ["ignore", "ignore", "pipe"], detached: true });
     let stderr = "";

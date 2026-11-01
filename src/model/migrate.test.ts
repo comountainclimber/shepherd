@@ -97,6 +97,18 @@ describe("loadState", () => {
     expect(off).not.toHaveProperty("independent");
   });
 
+  it("keeps a step's model, thinking and where it was copied from, and drops ones an agent cannot use", () => {
+    const [kept, dropped] = loadState({
+      ...schemaOne,
+      tasks: [
+        { ...schemaOneTask, model: "gpt-6-astra", effort: "max", savedFrom: { id: "saved-1", version: 2 } },
+        { ...schemaOneTask, id: "other", model: "-x", effort: "lots", savedFrom: { id: "saved-1" } },
+      ],
+    })!.tasks;
+    expect(kept).toMatchObject({ model: "gpt-6-astra", effort: "max", savedFrom: { id: "saved-1", version: 2 } });
+    for (const gone of ["model", "effort", "savedFrom"]) expect(dropped).not.toHaveProperty(gone);
+  });
+
   it("keeps known issues and screenshots, drops broken ones, and forgets a checklist being written", () => {
     const look = { file: "m1-390.png", url: "http://localhost:8130/", width: 390, height: 800, at: 2, errors: ["boom"] };
     const issue = { id: "issue-1", text: "The replay link ignores hash changes.", at: 3, stepId: "step-fix" };

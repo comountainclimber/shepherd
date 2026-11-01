@@ -1,6 +1,17 @@
+import type { ModelCatalog } from "../model/models";
 import type { Task } from "../model/types";
 import { agentById } from "../model/workspace";
 import { useShepherd } from "../store";
+
+let models: Promise<ModelCatalog | null> | null = null;
+
+/** What each agent can use here, from Codex's and Claude Code's own files. Asked once per page. */
+export function modelCatalog(): Promise<ModelCatalog | null> {
+  models ??= fetch("/api/models")
+    .then((response) => (response.ok ? (response.json() as Promise<ModelCatalog>) : null))
+    .catch(() => null);
+  return models;
+}
 
 /** The folder that holds every project. Empty means the server's default. */
 export function workspacePath(): string {
