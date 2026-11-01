@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090a0c">
+  <meta name="description" content="Shepherd is a free, open-source local app to plan, run, and check long coding-agent work with Codex and Claude Code.">
+  <title>Shepherd — Long tasks. Clear next steps.</title>
+  <link rel="icon" href="./assets/sheep.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#" aria-label="Shepherd home"><img src="./assets/sheep.svg" width="30" height="30" alt="">Shepherd</a>
+    <nav aria-label="Main navigation">
+      <a href="#how-it-works">How it works</a>
+      <a href="#start">Docs</a>
+      <a class="nav-github" data-repo href="#open-source"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#github"/></svg><span>GitHub</span><span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="eyebrow hero-eyebrow"><span class="status-dot"></span> LOCAL BY DESIGN. OPEN BY DEFAULT.</div>
+      <h1 id="hero-title">Long tasks.<br><span>Clear next steps.</span></h1>
+      <p class="hero-description">A local app to plan, run, and check long coding-agent work.<br class="desktop-break"> For Codex and Claude Code. Free and open source.</p>
+      <div class="hero-actions">
+        <div class="install-command"><span class="prompt" aria-hidden="true">$</span><code>npx shepherd-agents</code><button class="copy-button" data-copy aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#copy"/></svg><span>Copy</span></button></div>
+        <a class="text-link github-cta" data-repo href="#open-source"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#github"/></svg> Star on GitHub <span aria-hidden="true">↗</span></a>
+      </div>
+      <p class="hero-meta">Free & open source <span>·</span> MIT licensed <span>·</span> macOS first</p>
+    </section>
+
+    <section class="product-section wrap" aria-label="Explore the real Shepherd app">
+      <div class="product-heading"><span class="eyebrow">THE WHOLE TASK. ONE CLEAR PICTURE.</span><span class="demo-label"><span class="status-dot"></span> Real app · Demo project</span></div>
+      <div class="product-frame">
+        <div class="window-bar"><div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div><span><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#branch"/></svg> Slice / Add Apple Pay to checkout</span><span class="local-label"><span class="status-dot"></span> Running locally</span></div>
+        <div class="product-tabs" role="tablist" aria-label="Product views">
+          <button id="tab-map" role="tab" aria-selected="true" aria-controls="panel-map" tabindex="0" data-view="map"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#map"/></svg>The map</button>
+          <button id="tab-outline" role="tab" aria-selected="false" aria-controls="panel-outline" tabindex="-1" data-view="outline"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#outline"/></svg>The outline</button>
+          <button id="tab-checks" role="tab" aria-selected="false" aria-controls="panel-checks" tabindex="-1" data-view="checks"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#check"/></svg>Checks</button>
+          <span class="screenshot-label">ACTUAL SCREENSHOTS</span>
+        </div>
+        <div class="screenshot-viewport">
+          <div id="panel-map" class="screenshot-panel map-panel" role="tabpanel" aria-labelledby="tab-map" tabindex="0"><img class="app-screenshot map-screenshot" src="./assets/task-map-desktop.png" width="1440" height="1000" alt="Shepherd's real task map: eight Apple Pay steps, four done and two running in parallel, with a review and merge request waiting."></div>
+          <div id="panel-outline" class="screenshot-panel" role="tabpanel" aria-labelledby="tab-outline" tabindex="0" hidden><picture><source media="(max-width: 600px)" srcset="./assets/task-outline-mobile.png"><img class="app-screenshot" src="./assets/task-outline-desktop.png" width="1440" height="1500" alt="The real outline with the Handle payment retries step open and two of its four Done when items met."></picture></div>
+          <div id="panel-checks" class="screenshot-panel" role="tabpanel" aria-labelledby="tab-checks" tabindex="0" hidden><picture><source media="(max-width: 600px)" srcset="./assets/step-checks-mobile.png"><img class="app-screenshot" src="./assets/step-checks-desktop.png" width="1440" height="1200" alt="The Checks tab: 12 checkout tests passed, followed by individual verdicts against all four Done when items."></picture></div>
+        </div>
+      </div>
+      <div class="product-caption"><p id="view-caption">See what’s done, what’s running, and what comes next.</p><span class="map-hint">Scroll to explore the map <span aria-hidden="true">↔</span></span><span class="caption-count"><span class="status-dot"></span> 4 done <span class="blue-dot"></span> 2 running</span></div>
+    </section>
+
+    <section class="workflow wrap" id="how-it-works" aria-labelledby="workflow-title">
+      <div class="section-heading"><div><p class="eyebrow">LESS BABYSITTING. MORE BUILDING.</p><h2 id="workflow-title">Keep the work moving.<br><span>Keep your place.</span></h2></div><p>Big tasks need more than a long chat.<br>Give the work a shape, let your agents run,<br class="desktop-break"> and see what actually holds up.</p></div>
+      <div class="feature-grid">
+        <article class="feature-card"><div class="card-heading"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#outline"/></svg><span>01 / PLAN</span></div><h3>A plan you can follow.</h3><p>Turn a task into an outline of steps. Write it yourself, or let Codex draft it from your goal.</p><div class="mini-outline" aria-hidden="true"><div><span class="mini-check">✓</span>Plan the payment flow</div><div class="indented"><span class="mini-check">✓</span>Build the Apple Pay button</div><div class="indented"><span class="mini-running"></span>Handle payment retries</div></div></article>
+        <article class="feature-card"><div class="card-heading"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#map"/></svg><span>02 / RUN</span></div><h3>Parallel, with a plan.</h3><p>Give steps to Codex, Claude Code, or yourself. The map makes dependencies and running work clear.</p><div class="mini-map" aria-hidden="true"><span class="mini-node complete">Plan <b>✓</b></span><span class="connector"></span><div class="parallel-nodes"><span class="mini-node active">Codex <i></i></span><span class="mini-node active">Claude Code <i></i></span></div></div></article>
+        <article class="feature-card"><div class="card-heading"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#check"/></svg><span>03 / CHECK</span></div><h3>Give “done” a definition.</h3><p>Add Done when items and checks. Test the code and check the work against what you asked for.</p><div class="mini-verdict" aria-hidden="true"><div><span>Work against this step</span><b>Passed</b></div><p><span>✓</span> Keep card checkout available</p><p><span>✓</span> Prevent duplicate submissions</p></div></article>
+        <article class="feature-card compact"><div class="small-feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#branch"/></svg></div><h3>Room for every task.</h3><p>Keep tasks inside projects, each with its own branch and folder. Work stays in its place.</p></article>
+        <article class="feature-card compact"><div class="small-feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#timeline"/></svg></div><h3>A timeline, not a mystery.</h3><p>Follow progress notes, commands, checks, and changed files. Pick up the thread when you come back.</p></article>
+        <article class="feature-card compact"><div class="small-feature-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#merge"/></svg></div><h3>All the way to review.</h3><p>Make human review and merge requests part of the plan. The last step matters as much as the first.</p></article>
+      </div>
+    </section>
+
+    <section class="local-section wrap" id="open-source" aria-labelledby="local-title">
+      <div class="local-copy"><p class="eyebrow"><span class="status-dot"></span> YOUR MACHINE. YOUR AGENTS.</p><h2 id="local-title">At home in your<br>own environment.</h2><p>Your repositories, logins, connectors, and skills.<br> Shepherd runs the real Codex and Claude Code you already use, right on your machine.</p><a class="text-link" data-repo href="#start">Explore the source <span aria-hidden="true">↗</span></a></div>
+      <div class="local-facts"><div><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#device"/></svg><div><h3>There is no Shepherd server.</h3><p>Nothing goes to us. Your agents contact their own services, just as they do today.</p></div></div><div><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#lock"/></svg><div><h3>Your logins. Your control.</h3><p>No Shepherd account, hosted database, or telemetry. Use your own agent logins.</p></div></div><div><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#code"/></svg><div><h3>Free, open source, MIT.</h3><p>Read it, change it, make it yours. Built to be a tool you can understand.</p></div></div></div>
+    </section>
+
+    <section class="start-section wrap" id="start" aria-labelledby="start-title">
+      <div class="finish-line" aria-hidden="true"><span></span><i>✓</i><span></span><i>✓</i><span></span><img src="./assets/sheep.svg" width="42" height="42" alt=""><span></span><i class="empty"></i><span></span></div>
+      <p class="eyebrow">A CLEARER PATH FROM IDEA TO DONE.</p>
+      <h2 id="start-title">Your next big task<br>starts here.</h2>
+      <div class="install-command"><span class="prompt" aria-hidden="true">$</span><code>npx shepherd-agents</code><button class="copy-button" data-copy aria-label="Copy install command"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="#copy"/></svg><span>Copy</span></button></div>
+      <p class="requirements">macOS first · Node.js 22.12+ · Git<br>Codex or Claude Code installed and signed in.</p>
+      <p class="platform-note">Linux works with the CLIs; Mac-only features stay on macOS.<br>Windows is not supported yet.</p>
+      <a class="text-link" data-repo="readme" href="#start">Read the setup docs <span aria-hidden="true">↗</span></a>
+    </section>
+  </main>
+  <footer class="site-footer wrap"><a class="brand" href="#"><img src="./assets/sheep.svg" width="26" height="26" alt="">Shepherd</a><span>A little structure. A lot further.</span><div><a data-repo href="#open-source">GitHub <span aria-hidden="true">↗</span></a><a data-repo="readme" href="#start">Docs <span aria-hidden="true">↗</span></a><span>MIT © The Shepherd authors</span></div></footer>
+  <p class="copy-status" role="status" aria-live="polite"></p>
+  <svg class="svg-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></symbol>
+    <symbol id="outline" viewBox="0 0 24 24"><path d="M9 5h12M9 12h12M13 19h8M3 5h1M3 12h1M7 19h1"/></symbol>
+    <symbol id="map" viewBox="0 0 24 24"><rect x="2" y="9" width="5" height="6" rx="1"/><rect x="17" y="2" width="5" height="6" rx="1"/><rect x="17" y="16" width="5" height="6" rx="1"/><path d="M7 12h5V5h5M12 12v7h5"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"/><rect x="3" y="3" width="18" height="18" rx="5"/></symbol>
+    <symbol id="branch" viewBox="0 0 24 24"><circle cx="6" cy="4" r="2"/><circle cx="6" cy="20" r="2"/><circle cx="18" cy="6" r="2"/><path d="M6 6v12M18 8a8 8 0 0 1-8 8H6"/></symbol>
+    <symbol id="timeline" viewBox="0 0 24 24"><circle cx="5" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><path d="M5 7v10M11 5h10M11 12h7M11 19h10"/></symbol>
+    <symbol id="merge" viewBox="0 0 24 24"><circle cx="7" cy="4" r="2"/><circle cx="7" cy="20" r="2"/><circle cx="19" cy="4" r="2"/><path d="M7 6v12M19 6v3a6 6 0 0 1-6 6H7"/></symbol>
+    <symbol id="device" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5m-5-12 3-3m-3 3 3 3m7-6-3 6"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></symbol>
+    <symbol id="code" viewBox="0 0 24 24"><path d="m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18"/></symbol>
+    <symbol id="github" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03a9.6 9.6 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.76c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></symbol>
+  </svg>
+</body>
+</html>
