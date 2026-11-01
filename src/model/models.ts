@@ -38,6 +38,7 @@ export const EFFORT_LABEL: Record<Effort, string> = {
 const CLAUDE_EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 
 export const CLAUDE_MODELS: ModelChoice[] = [
+  { id: "fable", name: "Fable", hint: "The strongest. Slower and costs more.", efforts: CLAUDE_EFFORTS },
   { id: "opus", name: "Opus", hint: "Very capable, for hard steps.", efforts: CLAUDE_EFFORTS },
   { id: "sonnet", name: "Sonnet", hint: "Fast and capable. Good for most steps.", efforts: CLAUDE_EFFORTS },
   { id: "haiku", name: "Haiku", hint: "The fastest and cheapest, for simple steps.", efforts: CLAUDE_EFFORTS },
@@ -69,7 +70,7 @@ export function modelName(id: string, catalog: ModelCatalog | null, provider: "c
   return models?.find((model) => model.id === id)?.name ?? id;
 }
 
-/** The model and thinking a step picked, such as "Example Codex Current · Max", or "" when it uses the defaults. */
+/** The model and thinking a step picked, such as "GPT-6-Astra · Max", or "" when it uses the defaults. */
 export function choiceLabel(task: Pick<Task, "runner" | "agentId" | "model" | "effort">, catalog: ModelCatalog | null): string {
   const provider = providerOf(task);
   if (!provider || (!task.model && !task.effort)) return "";

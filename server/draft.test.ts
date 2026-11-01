@@ -38,9 +38,9 @@ describe("codexError", () => {
   it("says what the API said, and whether it refused the model", () => {
     const stderr = [
       "2026-11-01T04:27:00.000Z ERROR codex_core: stream failed",
-      'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'example-codex-previous\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}',
+      'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6.1-sol\' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}',
     ].join("\n");
-    expect(codexError(stderr)).toEqual({ text: "The 'example-codex-previous' model is not supported when using Codex with a ChatGPT account.", refusedModel: true });
+    expect(codexError(stderr)).toEqual({ text: "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.", refusedModel: true });
     expect(codexError("Not logged in\n")).toEqual({ text: "Not logged in", refusedModel: false });
     expect(codexError("")).toEqual({ text: "", refusedModel: false });
   });
@@ -48,8 +48,8 @@ describe("codexError", () => {
 
 describe("askArgs", () => {
   it("asks read-only with the chosen model and thinking, or Codex's own default when there is none", () => {
-    const picked = askArgs("Plan it", "/tmp/answer.txt", { model: "example-codex-fast", effort: "low" });
-    expect(picked.slice(0, 5)).toEqual(["exec", "-m", "example-codex-fast", "-c", 'model_reasoning_effort="low"']);
+    const picked = askArgs("Plan it", "/tmp/answer.txt", { model: "gpt-6-luna", effort: "low" });
+    expect(picked.slice(0, 5)).toEqual(["exec", "-m", "gpt-6-luna", "-c", 'model_reasoning_effort="low"']);
     expect(picked).toEqual(expect.arrayContaining(["--sandbox", "read-only", "--ephemeral", "-o", "/tmp/answer.txt"]));
     expect(picked.at(-1)).toBe("Plan it");
     expect(askArgs("Plan it", "/tmp/answer.txt", {})).not.toContain("-m");

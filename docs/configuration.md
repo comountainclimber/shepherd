@@ -6,7 +6,7 @@
 
 Open the gear to see which agents Shepherd can use and choose the workspace for new projects. An existing repository stays in the folder you selected. A workspace saved in Settings takes priority over the launcher's default new-project folder.
 
-A step's **Who does it** selects Codex, Claude Code or you. Agent steps can select Model and Thinking. **Default** follows that agent's settings. Codex's available list comes from its model cache; a configured model no longer in the list falls back to its first current model, with an explanation in the picker. Claude Code offers a fixed Opus, Sonnet and Haiku list. Switching an agent clears the model choice and starts a fresh conversation, keeping its branch's work.
+A step's **Who does it** selects Codex, Claude Code or you. Agent steps can select Model and Thinking. **Default** follows that agent's settings. Codex's available list comes from its model cache; a configured model no longer in the list falls back to its first current model, with an explanation in the picker. Claude Code offers a fixed Fable, Opus, Sonnet and Haiku list. Switching an agent clears the model choice and starts a fresh conversation, keeping its branch's work.
 
 The Draft box has its own Model and Thinking, remembered in this browser. Checklist drafting and work checks use your Codex default. More options on a step controls checks, review, independent judging, push-before-run, background and Done when. See [using Shepherd](usage.md) and [optional checks](checks.md) for the exact rules.
 

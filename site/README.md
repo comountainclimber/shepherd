@@ -16,7 +16,7 @@ Open `http://localhost:5199/`. All fonts, artwork, scripts and images are local.
 node site/scripts/sync-repository.mjs
 ```
 
-The page's links also work without JavaScript. The Pages workflow refreshes them from the package automatically. It inserts the deployed Pages address into the Open Graph image URL and canonical metadata in the staged artifact, so the page needs no hard-coded public hostname.
+The page's links also work without JavaScript.
 
 ## Social images
 
@@ -40,10 +40,8 @@ npx tsc -b && npx vitest run && npm run build
 
 Final evidence is in `shots/`: 1440px, 1024px and 390px page captures, the wide hero, copy feedback, product Checks, FAQ and browser-check results. The screenshot helper caps a full-page capture at 8000px. `launch-390.png` joins that capture with the overlapping footer capture at the original scale (1272px overlap, maximum channel difference 2/255); `launch-390-top.png` preserves the raw first capture. The complete image includes the footer. The browser access host was unavailable, so these captures use Shepherd's helper.
 
-The complete page, after requesting every mobile and desktop screenshot variant, measured about 1.22 MB in browser resource body bytes, all same-origin. The staged Pages artifact, including both social images, is about 1.44 MB. The workflow fails if that artifact reaches 2 MB. Evidence and experiments are excluded from the published artifact.
+The complete page, after requesting every mobile and desktop screenshot variant, measured about 1.22 MB in browser resource body bytes, all same-origin. The published files, including both social images, are about 1.44 MB.
 
-## Pages
+## Hosting
 
-`.github/workflows/pages.yml` publishes on pushes to `main`, and supports a manual run. In repository settings, enable Actions and select **GitHub Actions** under **Pages → Build and deployment → Source**. Permit the workflow to deploy to the `github-pages` environment and allow `main` in that environment's deployment branch rules. The workflow comments repeat these requirements.
-
-Only the static launch files are staged. Concepts, editorial review captures, final screenshots, verification scripts, tests, this document and the creative brief are excluded. The exact staging command was exercised locally, including metadata substitution, exclusions and the size check. Hosted deployment will happen only when the owner configures the repository and runs the workflow.
+Vercel serves this folder, with no build step, and deploys every push to `main`. The project's root directory is `site`. `.vercelignore` keeps the concepts, review captures, final screenshots, verification scripts, tests, this document and the creative brief off the site. The Open Graph image and canonical address in `index.html` name the production address, since link previews need absolute URLs.

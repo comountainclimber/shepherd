@@ -209,14 +209,14 @@ describe("fromSaved", () => {
     expect(unavailable).toEqual(["gpt-elsewhere"]);
   });
 
-  it("keeps public Claude choices and falls back for an unavailable saved model", () => {
+  it("keeps Claude Code's choices and falls back for a saved model it does not offer", () => {
     const claude: SavedStep = {
       ...saved,
-      steps: ["opus", "sonnet", "haiku", "example-claude-private"].map((model) => ({ ...saved.steps[0]!, agentId: "agent-claude", model })),
+      steps: ["fable", "opus", "sonnet", "haiku", "retired-model"].map((model) => ({ ...saved.steps[0]!, agentId: "agent-claude", model })),
     };
     const { steps, unavailable } = fromSaved(claude, P, 0, catalog, (index) => `new-${index}`);
-    expect(steps.map((entry) => entry.task.model)).toEqual(["opus", "sonnet", "haiku", undefined]);
-    expect(unavailable).toEqual(["example-claude-private"]);
+    expect(steps.map((entry) => entry.task.model)).toEqual(["fable", "opus", "sonnet", "haiku", undefined]);
+    expect(unavailable).toEqual(["retired-model"]);
   });
 
   it("indents the block from where it is added, no deeper than the outline goes", () => {

@@ -37,37 +37,37 @@ describe("codexModels", () => {
 
 describe("codexDefault", () => {
   it("reads the model and thinking at the top of config.toml, not inside a section", () => {
-    const toml = ['model = "example-codex-previous"', "model_reasoning_effort = 'high'", "", "[profiles.fast]", 'model = "example-codex-fast"'].join("\n");
-    expect(codexDefault(toml)).toEqual({ model: "example-codex-previous", effort: "high" });
-    expect(codexDefault('[profiles.fast]\nmodel = "example-codex-fast"')).toEqual({ model: null, effort: null });
+    const toml = ['model = "gpt-6.1-sol"', "model_reasoning_effort = 'high'", "", "[profiles.fast]", 'model = "gpt-6-luna"'].join("\n");
+    expect(codexDefault(toml)).toEqual({ model: "gpt-6.1-sol", effort: "high" });
+    expect(codexDefault('[profiles.fast]\nmodel = "gpt-6-luna"')).toEqual({ model: null, effort: null });
   });
 });
 
 describe("standIn", () => {
   const models: ModelChoice[] = [
     { id: "gpt-old", name: "GPT-Old", hint: "Older.", efforts: ["low"], older: true },
-    { id: "example-codex-current", name: "Example Codex Current", hint: "", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+    { id: "gpt-6-astra", name: "GPT-6-Astra", hint: "", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
   ];
 
   it("keeps a default Codex still offers, or one Shepherd cannot check", () => {
-    expect(standIn({ model: "example-codex-current", effort: "high" }, models)).toEqual({ model: "example-codex-current", effort: "high" });
+    expect(standIn({ model: "gpt-6-astra", effort: "high" }, models)).toEqual({ model: "gpt-6-astra", effort: "high" });
     expect(standIn({ model: null, effort: "high" }, models)).toEqual({ model: null, effort: "high" });
-    expect(standIn({ model: "example-codex-previous", effort: "high" }, [])).toEqual({ model: "example-codex-previous", effort: "high" });
+    expect(standIn({ model: "gpt-6.1-sol", effort: "high" }, [])).toEqual({ model: "gpt-6.1-sol", effort: "high" });
   });
 
   it("puts the first current model in place of one Codex stopped offering, and keeps its thinking when it can", () => {
-    expect(standIn({ model: "example-codex-previous", effort: "high" }, models)).toEqual({ model: "example-codex-current", effort: "high", unavailable: "example-codex-previous" });
-    expect(standIn({ model: "example-codex-previous", effort: "ultra" }, models)).toEqual({ model: "example-codex-current", effort: "medium", unavailable: "example-codex-previous" });
+    expect(standIn({ model: "gpt-6.1-sol", effort: "high" }, models)).toEqual({ model: "gpt-6-astra", effort: "high", unavailable: "gpt-6.1-sol" });
+    expect(standIn({ model: "gpt-6.1-sol", effort: "ultra" }, models)).toEqual({ model: "gpt-6-astra", effort: "medium", unavailable: "gpt-6.1-sol" });
   });
 });
 
 describe("agentChoice", () => {
   it("names the stand-in only for steps on the default", () => {
-    const own = { model: "example-codex-current", effort: "high" as const, unavailable: "example-codex-previous" };
-    expect(agentChoice({}, own)).toEqual({ model: "example-codex-current", effort: "high" });
-    expect(agentChoice({ effort: "low" }, own)).toEqual({ model: "example-codex-current", effort: "low" });
-    expect(agentChoice({ model: "example-codex-fast" }, own)).toEqual({ model: "example-codex-fast" });
-    expect(agentChoice({}, { model: "example-codex-current", effort: "high" })).toEqual({});
+    const own = { model: "gpt-6-astra", effort: "high" as const, unavailable: "gpt-6.1-sol" };
+    expect(agentChoice({}, own)).toEqual({ model: "gpt-6-astra", effort: "high" });
+    expect(agentChoice({ effort: "low" }, own)).toEqual({ model: "gpt-6-astra", effort: "low" });
+    expect(agentChoice({ model: "gpt-6-luna" }, own)).toEqual({ model: "gpt-6-luna" });
+    expect(agentChoice({}, { model: "gpt-6-astra", effort: "high" })).toEqual({});
   });
 });
 
@@ -77,9 +77,9 @@ describe("agentCommand", () => {
     expect(plain).not.toContain("-m");
     expect(plain.join(" ")).not.toContain("model_reasoning_effort");
 
-    const picked = agentCommand("codex", "Do it", "session-1", { model: "example-codex-current", effort: "max" }).args;
+    const picked = agentCommand("codex", "Do it", "session-1", { model: "gpt-6-astra", effort: "max" }).args;
     expect(picked.slice(0, 3)).toEqual(["exec", "resume", "session-1"]);
-    expect(picked).toEqual(expect.arrayContaining(["-m", "example-codex-current", "-c", 'model_reasoning_effort="max"']));
+    expect(picked).toEqual(expect.arrayContaining(["-m", "gpt-6-astra", "-c", 'model_reasoning_effort="max"']));
     expect(picked.at(-1)).toBe("Do it");
   });
 

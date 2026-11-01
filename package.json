@@ -41,11 +41,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/shepherd"
+    "url": "https://github.com/comountainclimber/shepherd"
   },
-  "homepage": "https://github.com/OWNER/shepherd#readme",
+  "homepage": "https://github.com/comountainclimber/shepherd#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/shepherd/issues"
+    "url": "https://github.com/comountainclimber/shepherd/issues"
   },
   "engines": {
     "node": ">=22.12.0"

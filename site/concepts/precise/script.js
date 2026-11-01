@@ -1,4 +1,4 @@
-const repository = 'https://github.com/OWNER/shepherd';
+const repository = 'https://github.com/comountainclimber/shepherd';
 
 document.querySelectorAll('[data-repo]').forEach((link) => {
   link.href = repository + (link.dataset.repo === 'readme' ? '#readme' : '');

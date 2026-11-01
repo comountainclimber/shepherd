@@ -92,6 +92,5 @@ Use the issue templates for bugs and feature requests. Report vulnerabilities
 privately as described in [SECURITY.md](SECURITY.md), and follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-Repository links are defined in `package.json`. Before publishing the project,
-replace its `OWNER` placeholders with the GitHub owner and enable private
-vulnerability reporting in the repository's security settings.
+Repository links are defined in `package.json`. After changing them, run
+`node site/scripts/sync-repository.mjs` to update the launch page's links.
