@@ -9,16 +9,37 @@ describe("parseDraft", () => {
   it("reads the steps out of a reply with prose and a code fence around them", () => {
     const reply = 'Here is the plan:\n```json\n{"steps":[{"name":" Build it ","prompt":"Make it.","depth":1},{"name":"Test it","prompt":"","depth":1}]}\n```';
     expect(parseDraft(reply)).toEqual([
-      { name: "Build it", prompt: "Make it.", depth: 0 },
-      { name: "Test it", prompt: "", depth: 1 },
+      { name: "Build it", prompt: "Make it.", depth: 0, runner: "agent", acceptance: [] },
+      { name: "Test it", prompt: "", depth: 1, runner: "agent", acceptance: [] },
     ]);
   });
 
   it("drops steps with no name and treats an odd depth as the top level", () => {
     const reply = JSON.stringify({ steps: [{ name: "A", depth: 0 }, { prompt: "nameless" }, { name: "B", depth: 7 }] });
     expect(parseDraft(reply)).toEqual([
-      { name: "A", prompt: "", depth: 0 },
-      { name: "B", prompt: "", depth: 0 },
+      { name: "A", prompt: "", depth: 0, runner: "agent", acceptance: [] },
+      { name: "B", prompt: "", depth: 0, runner: "agent", acceptance: [] },
+    ]);
+  });
+
+  it("keeps who does the step, Done when lines and a trimmed agent check command", () => {
+    expect(parseDraft(JSON.stringify({ steps: [
+      { name: "Build", runner: "agent", acceptance: [" Works ", "", null, 3, "  ", "Handles input", "Loads", "Saves", "Too many"], checkCommand: " npm test \n" },
+      { name: "Try it", runner: "human", acceptance: [" Looks right "], checkCommand: "must not run" },
+    ] }))).toEqual([
+      { name: "Build", prompt: "", depth: 0, runner: "agent", acceptance: ["Works", "Handles input", "Loads", "Saves"], checkCommand: "npm test" },
+      { name: "Try it", prompt: "", depth: 0, runner: "human", acceptance: ["Looks right"] },
+    ]);
+  });
+
+  it("uses defaults for malformed optional values without losing the steps", () => {
+    for (const bad of [null, 42, true, {}, [], "unexpected"]) {
+      expect(parseDraft(JSON.stringify({ steps: [null, false, { name: "Build", runner: bad, acceptance: bad, checkCommand: bad }] }))).toEqual([
+        { name: "Build", prompt: "", depth: 0, runner: "agent", acceptance: [], ...(typeof bad === "string" ? { checkCommand: bad } : {}) },
+      ]);
+    }
+    expect(parseDraft(JSON.stringify({ steps: [{ name: "Build", checkCommand: " \n " }] }))).toEqual([
+      { name: "Build", prompt: "", depth: 0, runner: "agent", acceptance: [] },
     ]);
   });
 

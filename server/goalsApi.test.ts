@@ -183,12 +183,12 @@ describe("goal API", () => {
   });
 
   it("drafts from the selected task's text or an explicit prompt without invoking an agent", async () => {
-    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([{ name: "Test it", prompt: "Test checkout", depth: 0 }]);
+    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([{ name: "Test it", prompt: "Test checkout", depth: 0, runner: "agent", acceptance: ["Checkout works"], checkCommand: "npm test" }, { name: "Try it", prompt: "Try checkout", depth: 1, runner: "human", acceptance: ["Looks right"] }]);
     const { request } = await server();
     const created = await request("goals", { project: "Workspace", name: "Timeout", goal: "Fix checkout" });
     const result = await request("draft", { goal: created.body.goal.id });
     expect(result.status).toBe(200);
-    expect(result.body.steps).toHaveLength(1);
+    expect(result.body.steps).toEqual(await draft.mock.results[0]?.value);
     expect(draft.mock.calls[0]?.[0]).toBe("Fix checkout");
     expect((await request("draft", { project: "Workspace", goal: "Timeout", prompt: "Investigate first" })).status).toBe(200);
     expect(draft.mock.calls[1]?.[0]).toBe("Investigate first");
