@@ -40,19 +40,16 @@ function write(folder: string, file: string, text: string) {
 async function conflictingSteps() {
   const { repo, worktrees } = await project();
   const task = await openGoalWorktree(repo, worktrees, "goal", "combine");
-  const first = await openWorktree(repo, worktrees, "first", "first", undefined, { start: task.branch, prefix: "shepherd-step" });
   const step = await openWorktree(repo, worktrees, "second", "second", undefined, { start: task.branch, prefix: "shepherd-step" });
   const later = await openWorktree(repo, worktrees, "later", "later", undefined, { start: task.branch, prefix: "shepherd-step" });
-  write(first.folder, "shared.txt", "left\n");
-  write(first.folder, "accepted.txt", "accepted\n");
-  await commitAll(first.folder, ["First"], AGENT);
+  write(task.folder, "shared.txt", "left\n");
+  write(task.folder, "accepted.txt", "accepted\n");
+  await commitAll(task.folder, ["Accepted work"], AGENT);
   write(step.folder, "shared.txt", "right\n");
   write(step.folder, "own.txt", "own\n");
   await commitAll(step.folder, ["Second"], AGENT);
   write(later.folder, "later.txt", "later\n");
   await commitAll(later.folder, ["Later"], AGENT);
-  await mergeBranch(task.folder, first.branch, "Accept first", task.branch);
-  await markAccepted(repo, first.branch);
   return { repo, task, step, later };
 }
 

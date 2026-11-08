@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export class GitError extends Error {}
@@ -214,12 +214,25 @@ async function conflicts(cwd: string): Promise<string[]> {
 }
 
 export async function mergeConflict(folder: string): Promise<{ source: string; files: string[] } | null> {
+  if (!process.env.GIT_DIR && !process.env.GIT_WORK_TREE) {
+    try {
+      let directory = path.join(folder, ".git");
+      if (statSync(directory).isFile()) {
+        const pointer = /^gitdir: (.+)\r?\n?$/.exec(readFileSync(directory, "utf8"));
+        if (!pointer) throw new Error("Not a gitdir pointer");
+        directory = path.resolve(folder, pointer[1]!);
+      }
+      if (!existsSync(path.join(directory, "MERGE_HEAD"))) return null;
+    } catch {
+      // Let Git resolve subfolders and nonstandard repository layouts.
+    }
+  }
   const head = await git(folder, ["rev-parse", "--verify", "-q", "MERGE_HEAD"]);
   if (head.code !== 0) return null;
   const sha = head.stdout.trim();
   const name = await git(folder, ["name-rev", "--name-only", "--no-undefined", "--refs=refs/heads/*", sha]);
   const source = name.code === 0 ? name.stdout.trim() : await must(folder, ["rev-parse", "--short", sha]);
-  const markers = await git(folder, ["grep", "--untracked", "--exclude-standard", "-I", "-l", "-z", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--"]);
+  const markers = await git(folder, ["grep", "--threads=1", "--untracked", "--exclude-standard", "-I", "-l", "-z", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--"]);
   const files = [...new Set([...await conflicts(folder), ...markers.stdout.split("\0").filter(Boolean)])].sort();
   return { source, files };
 }
