@@ -25,24 +25,38 @@ export interface DraftStep {
 export const MAX_DRAFT_STEPS = 12;
 const DRAFT_TIMEOUT_MS = 240_000;
 
+export const MAP_RULES = [
+  "- Each agent step is one sitting of work that ends in something checkable: a passing test, a changed page, a file.",
+  "- Steps that touch different files and need nothing from each other sit side by side, at depth 1 under the step they both need. They run after that step and at the same time as each other.",
+  "- A step that needs several earlier steps comes after them at the left edge (depth 0), so it waits for all of them. The first step has depth 0.",
+  "- Every agent step has one to three Done when lines a reviewer can verify, and a check command when the repository has tests.",
+  "- When a person has to look (a page, copy, a product call), the map ends with a step for a person that says what to try.",
+  "- No step only plans or only reviews unless the goal asks for it.",
+  "- Each step's name is a verb and the thing it changes, under 60 characters.",
+  "- Three to eight steps; one step only when the goal is a single small change.",
+].join("\n");
+
 export function draftPrompt(goal: string): string {
   return [
-    "Plan the goal below as steps for coding agents. Do not change any files; only plan.",
+    "Draft a map for the goal below. Do not change any files; only plan.",
     "",
-    "How the steps run: each step is done by one agent (Codex or Claude Code) on its own git branch of the repository in the current directory.",
-    "A step starts with the work of the steps before it merged in, and their final reports in its prompt.",
+    "How the steps run: each agent step is done by one agent (Codex or Claude Code) on its own git branch of the repository in the current directory. A human step is done by a person.",
+    "A step starts with the work of the steps it depends on merged in, and their final reports in its prompt. Outline depth sets which steps it waits for, as described in the rules below.",
     "If the repository already has code, look around first so the steps fit what is there.",
     "",
     "Goal:",
     goal.trim(),
     "",
     "Rules:",
-    "- 2 to 8 steps. Fewer is better. Do not add steps nobody needs, and do not add a step that only plans or only reviews unless the goal asks for it.",
-    "- Steps run top to bottom. A step with depth 1 runs at the same time as the other depth-1 steps directly under the depth-0 step before them, after that step. The next depth-0 step waits for all of them. Use depth 1 only for work that is truly independent; otherwise use depth 0.",
-    '- "name": a short imperative title, under 60 characters.',
-    '- "prompt": what the agent should do and how it can tell it is done, in 1 to 4 sentences, written to the agent.',
+    MAP_RULES,
     "",
-    'Reply with only this JSON and nothing else, no code fence: {"steps":[{"name":"...","prompt":"...","depth":0}]}',
+    "Reply fields:",
+    '- "prompt": what to do, in 1 to 4 sentences, written to the agent or person doing the step.',
+    '- "runner": "agent" or "human"; default to "agent".',
+    '- "acceptance": an array of the step\'s Done when lines, each stating an outcome a reviewer can verify.',
+    '- "checkCommand": the repository command that checks the agent\'s work; use an empty string when there are no tests. It does not apply to a person, so use an empty string for a human step.',
+    "",
+    'Reply with only this JSON and nothing else, no code fence: {"steps":[{"name":"...","prompt":"...","depth":0,"runner":"agent","acceptance":["..."],"checkCommand":""}]}',
   ].join("\n");
 }
 
