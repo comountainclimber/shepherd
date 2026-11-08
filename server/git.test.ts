@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { changes, commitAll, ensureRepo, inspectRepo, mergeBranch, markAccepted, openGoalWorktree, openWorktree, prepareRun, pushTaskBranch, taskPushRemote } from "./git";
+import { changes, commitAll, ensureRepo, GitError, inspectRepo, mergeBranch, mergeConflict, MergeConflictError, markAccepted, openGoalWorktree, openWorktree, prepareRun, pushTaskBranch, taskPushRemote } from "./git";
 
 const AGENT = { name: "Codex", email: "codex@shepherd.local" };
 let temps: string[] = [];
@@ -35,6 +35,22 @@ async function project() {
 
 function write(folder: string, file: string, text: string) {
   writeFileSync(path.join(folder, file), text);
+}
+
+async function conflictingSteps() {
+  const { repo, worktrees } = await project();
+  const task = await openGoalWorktree(repo, worktrees, "goal", "combine");
+  const step = await openWorktree(repo, worktrees, "second", "second", undefined, { start: task.branch, prefix: "shepherd-step" });
+  const later = await openWorktree(repo, worktrees, "later", "later", undefined, { start: task.branch, prefix: "shepherd-step" });
+  write(task.folder, "shared.txt", "left\n");
+  write(task.folder, "accepted.txt", "accepted\n");
+  await commitAll(task.folder, ["Accepted work"], AGENT);
+  write(step.folder, "shared.txt", "right\n");
+  write(step.folder, "own.txt", "own\n");
+  await commitAll(step.folder, ["Second"], AGENT);
+  write(later.folder, "later.txt", "later\n");
+  await commitAll(later.folder, ["Later"], AGENT);
+  return { repo, task, step, later };
 }
 
 describe("ensureRepo", () => {
@@ -176,9 +192,99 @@ describe("changes", () => {
     write(task.folder, "shared.txt", "right\n");
     await commitAll(task.folder, ["Right"], AGENT);
 
-    await expect(prepareRun(task, [upstream.branch], AGENT)).rejects.toThrow(/both changed shared\.txt/);
+    const failure = prepareRun(task, [upstream.branch], AGENT);
+    await expect(failure).rejects.toThrow(/both changed shared\.txt/);
+    await expect(failure).rejects.toBeInstanceOf(MergeConflictError);
+    await expect(failure).rejects.toMatchObject({ files: ["shared.txt"] });
     expect(gitOut(task.folder, "status", "--porcelain")).toBe("");
     expect(readFileSync(path.join(task.folder, "shared.txt"), "utf8")).toBe("right\n");
+    expect(await mergeConflict(task.folder)).toBeNull();
+  });
+
+  it("keeps the first conflict for the agent and merges the resolved step with only its own diff", async () => {
+    const { repo, task, step, later } = await conflictingSteps();
+    expect(await prepareRun(step, [task.branch, later.branch], AGENT, { keepConflicts: true })).toEqual([task.branch]);
+    expect(await mergeConflict(step.folder)).toEqual({ source: task.branch, files: ["shared.txt"] });
+    const marked = readFileSync(path.join(step.folder, "shared.txt"), "utf8");
+    expect(marked).toContain("<<<<<<< HEAD\nright\n");
+    expect(marked).toContain(`>>>>>>> ${task.branch}`);
+    expect(existsSync(path.join(step.folder, "later.txt"))).toBe(false);
+    const source = gitOut(task.folder, "rev-parse", "HEAD");
+    expect(gitOut(repo, "rev-parse", `refs/shepherd-base/${step.branch}`)).toBe(source);
+    const before = gitOut(step.folder, "rev-parse", "HEAD");
+    const status = gitOut(step.folder, "status", "--porcelain");
+    const failure = commitAll(step.folder, ["Still conflicted"], AGENT);
+    await expect(failure).rejects.toBeInstanceOf(MergeConflictError);
+    await expect(failure).rejects.toMatchObject({ files: ["shared.txt"] });
+    expect(gitOut(step.folder, "rev-parse", "HEAD")).toBe(before);
+    expect(gitOut(step.folder, "status", "--porcelain")).toBe(status);
+
+    write(step.folder, "shared.txt", "left\nright\n");
+    // Git keeps the path unmerged until the agent stages its resolution.
+    expect((await mergeConflict(step.folder))?.files).toEqual(["shared.txt"]);
+    await expect(commitAll(step.folder, ["Unstaged resolution"], AGENT)).rejects.toBeInstanceOf(MergeConflictError);
+    gitOut(step.folder, "add", "shared.txt");
+    expect(await mergeConflict(step.folder)).toEqual({ source: task.branch, files: [] });
+    expect(await commitAll(step.folder, ["Combine the steps"], AGENT)).toBe(true);
+    expect(gitOut(step.folder, "show", "-s", "--format=%P").split(" ")).toEqual([before, source]);
+    expect(await mergeConflict(step.folder)).toBeNull();
+    const diff = await changes(step.folder, step.branch);
+    expect(diff.files).toEqual(["own.txt", "shared.txt"]);
+    expect(diff.diffs.find((file) => file.path === "shared.txt")?.text).toBe("@@ -1 +1,2 @@\n left\n+right");
+    await mergeBranch(task.folder, step.branch, "Accept combined step", task.branch);
+    expect(readFileSync(path.join(task.folder, "shared.txt"), "utf8")).toBe("left\nright\n");
+  });
+
+  it("preserves a stopped resolution without committing or merging another source", async () => {
+    const { task, step, later } = await conflictingSteps();
+    await prepareRun(step, [task.branch], AGENT, { keepConflicts: true });
+    write(step.folder, "shared.txt", "left\nright\n>>>>>>> unfinished\n");
+    gitOut(step.folder, "add", "shared.txt");
+    expect(gitOut(step.folder, "diff", "--name-only", "--diff-filter=U")).toBe("");
+    expect(await mergeConflict(step.folder)).toEqual({ source: task.branch, files: ["shared.txt"] });
+    const before = gitOut(step.folder, "rev-parse", "HEAD");
+    const status = gitOut(step.folder, "status", "--porcelain");
+    const marked = readFileSync(path.join(step.folder, "shared.txt"), "utf8");
+    expect(await prepareRun(step, [later.branch], AGENT, { keepConflicts: true })).toEqual([]);
+    const failure = prepareRun(step, [later.branch], AGENT);
+    await expect(failure).rejects.toBeInstanceOf(MergeConflictError);
+    await expect(failure).rejects.toMatchObject({ files: ["shared.txt"] });
+    await expect(commitAll(step.folder, ["Markers are staged"], AGENT)).rejects.toBeInstanceOf(MergeConflictError);
+    await expect(mergeBranch(step.folder, later.branch, "Leave resolution alone")).rejects.toBeInstanceOf(MergeConflictError);
+    expect(gitOut(step.folder, "rev-parse", "HEAD")).toBe(before);
+    expect(gitOut(step.folder, "status", "--porcelain")).toBe(status);
+    expect(readFileSync(path.join(step.folder, "shared.txt"), "utf8")).toBe(marked);
+    expect(existsSync(path.join(step.folder, "later.txt"))).toBe(false);
+
+    write(step.folder, "shared.txt", "left\nright\n");
+    gitOut(step.folder, "add", "shared.txt");
+    expect(await prepareRun(step, [later.branch], AGENT, { keepConflicts: true })).toEqual([]);
+    await expect(prepareRun(step, [later.branch], AGENT)).rejects.toMatchObject({ files: [] });
+    expect(gitOut(step.folder, "rev-parse", "HEAD")).toBe(before);
+    expect(await mergeConflict(step.folder)).toEqual({ source: task.branch, files: [] });
+  });
+
+  it("concludes a resolved merge even when its staged tree matches HEAD", async () => {
+    const { task, step } = await conflictingSteps();
+    await prepareRun(step, [task.branch], AGENT, { keepConflicts: true });
+    const before = gitOut(step.folder, "rev-parse", "HEAD");
+    const source = gitOut(step.folder, "rev-parse", "MERGE_HEAD");
+    gitOut(step.folder, "read-tree", "--reset", "-u", "HEAD");
+    expect(gitOut(step.folder, "diff", "--cached")).toBe("");
+    expect((await mergeConflict(step.folder))?.files).toEqual([]);
+    expect(await commitAll(step.folder, ["Resolve with our tree"], AGENT)).toBe(true);
+    expect(gitOut(step.folder, "show", "-s", "--format=%P").split(" ")).toEqual([before, source]);
+    expect(await mergeConflict(step.folder)).toBeNull();
+    expect(await commitAll(step.folder, ["Nothing left"], AGENT)).toBe(false);
+  });
+
+  it("falls back to the merge head's short sha when no local branch names it", async () => {
+    const { task, step } = await conflictingSteps();
+    await prepareRun(step, [task.branch], AGENT, { keepConflicts: true });
+    const source = gitOut(step.folder, "rev-parse", "--short", "MERGE_HEAD");
+    gitOut(task.folder, "checkout", "-q", "--detach");
+    gitOut(step.folder, "branch", "-D", task.branch);
+    expect(await mergeConflict(step.folder)).toEqual({ source, files: ["shared.txt"] });
   });
 });
 
@@ -214,9 +320,25 @@ describe("mergeBranch", () => {
     gitOut(repo, "commit", "-q", "-m", "Main");
     const before = gitOut(repo, "rev-parse", "HEAD");
 
-    await expect(mergeBranch(repo, tree.branch, "Merge")).rejects.toThrow(/conflicts in x\.txt/);
+    const failure = mergeBranch(repo, tree.branch, "Merge");
+    await expect(failure).rejects.toThrow(/conflicts in x\.txt/);
+    await expect(failure).rejects.toBeInstanceOf(MergeConflictError);
+    await expect(failure).rejects.toMatchObject({ files: ["x.txt"] });
     expect(gitOut(repo, "rev-parse", "HEAD")).toBe(before);
     expect(gitOut(repo, "status", "--porcelain")).toBe("");
+  });
+
+  it("keeps other merge failures as plain GitError without touching untracked files", async () => {
+    const { repo, worktrees } = await project();
+    const step = await openWorktree(repo, worktrees, "step", "feature");
+    write(step.folder, "new.txt", "step\n");
+    await commitAll(step.folder, ["Add new"], AGENT);
+    write(repo, "new.txt", "person\n");
+    const failure = mergeBranch(repo, step.branch, "Merge");
+    await expect(failure).rejects.toBeInstanceOf(GitError);
+    await expect(failure).rejects.not.toBeInstanceOf(MergeConflictError);
+    expect(readFileSync(path.join(repo, "new.txt"), "utf8")).toBe("person\n");
+    expect(await mergeConflict(repo)).toBeNull();
   });
 });
 
