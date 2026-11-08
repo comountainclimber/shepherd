@@ -12,6 +12,7 @@ import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/mode
 import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
+import { guideText } from "./guide";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planGoal, planProject, planTasks } from "./intake";
 import { LookRefused, createLooks } from "./looks";
@@ -65,7 +66,7 @@ export function createApp(options: AppOptions) {
     checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
   });
   const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
-  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo });
+  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo, origin: options.origin });
   const stop = () => {
     runner.close();
     engine.close();
@@ -88,7 +89,7 @@ export function createApp(options: AppOptions) {
         if (url.pathname === "/api/models") return sendJson(res, 200, options.demo.models);
         if (url.pathname === "/api/agents") return sendJson(res, 200, { codex: true, claude: true, git: true, workspace: "Demo workspace" });
         if (url.pathname.startsWith("/api/") && ![
-          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps",
+          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps", "/api/guide",
         ].includes(url.pathname) && !/^\/api\/tasks\/[\w.-]+\/timeline$/.test(url.pathname) && url.pathname !== "/api/actions" && url.pathname !== "/api/progress") {
           return sendJson(res, 409, { error: "This is a demo. Agent runs, drafts and external actions are disabled." });
         }
@@ -152,6 +153,7 @@ interface Context {
   look: ReturnType<typeof createLooks>;
   saved: SavedSteps;
   demo?: boolean;
+  origin?: () => string | null;
 }
 
 export function apiHandler(context: Context) {
@@ -179,7 +181,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence, looks, look, saved, demo }: Context,
+  { engine, runner, sandbox, evidence, looks, look, saved, demo, origin }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -187,6 +189,13 @@ async function route(
 ): Promise<boolean> {
   const { pathname } = url;
   const method = req.method ?? "GET";
+  if (pathname === "/api/guide" && method === "GET") {
+    const own = origin?.();
+    if (!own) throw new Error("Server origin is unavailable.");
+    res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+    res.end(guideText(own));
+    return true;
+  }
   if (pathname === "/api/progress" && method === "POST") {
     const result = markProgress(engine, await readJson(req));
     sendJson(res, "error" in result ? 409 : 200, result);
