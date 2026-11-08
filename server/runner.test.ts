@@ -502,6 +502,118 @@ describe("separate task plans", () => {
 });
 
 describe("task work collection", () => {
+  const combiningAgent = 'import { execFileSync } from "node:child_process";\n' + FAKE_AGENT.replace('writeFileSync(name + ".txt", name + "\\n");', `
+writeFileSync(name + ".txt", name + "\\n");
+if (name === "front" || name === "back") {
+  if (prompt.includes("Files with conflict markers:")) {
+    const text = readFileSync("shared.txt", "utf8");
+    const lines = text.split("\\n").filter((line) => line && !/^(<<<<<<< |=======|>>>>>>> )/.test(line));
+    writeFileSync("shared.txt", [...new Set(lines)].join("\\n") + "\\n");
+    execFileSync("git", ["add", "shared.txt"]);
+  } else appendFileSync("shared.txt", name + "\\n");
+}
+`).replace('import { appendFileSync, writeFileSync }', 'import { appendFileSync, readFileSync, writeFileSync }');
+
+  async function conflictingCollection(agent = combiningAgent) {
+    const board = outlined("Plan\n  Front\n  Back\nNext");
+    for (const step of board.tasks.filter((step) => step.name === "Front" || step.name === "Back")) {
+      step.verification = [{ id: `review-${step.id}`, kind: "review", state: "pending", timestamp: null, evidence: "" }];
+    }
+    const server = planServer(board, undefined, agent);
+    const step = (name: string) => server.engine.get().tasks.find((task) => task.name === name)!;
+    const accept = async (name: string) => {
+      const task = step(name);
+      server.engine.dispatch({ type: "setCheck", taskId: task.id, checkId: task.verification[0].id, state: "passed" });
+      await server.runner.idle();
+    };
+    try {
+      await server.runner.handle({ command: "runPlan", goalId: board.goals[0].id });
+      await server.runner.idle();
+      expect(readFileSync(path.join(step("Front").git!.folder, "shared.txt"), "utf8")).toBe("front\n");
+      expect(readFileSync(path.join(step("Back").git!.folder, "shared.txt"), "utf8")).toBe("back\n");
+      await accept("Front");
+      expect(step("Front").git?.merged).toBeDefined();
+      return { ...server, step, accept };
+    } catch (error) {
+      server.runner.close(); server.engine.close();
+      throw error;
+    }
+  }
+
+  it("sends a side-by-side conflict back with accepted-step context, combines both changes and passes them to the next step", async () => {
+    const { engine, runner, prompts, step, accept, project } = await conflictingCollection();
+    try {
+      await accept("Back");
+      const backPrompts = prompts().filter((item) => item.name === "back");
+      expect(backPrompts).toHaveLength(2);
+      expect(backPrompts[1].prompt).toContain(`Shepherd merged ${engine.get().goals[0].branch} into this worktree`);
+      expect(backPrompts[1].prompt).toContain("Files with conflict markers:\n- shared.txt");
+      expect(backPrompts[1].prompt).toContain("Accepted steps that changed the same files: Front.");
+      expect(backPrompts[1].prompt).toContain("Your accepted work conflicts with work already on the task branch");
+      expect(step("Back").blocker).toBeNull();
+      const notes = engine.timelines.read(step("Back").id).entries;
+      expect(notes.filter((entry) => entry.kind === "note" && entry.text === "Merging Back conflicts in shared.txt. Sending it back to its agent to combine the changes.")).toHaveLength(1);
+      expect(notes.some((entry) => entry.kind === "note" && entry.text === "Combining changes in shared.txt")).toBe(true);
+      await accept("Back");
+      expect(engine.get().tasks.every((task) => task.git?.merged)).toBe(true);
+      expect(readFileSync(path.join(step("Next").git!.folder, "shared.txt"), "utf8").trim().split("\n").sort()).toEqual(["back", "front"]);
+      expect(readFileSync(path.join(engine.get().goals[0].folder!, "shared.txt"), "utf8").trim().split("\n").sort()).toEqual(["back", "front"]);
+      expect(gitOut(step("Back").git!.folder, "status", "--porcelain")).toBe("");
+      expect(existsSync(path.join(project, "shared.txt"))).toBe(false);
+      expect(engine.get().goals[0]).toMatchObject({ running: false, blocker: null });
+    } finally { runner.close(); engine.close(); }
+  });
+
+  it("fails the run and names the file when the agent leaves conflict markers", async () => {
+    const leavesMarkers = combiningAgent.replace('writeFileSync("shared.txt", [...new Set(lines)].join("\\n") + "\\n");', 'void lines;');
+    const { engine, runner, prompts, step, accept } = await conflictingCollection(leavesMarkers);
+    try {
+      await accept("Back");
+      expect(step("Back").status).toBe("failed");
+      expect(step("Back").blocker).toContain("Could not commit the run: unresolved merge conflicts in shared.txt");
+      expect(step("Back").git?.merged).toBeUndefined();
+      expect(step("Next").status).toBe("queued");
+      expect(prompts().filter((item) => item.name === "back")).toHaveLength(2);
+      expect(engine.timelines.read(step("Back").id).entries.at(-1)).toMatchObject({ kind: "run_ended", outcome: "failed", text: expect.stringContaining("shared.txt") });
+      expect(readFileSync(path.join(step("Back").git!.folder, "shared.txt"), "utf8")).toContain("<<<<<<< ");
+    } finally { runner.close(); engine.close(); }
+  });
+
+  it("waits for a person after two conflict hand-offs", async () => {
+    const { engine, runner, prompts, step, accept } = await conflictingCollection();
+    try {
+      for (let round = 1; round <= 2; round++) {
+        await accept("Back");
+        expect(prompts().filter((item) => item.name === "back")).toHaveLength(round + 1);
+        expect(step("Back").blocker).toBeNull();
+        const folder = engine.get().goals[0].folder!;
+        writeFileSync(path.join(folder, "shared.txt"), `front revision ${round}\n`);
+        gitOut(folder, "add", "shared.txt");
+        gitOut(folder, "commit", "-qm", `Task changed during hand-off ${round}`);
+      }
+      await accept("Back");
+      expect(step("Back").blocker).toMatch(/^Waiting to merge Back:.*shared.txt.*Run the step to have its agent combine the changes\.$/);
+      expect(step("Back").status).toBe("completed");
+      expect(step("Back").git?.merged).toBeUndefined();
+      expect(step("Next").status).toBe("queued");
+      expect(engine.get().goals[0].blocker).toBe(step("Back").blocker);
+      expect(prompts().filter((item) => item.name === "back")).toHaveLength(3);
+      expect(engine.timelines.read(step("Back").id).entries.filter((entry) => entry.kind === "note" && entry.text.includes("Sending it back"))).toHaveLength(2);
+    } finally { runner.close(); engine.close(); }
+  });
+
+  for (const human of [false, true]) it(`waits for a person when ${human ? "a person's step conflicts" : "the plan and step do not run automatically"}`, async () => {
+    const { engine, runner, prompts, step, accept } = await conflictingCollection();
+    try {
+      if (human) engine.dispatch({ type: "updateTask", id: step("Back").id, patch: { runner: "human" } });
+      else engine.dispatch({ type: "setPlanRunning", goalId: step("Back").goalId, running: false });
+      await accept("Back");
+      expect(step("Back").blocker).toMatch(/^Waiting to merge Back:.*Run the step to have its agent combine the changes\.$/);
+      expect(prompts().filter((item) => item.name === "back")).toHaveLength(1);
+      expect(step("Back").git?.merged).toBeUndefined();
+    } finally { runner.close(); engine.close(); }
+  });
+
   it("waits for acceptance and a clean task folder, then automatically merges and starts from person commits", async () => {
     const board = outlined("Build\nNext");
     board.tasks[0].verification = [{ id: "review-build", kind: "review", state: "pending", timestamp: null, evidence: "" }];
