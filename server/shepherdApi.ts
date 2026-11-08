@@ -21,6 +21,7 @@ import { openTaskFolder } from "./openTaskFolder";
 import { availableRepo } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
+import { removeSession, writeSession } from "./session";
 
 /** The longest goal Shepherd sends to an agent to plan. */
 const GOAL_LIMIT = 4000;
@@ -68,12 +69,18 @@ export function createApp(options: AppOptions) {
   const stop = () => {
     runner.close();
     engine.close();
+    if (!options.demo) removeSession(shepherd, security.token);
   };
   return {
     engine,
     runner,
     security,
     stop,
+    announce() {
+      if (options.demo) return;
+      const url = options.origin();
+      if (url) writeSession(shepherd, { url, token: security.token, guide: `${url}/api/guide`, pid: process.pid });
+    },
     handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
       if (!security.allow(req, res)) return;
       if (options.demo) {
@@ -111,6 +118,7 @@ export function shepherdApi(): Plugin {
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
       server.httpServer?.once("listening", () => {
+        app.announce();
         console.log(`\nShepherd: ${app.security.address()}\nOpen this address to unlock the board.\n`);
         void startupWarnings().then((warnings) => warnings.forEach((warning) => console.warn(warning)));
       });
