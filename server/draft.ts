@@ -17,6 +17,9 @@ export interface DraftStep {
   name: string;
   prompt: string;
   depth: number;
+  runner: "agent" | "human";
+  acceptance: string[];
+  checkCommand?: string;
 }
 
 export const MAX_DRAFT_STEPS = 12;
@@ -62,7 +65,12 @@ export function parseDraft(reply: string): DraftStep[] | { error: string } {
     const prompt = typeof step?.prompt === "string" ? step.prompt.trim().slice(0, 4000) : "";
     if (!name) return [];
     const depth = step?.depth === 1 || step?.depth === 2 ? step.depth : 0;
-    return [{ name, prompt, depth }];
+    const runner = step?.runner === "human" ? "human" : "agent";
+    const acceptance = Array.isArray(step?.acceptance)
+      ? step.acceptance.filter((line): line is string => typeof line === "string").map((line) => line.trim()).filter(Boolean).slice(0, 4)
+      : [];
+    const checkCommand = runner === "agent" && typeof step?.checkCommand === "string" ? step.checkCommand.trim() : "";
+    return [{ name, prompt, depth, runner, acceptance, ...(checkCommand ? { checkCommand } : {}) }];
   });
   if (!steps.length) return { error: "The agent's plan had no usable steps." };
   return steps.slice(0, MAX_DRAFT_STEPS).map((step, index) => (index === 0 ? { ...step, depth: 0 } : step));

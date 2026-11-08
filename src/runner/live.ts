@@ -117,6 +117,9 @@ export interface DraftStep {
   name: string;
   prompt: string;
   depth: number;
+  runner: "agent" | "human";
+  acceptance: string[];
+  checkCommand?: string;
 }
 
 /** Asks Codex to break a goal into steps. It can read the project folder but changes nothing. */

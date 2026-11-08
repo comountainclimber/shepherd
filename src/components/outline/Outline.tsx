@@ -16,21 +16,10 @@ import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
 import { Avatar, Button, ProgressBar, stageIcon, stageText } from "../ui";
 import { appendStep } from "./appendStep";
+import { stepFrom } from "./stepFrom";
 
-const NAME_LIMIT = 80;
 const INDENT_PX = 20;
 const PICKABLE = [...AGENTS].sort((a, b) => (a.provider === "codex" ? -1 : b.provider === "codex" ? 1 : 0));
-
-/** A line too long for a name keeps the whole line as the step's prompt. */
-function stepFrom(goalId: string, line: string, prompt: string, agentId: string | null, context = ""): Task {
-  let name = line;
-  if (line.length > NAME_LIMIT) {
-    const cut = line.slice(0, NAME_LIMIT);
-    name = `${cut.slice(0, cut.lastIndexOf(" ") > 40 ? cut.lastIndexOf(" ") : NAME_LIMIT)}…`;
-  }
-  const task = newStep(useShepherd.getState().state.goals.find((goal) => goal.id === goalId)!.projectId, name, prompt || (name === line ? "" : line), agentId, goalId);
-  return context ? { ...task, description: context } : task;
-}
 
 function editable(target: EventTarget | null): boolean {
   const element = target as HTMLElement | null;
@@ -499,7 +488,7 @@ function Draft({ goalId, big }: { goalId: string; big: boolean }) {
       return;
     }
     const after = outlineOf(useShepherd.getState().state, goalId).at(-1)?.id ?? null;
-    const steps = result.map((step) => ({ task: stepFrom(goalId, step.name, step.prompt, DEFAULT_AGENT_ID, text), depth: step.depth }));
+    const steps = result.map((step) => ({ task: stepFrom(goalId, step.name, step.prompt, DEFAULT_AGENT_ID, text, step), depth: step.depth }));
     dispatch({ type: "addSteps", goalId, after, steps });
     setGoal("");
     if (!big) setOpen(false);
