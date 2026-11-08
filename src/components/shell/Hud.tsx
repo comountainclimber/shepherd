@@ -4,6 +4,7 @@ import { ProjectSwitcher } from "./ProjectSwitcher";
 import { cx, formatClock } from "../../model/format";
 import { needsYou } from "../../model/stage";
 import { tasksForGoal } from "../../model/selectors";
+import { pathFor } from "../../model/route";
 import { agentStatus, setWorkspacePath, workspacePath } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
 
@@ -168,9 +169,11 @@ function Feed() {
           <ol className="max-h-[60vh] overflow-auto p-1">
             {events.map((event) => (
               <li key={event.id}>
-                <button
-                  type="button"
-                  onClick={() => {
+                <a
+                  href={pathFor({ goalId, view: "canvas", stepId: event.taskId, tab: "step" })}
+                  onClick={(click) => {
+                    if (click.button !== 0 || click.metaKey || click.ctrlKey || click.shiftKey || click.altKey) return;
+                    click.preventDefault();
                     selectTask(event.taskId);
                     setOpen(false);
                   }}
@@ -179,7 +182,7 @@ function Feed() {
                   <span className={cx("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", FEED_TONE[event.tone])} />
                   <span className="min-w-0 flex-1 text-[12px] leading-5 text-text">{event.message}</span>
                   <span className="shrink-0 font-mono text-[10px] leading-5 text-faint">{formatClock(event.at)}</span>
-                </button>
+                </a>
               </li>
             ))}
             {!events.length ? <li className="px-3 py-2 text-[13px] text-faint">Nothing yet.</li> : null}

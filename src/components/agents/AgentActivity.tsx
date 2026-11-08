@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cx } from "../../model/format";
 import { assigneeFor, stageHint, stageOf, type AssigneeKind, type Stage } from "../../model/stage";
 import { tasksForGoal } from "../../model/selectors";
+import { pathFor } from "../../model/route";
 import type { Task } from "../../model/types";
 import { EFFORT_LABEL, modelName, type ModelCatalog } from "../../model/models";
 import { isFullyVerified } from "../../model/verify";
@@ -115,7 +116,15 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
       <ul className="min-h-0 flex-1 space-y-0.5 px-2 pb-3 pt-2">
         {staged.map(({ task, stage }) => (
           <li key={task.id}>
-            <button type="button" onClick={() => selectTask(task.id)} className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-2">
+            <a
+              href={pathFor({ goalId: task.goalId, view: "canvas", stepId: task.id, tab: "step" })}
+              onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                selectTask(task.id);
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-2"
+            >
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] text-text">{task.name}</span>
                 <span className={cx("block truncate text-[11px]", stage === "failed" ? stageText.failed : "text-faint")}>
@@ -123,7 +132,7 @@ function AgentCard({ kind, name, role, online, tasks }: { kind: AssigneeKind; na
                 </span>
               </span>
               <StageBadge stage={stage} />
-            </button>
+            </a>
           </li>
         ))}
         {online === false && kind !== "person" ? (
