@@ -9,7 +9,7 @@ import type { Plugin } from "vite";
 import { resolveGoal } from "../src/model/goals";
 import { workspace } from "../src/model/workspace";
 import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
-import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src/model/types";
+import { EFFORTS, type Action, type Goal, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
@@ -133,6 +133,37 @@ export async function writeChecklist(board: OrchestrationState, task: Task, sand
   const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : base;
   if (!project?.repo) mkdirSync(folder.path, { recursive: true });
   return draftChecklist(checklistInput(board, task), folder.path, agentChoice({}, modelCatalog().codex.default), signal);
+}
+
+interface DraftRequest {
+  prompt?: unknown;
+  model?: unknown;
+  thinking?: unknown;
+}
+
+async function draftGoal(board: OrchestrationState, selected: Goal, body: DraftRequest, sandbox: string, res: ServerResponse) {
+  if (selected.status !== "open") throw new BadRequest("Reopen this task before drafting steps.");
+  const goal = typeof body.prompt === "string" ? body.prompt.trim() : selected.goal;
+  if (!goal) throw new BadRequest("Say what you want done in the task's goal text or as prompt.");
+  if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
+  const { model = null, thinking = null } = body;
+  if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
+  if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
+  const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
+  const project = board.projects.find((item) => item.id === selected.projectId)!;
+  const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
+  if ("error" in folder) return folder;
+  if (!project.repo) mkdirSync(folder.path, { recursive: true });
+  const abandon = new AbortController();
+  const onClose = () => {
+    if (!res.writableEnded) abandon.abort();
+  };
+  res.on("close", onClose);
+  try {
+    return await draftSteps(goal, folder.path, choice, abandon.signal);
+  } finally {
+    res.off("close", onClose);
+  }
 }
 
 interface Context {
@@ -274,11 +305,42 @@ async function route(
     return true;
   }
   if (pathname === "/api/goals" && method === "POST") {
-    const planned = planGoal(engine.get(), await readJson(req), `goal-api-${stamp()}`);
-    if ("error" in planned) sendJson(res, 400, planned);
-    else {
-      engine.dispatch(planned.action);
+    const body = await readJson(req);
+    const planned = planGoal(engine.get(), body, `goal-api-${stamp()}`);
+    if ("error" in planned) {
+      sendJson(res, 400, planned);
+      return true;
+    }
+    const options = body as DraftRequest & { draft?: unknown };
+    if (options.draft === true && demo) {
+      sendJson(res, 409, { error: "This is a demo. Agent runs, drafts and external actions are disabled." });
+      return true;
+    }
+    engine.dispatch(planned.action);
+    if (options.draft !== true) {
       sendJson(res, 201, { goal: planned.goal });
+      return true;
+    }
+    try {
+      const drafted = await draftGoal(engine.get(), planned.goal, { model: options.model, thinking: options.thinking }, sandbox, res);
+      if (res.destroyed) return true;
+      if ("error" in drafted) {
+        sendJson(res, 409, { error: drafted.error, goal: planned.goal.id });
+        return true;
+      }
+      const id = stamp();
+      const steps = planTasks(engine.get(), {
+        goal: planned.goal.id,
+        tasks: drafted.map(({ prompt, ...step }) => ({ ...step, objective: prompt })),
+      }, (index) => `task-api-${id}-${index + 1}`);
+      if ("error" in steps) {
+        sendJson(res, 409, { error: steps.error, goal: planned.goal.id });
+        return true;
+      }
+      steps.actions.forEach((action) => engine.dispatch(action));
+      sendJson(res, 201, { goal: engine.get().goals.find((goal) => goal.id === planned.goal.id), ...taskMap(engine.get(), planned.goal.id) });
+    } catch (error) {
+      if (!res.destroyed) sendJson(res, error instanceof BadRequest ? 400 : 500, { error: error instanceof Error ? error.message : String(error), goal: planned.goal.id });
     }
     return true;
   }
@@ -309,30 +371,11 @@ async function route(
     return true;
   }
   if (pathname === "/api/draft" && method === "POST") {
-    const body = (await readJson(req)) as { project?: unknown; projectId?: unknown; goal?: unknown; prompt?: unknown; model?: unknown; thinking?: unknown };
+    const body = (await readJson(req)) as DraftRequest & { project?: unknown; projectId?: unknown; goal?: unknown };
     const board = engine.get();
     const selected = resolveGoal(board, body.goal, body.project ?? body.projectId);
     if ("error" in selected) throw new BadRequest(selected.error);
-    if (selected.status !== "open") throw new BadRequest("Reopen this task before drafting steps.");
-    const project = board.projects.find((item) => item.id === selected.projectId)!;
-    const goal = typeof body.prompt === "string" ? body.prompt.trim() : selected.goal;
-    if (!goal) throw new BadRequest("Say what you want done in the task's goal text or as prompt.");
-    if (goal.length > GOAL_LIMIT) throw new BadRequest(`Keep the goal under ${GOAL_LIMIT} characters.`);
-    const { model = null, thinking = null } = body;
-    if (model !== null && !isModelId(model)) throw new BadRequest("model is not a model name, such as gpt-6-astra.");
-    if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
-    const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
-    const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
-    if ("error" in folder) {
-      sendJson(res, 409, { error: folder.error });
-      return true;
-    }
-    if (!project.repo) mkdirSync(folder.path, { recursive: true });
-    const abandon = new AbortController();
-    res.on("close", () => {
-      if (!res.writableEnded) abandon.abort();
-    });
-    const result = await draftSteps(goal, folder.path, choice, abandon.signal);
+    const result = await draftGoal(board, selected, body, sandbox, res);
     if (!res.destroyed) sendJson(res, Array.isArray(result) ? 200 : 409, Array.isArray(result) ? { steps: result } : result);
     return true;
   }
