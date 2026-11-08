@@ -1,9 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { blankGoal, newStep } from "./model/factory";
 import { reducer } from "./model/reducer";
 import type { OrchestrationState, UiState } from "./model/types";
 import { workspace } from "./model/workspace";
 import { connectToServer, initialUi, useShepherd } from "./store";
+
+const browserWindow = vi.hoisted(() => {
+  const target = new EventTarget();
+  vi.stubGlobal("window", target);
+  vi.stubGlobal("localStorage", {
+    getItem: () => JSON.stringify({ view: "agents", projectId: "proj-local", goalId: "second", selectedTaskId: "step-other" }),
+    removeItem: () => {},
+  });
+  return target;
+});
 
 function board() {
   let state = reducer(workspace(1), { type: "createGoal", goal: blankGoal("proj-local", "Other task", "second") });
@@ -12,9 +22,13 @@ function board() {
   return state;
 }
 
+beforeEach(() => {
+  browser("/");
+});
+
 afterEach(() => {
-  vi.unstubAllGlobals();
   useShepherd.setState({ state: workspace(1), ui: initialUi, loaded: false });
+  vi.unstubAllGlobals();
 });
 
 describe("task selection", () => {
@@ -51,12 +65,15 @@ it("clears task-specific filters, agent selection and draft text when switching 
   expect(useShepherd.getState().ui).toMatchObject({ selectedAgentId: null, filters: initialUi.filters, draftToken: 0, draftSeed: "" });
 });
 
-async function browser(pathname: string, saved: Partial<UiState> = {}) {
-  vi.resetModules();
+it("restores the saved place at startup with the step panel closed", () => {
+  expect(initialUi).toMatchObject({ view: "agents", projectId: "proj-local", goalId: "second", selectedTaskId: "step-other", inspectorOpen: false, panelTab: "step" });
+});
+
+function browser(pathname: string, saved: Partial<UiState> = {}) {
   const location = { pathname };
   const entries = [pathname];
   let index = 0;
-  const window = new EventTarget();
+  const window = browserWindow;
   const history = {
     pushState: vi.fn((_data: unknown, _title: string, path: string) => {
       entries.splice(index + 1, entries.length, path);
@@ -93,7 +110,8 @@ async function browser(pathname: string, saved: Partial<UiState> = {}) {
     constructor() { stream = this; }
     close() {}
   });
-  const { useShepherd, connectToServer } = await import("./store");
+  useShepherd.setState({ state: workspace(1), ui: { ...initialUi, view: "canvas", goalId: "goal-proj-local", selectedTaskId: null, ...saved }, loaded: false });
+  localStorage.setItem.mockClear();
   connectToServer();
   const receive = (state = board(), revision = 1) => stream.onmessage?.({ data: JSON.stringify({ revision, state }) });
   return { store: useShepherd, location, history, localStorage, receive, window, entries };
@@ -107,8 +125,8 @@ describe("address and place", () => {
     ["/t/second/s/step-other/output", "canvas", "step-other", "output"],
     ["/t/second/s/step-other/checks", "canvas", "step-other", "checks"],
     ["/t/second/s/step-other/log", "canvas", "step-other", "log"],
-  ])("opens %s when the first board arrives", async (path, view, stepId, tab) => {
-    const { store, receive, history, location } = await browser(path);
+  ])("opens %s when the first board arrives", (path, view, stepId, tab) => {
+    const { store, receive, history, location } = browser(path);
     expect(store.getState().loaded).toBe(false);
     expect(history.replaceState).not.toHaveBeenCalled();
     expect(history.pushState).not.toHaveBeenCalled();
@@ -122,8 +140,8 @@ describe("address and place", () => {
     expect(store.getState().ui.view).not.toBe(view);
   });
 
-  it("follows the task's project instead of the restored project", async () => {
-    const { store, receive } = await browser("/t/remote/s/remote-step/checks");
+  it("follows the task's project instead of the restored project", () => {
+    const { store, receive } = browser("/t/remote/s/remote-step/checks");
     let state = reducer(board(), { type: "createProject", project: { id: "remote-project", name: "Other project", summary: "" } });
     state = reducer(state, { type: "createGoal", goal: blankGoal("remote-project", "Remote task", "remote") });
     const task = { ...newStep("remote-project", "Remote step", "", "agent-codex", "remote"), id: "remote-step" };
@@ -132,8 +150,8 @@ describe("address and place", () => {
     expect(store.getState().ui).toMatchObject({ projectId: "remote-project", goalId: "remote", selectedTaskId: "remote-step", panelTab: "checks", inspectorOpen: true });
   });
 
-  it.each(["/", "/not-a-route", "/t/missing", "/t/missing/s/step-other"])("keeps the restored place and repairs %s", async (path) => {
-    const { store, receive, location, history } = await browser(path, { goalId: "second", view: "agents", selectedTaskId: "step-other" });
+  it.each(["/", "/not-a-route", "/t/missing", "/t/missing/s/step-other"])("keeps the restored place and repairs %s", (path) => {
+    const { store, receive, location, history } = browser(path, { goalId: "second", view: "agents", selectedTaskId: "step-other" });
     receive();
     expect(store.getState().ui).toMatchObject({ goalId: "second", view: "agents", selectedTaskId: "step-other", inspectorOpen: false });
     expect(location.pathname).toBe("/t/second/agents");
@@ -141,23 +159,23 @@ describe("address and place", () => {
     expect(history.pushState).not.toHaveBeenCalled();
   });
 
-  it.each(["missing-step", "step-other"])("does not open %s outside the linked task", async (stepId) => {
-    const { store, receive, location, history } = await browser(`/t/goal-proj-local/s/${stepId}/log`);
+  it.each(["missing-step", "step-other"])("does not open %s outside the linked task", (stepId) => {
+    const { store, receive, location, history } = browser(`/t/goal-proj-local/s/${stepId}/log`);
     receive();
     expect(store.getState().ui).toMatchObject({ goalId: "goal-proj-local", selectedTaskId: null, inspectorOpen: false });
     expect(location.pathname).toBe("/t/goal-proj-local");
     expect(history.pushState).not.toHaveBeenCalled();
   });
 
-  it("reconciles a removed saved task before repairing the address", async () => {
-    const { store, receive, location } = await browser("/t/missing", { goalId: "removed", selectedTaskId: "removed-step" });
+  it("reconciles a removed saved task before repairing the address", () => {
+    const { store, receive, location } = browser("/t/missing", { goalId: "removed", selectedTaskId: "removed-step" });
     receive();
     expect(store.getState().ui).toMatchObject({ goalId: "goal-proj-local", selectedTaskId: null, inspectorOpen: false });
     expect(location.pathname).toBe("/t/goal-proj-local");
   });
 
-  it("normalizes encoded ids, trailing slashes and unknown tabs", async () => {
-    const { store, receive, location, history } = await browser("/t/second%20task/s/step%2Fother/unknown/");
+  it("normalizes encoded ids, trailing slashes and unknown tabs", () => {
+    const { store, receive, location, history } = browser("/t/second%20task/s/step%2Fother/unknown/");
     const state = board();
     state.goals.find((goal) => goal.id === "second")!.id = "second task";
     state.tasks[0] = { ...state.tasks[0], id: "step/other", goalId: "second task" };
@@ -167,8 +185,8 @@ describe("address and place", () => {
     expect(history.pushState).not.toHaveBeenCalled();
   });
 
-  it("pushes task, view and open-step changes, and replaces tabs and panel closure", async () => {
-    const { store, receive, history, location, localStorage } = await browser("/t/goal-proj-local");
+  it("pushes task, view and open-step changes, and replaces tabs and panel closure", () => {
+    const { store, receive, history, location, localStorage } = browser("/t/goal-proj-local");
     const state = board();
     const task = { ...newStep("proj-local", "Another step", "", "agent-codex", "second"), id: "step-next" };
     receive(reducer(state, { type: "addSteps", goalId: "second", after: null, steps: [{ task, depth: 0 }] }));
@@ -194,8 +212,8 @@ describe("address and place", () => {
     expect(localStorage.setItem).toHaveBeenCalledTimes(writes);
   });
 
-  it("does nothing when the path is already current or the place did not change", async () => {
-    const { store, receive, history } = await browser("/t/second/s/step-other/log");
+  it("does nothing when the path is already current or the place did not change", () => {
+    const { store, receive, history } = browser("/t/second/s/step-other/log");
     receive();
     const ui = store.getState();
     ui.openTask("step-other", "log");
@@ -207,8 +225,8 @@ describe("address and place", () => {
     expect(history.replaceState).not.toHaveBeenCalled();
   });
 
-  it("restores the task, view, step and replaced tab with Back and Forward", async () => {
-    const { store, receive, history, location, entries } = await browser("/t/goal-proj-local");
+  it("restores the task, view, step and replaced tab with Back and Forward", () => {
+    const { store, receive, history, location, entries } = browser("/t/goal-proj-local");
     receive();
     const ui = store.getState();
     ui.setGoal("second");
@@ -231,8 +249,8 @@ describe("address and place", () => {
     expect(history.replaceState).toHaveBeenCalledTimes(1);
   });
 
-  it("repairs a stale history entry and waits for the board on early popstate", async () => {
-    const { store, receive, history, location, window } = await browser("/t/second");
+  it("repairs a stale history entry and waits for the board on early popstate", () => {
+    const { store, receive, history, location, window } = browser("/t/second");
     location.pathname = "/t/second/agents";
     window.dispatchEvent(new Event("popstate"));
     expect(history.replaceState).not.toHaveBeenCalled();
