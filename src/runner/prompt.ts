@@ -18,6 +18,7 @@ export interface PromptOptions {
   look?: boolean;
   done?: boolean;
   taskBranch?: string;
+  conflict?: { source: string; files: string[]; steps: string[] };
   pushed?: { remote: string; branch: string; base: string };
 }
 
@@ -107,6 +108,16 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
     options.taskBranch ? `This step belongs to task branch ${options.taskBranch}. Accepted work collects there; the project checkout stays untouched.` : "",
+    ...(options.conflict ? [
+      "Resolve the merge conflict before continuing:",
+      `Shepherd merged ${options.conflict.source} into this worktree and git could not combine it with this step's work.`,
+      "Files with conflict markers:",
+      ...options.conflict.files.map((file) => `- ${file}`),
+      options.conflict.steps.length ? `Accepted steps that changed the same files: ${options.conflict.steps.join(", ")}.` : "",
+      "Resolve every conflict so this step's change and the other work both survive and still fit together. Remove every conflict marker.",
+      "Do not run git merge --abort. Do not run git reset or git checkout on these files. Do not commit; Shepherd concludes the merge when you finish.",
+      "Then finish this step's own objective and run its check as usual.",
+    ] : []),
     options.pushed
       ? `Shepherd has pushed the task branch ${options.pushed.branch} to remote ${options.pushed.remote}. Its base branch is ${options.pushed.base}. You may create or update a merge request (or pull request) from that task branch into its base with glab, gh or your own tools. Use the named remote's repository. Do not commit or push yourself. Finish with the merge request's full URL on its own line.`
       : "",
