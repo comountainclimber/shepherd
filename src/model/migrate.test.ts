@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { withObjectives } from "./graphs";
 import { interruptWork, loadState } from "./migrate";
 import { workspace } from "./workspace";
 
@@ -181,9 +182,9 @@ describe("boards before tasks", () => {
     const state = loadState(raw)!;
     expect(state.schema).toBe(3);
     expect(state.goals).toEqual([
-      { id: "goal-proj-slug", projectId: "proj-slug", name: "Slug helper", goal: "", status: "open", outline: raw.projects[0]!.outline, running: true },
-      { id: "goal-empty", projectId: "empty", name: "Empty", goal: "", status: "open", outline: [], running: false },
-      { id: "goal-hand", projectId: "hand", name: "By hand", goal: "", status: "open", running: false },
+      { id: "goal-proj-slug", projectId: "proj-slug", objectiveId: "objective-goal-proj-slug", color: "#c084fc", name: "Slug helper", goal: "", status: "open", outline: raw.projects[0]!.outline, running: true },
+      { id: "goal-empty", projectId: "empty", objectiveId: "objective-goal-empty", color: "#c084fc", name: "Empty", goal: "", status: "open", outline: [], running: false },
+      { id: "goal-hand", projectId: "hand", objectiveId: "objective-goal-hand", color: "#c084fc", name: "By hand", goal: "", status: "open", running: false },
     ]);
     expect(state.tasks[0]).toMatchObject({ id: "task-1", projectId: "proj-slug", goalId: "goal-proj-slug", worktree: "slugify", git });
     expect(state.projects.every((project) => !("outline" in project) && !("running" in project))).toBe(true);
@@ -196,6 +197,6 @@ describe("boards before tasks", () => {
     board.goals.push({ id: "second", projectId: board.projects[0]!.id, name: "Second", goal: "Fix it", running: false, status: "archived", branch: "feature/task", folder: "/tmp/task", base: "develop", blocker: "Commit or stash the task folder changes.", merged: { into: "develop", sha: "abc123", at: 42 }, outline: [] });
     const task = { ...schemaOneTask, projectId: board.projects[0].id, goalId: "second", git: { branch: "shepherd/task", folder: "/tmp/task", target: "shepherd/task", diffBase: "old-commit" } };
     expect(loadState({ ...board, tasks: [task] })!.tasks[0].git?.diffBase).toBe("old-commit");
-    expect(loadState(board)).toEqual(board);
+    expect(loadState(board)).toEqual(withObjectives(board));
   });
 });

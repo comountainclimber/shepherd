@@ -4,7 +4,6 @@ import { AgentActivity } from "../agents/AgentActivity";
 import { OrchestrationCanvas } from "../canvas/OrchestrationCanvas";
 import { CommandPalette } from "../delegation/CommandPalette";
 import { NewTaskDialog } from "../delegation/NewTaskDialog";
-import { TaskHeader } from "../outline/TaskHeader";
 import { NewProjectDialog } from "../delegation/NewProjectDialog";
 import { TaskInspector } from "../inspector/TaskInspector";
 import { Outline } from "../outline/Outline";
@@ -15,7 +14,6 @@ import { ServerNotice } from "./ServerNotice";
 import { Toasts, useTaskToasts } from "./Toasts";
 
 export function Shell() {
-  const goalId = useShepherd((store) => store.ui.goalId);
   const view = useShepherd((store) => store.ui.view);
   const inspectorOpen = useShepherd((store) => store.ui.inspectorOpen);
   const selectedTaskId = useShepherd((store) => store.ui.selectedTaskId);
@@ -65,9 +63,8 @@ export function Shell() {
     <div className="flex h-screen flex-col overflow-hidden bg-bg text-text">
       <Hud />
       <ServerNotice />
-      {loaded ? <TaskHeader key={goalId} /> : null}
       <div className="relative flex min-h-0 flex-1">
-        {loaded ? <div className={view === "agents" ? "hidden sm:contents" : "contents"}><Outline key={goalId} /></div> : null}
+        {loaded ? <div className={view === "agents" ? "hidden sm:contents" : "contents"}><Outline /></div> : null}
         <div className={`${showInspector ? "absolute inset-0 z-10 sm:relative sm:inset-auto" : !loaded || view === "agents" ? "relative" : "hidden sm:block"} min-w-0 flex-1`}>
           <main className="h-full">{!loaded ? <Loading /> : view === "canvas" ? <OrchestrationCanvas /> : <AgentActivity />}</main>
           {loaded && showInspector ? <TaskInspector /> : null}

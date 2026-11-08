@@ -245,10 +245,22 @@ export interface Project {
 
 export type GoalStatus = "open" | "done" | "archived";
 
-/** A task in the UI; Task remains the type for a step. */
+/** A piece of work in a repo. Its graphs are goals; archiving it archives them. */
+export interface Objective {
+  id: string;
+  projectId: string;
+  name: string;
+  archived?: boolean;
+}
+
+/** A task in the UI, shown as a graph in the sidebar; Task remains the type for a step. */
 export interface Goal {
   id: string;
   projectId: string;
+  /** The objective it is a graph of. Every goal has one once loaded. */
+  objectiveId?: string;
+  /** One of GRAPH_COLORS. Its rows and nodes are tinted with it. */
+  color?: string;
   name: string;
   goal: string;
   /** Unset when older steps keep their hand-drawn arrows. */
@@ -265,6 +277,7 @@ export interface Goal {
 
 export interface OrchestrationState {
   schema: 3;
+  objectives: Objective[];
   goals: Goal[];
   projects: Project[];
   tasks: Task[];
@@ -288,6 +301,9 @@ export interface Filters {
 export interface UiState {
   view: ViewId;
   projectId: string;
+  /** The objective picked in the sidebar. Empty when none is. */
+  objectiveId: string;
+  /** The focused graph. Empty when the objective has none, or nothing is picked. */
   goalId: string;
   selectedTaskId: string | null;
   selectedAgentId: string | null;
@@ -326,8 +342,18 @@ export type Action =
   | { type: "connect"; source: string; target: string; gate?: Gate }
   | { type: "disconnect"; id: string }
   | { type: "createProject"; project: Project }
+  | { type: "createObjective"; objective: Objective }
+  /** Server only: a Shepherd folder that turned out to be a link to a repo becomes that repo's project. */
+  | { type: "linkRepo"; id: string; repo: string }
+  | { type: "updateObjective"; id: string; patch: Partial<Pick<Objective, "name">> }
+  /** Archives the objective and its open graphs. Reopening one of them brings the objective back. */
+  | { type: "archiveObjective"; id: string }
+  /** Brings an archived objective back, with its archived graphs. */
+  | { type: "restoreObjective"; id: string }
   | { type: "createGoal"; goal: Goal }
-  | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal">> }
+  | { type: "updateGoal"; id: string; patch: Partial<Pick<Goal, "name" | "goal" | "color">> }
+  /** Moves a graph up or down among its objective's graphs. */
+  | { type: "moveGoal"; id: string; by: -1 | 1 }
   | { type: "goalRuntime"; id: string; patch: Partial<Pick<Goal, "branch" | "folder" | "base" | "blocker" | "merged" | "mergeRequestUrl">> }
   | { type: "finishGoal"; id: string }
   | { type: "archiveGoal"; id: string }

@@ -75,4 +75,19 @@ describe("task actions from tabs", () => {
     expect(tabAction(board, { type: "updateTask", id: "x", patch: { pushBeforeRun: "yes" } })).toHaveProperty("error");
     expect(tabAction(board, { type: "updateGoal", id: "x", patch: { mergeRequestUrl: "https://github.com/o/r/pull/1" } })).toHaveProperty("error");
   });
+
+  it("lets a tab organise objectives and graphs, with palette colours only", () => {
+    const board = workspace(1);
+    const projectId = board.projects[0]!.id;
+    const objective = board.objectives[0]!;
+    expect(tabAction(board, { type: "createObjective", objective: { id: "o", projectId, name: "Dark mode" } })).not.toHaveProperty("error");
+    expect(tabAction(board, { type: "createObjective", objective: { id: "o", projectId: "missing", name: "Dark mode" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "updateObjective", id: objective.id, patch: { name: "" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "archiveObjective", id: objective.id })).not.toHaveProperty("error");
+    expect(tabAction(board, { type: "moveGoal", id: "x", by: 2 })).toHaveProperty("error");
+    expect(tabAction(board, { type: "updateGoal", id: "x", patch: { color: "#4fb3f6" } })).not.toHaveProperty("error");
+    expect(tabAction(board, { type: "updateGoal", id: "x", patch: { color: "red" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "createGoal", goal: { ...blankGoal(projectId, "Graph", "g"), objectiveId: "missing" } })).toHaveProperty("error");
+    expect(tabAction(board, { type: "createGoal", goal: { ...blankGoal(projectId, "Graph", "g"), objectiveId: objective.id, color: "#4fb3f6" } })).not.toHaveProperty("error");
+  });
 });
