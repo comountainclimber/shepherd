@@ -30,4 +30,15 @@ The task header shows its branch, base and folder once created, and any wait for
 
 Add the saved **Open a merge request** step at the end of a task. Codex determines whether the remote is GitLab or GitHub, follows the repository's conventions and skills, and opens or updates a request into the task's base. It writes the title and description from all preceding steps' reports and finishes with the full request URL. Shepherd keeps the reported GitLab or GitHub link on the task header, including after reload. Authentication for the push and the agent's MR tools must already be available.
 
+## Good maps
+
+- Each agent step is one sitting of work that ends in something checkable: a passing test, a changed page, a file.
+- Steps that touch different files and need nothing from each other sit side by side, at depth 1 under the step they both need. They run after that step and at the same time as each other.
+- A step that needs several earlier steps comes after them at the left edge (depth 0), so it waits for all of them. The first step has depth 0.
+- Every agent step has one to three Done when lines a reviewer can verify, and a check command when the repository has tests.
+- When a person has to look (a page, copy, a product call), the map ends with a step for a person that says what to try.
+- No step only plans or only reviews unless the goal asks for it.
+- Each step's name is a verb and the thing it changes, under 60 characters.
+- Three to eight steps; one step only when the goal is a single small change.
+
 [Optional checks](checks.md) · [Run lifecycle](runs.md)
