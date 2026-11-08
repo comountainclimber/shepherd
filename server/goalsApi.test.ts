@@ -162,6 +162,32 @@ describe("goal API", () => {
     expect((await request("tasks")).body.projects[0].goals).toHaveLength(2);
   });
 
+  it("adds outline branches through POST tasks and rejects depth with explicit dependencies without adding steps", async () => {
+    const { request, engine } = await server();
+    const goal = "goal-proj-local";
+    const added = await request("tasks", { goal, tasks: [
+      { name: "Prepare", depth: 0 }, { name: "Build", depth: 1 },
+      { name: "Write docs", depth: 1 }, { name: "Finish", depth: 0 },
+    ] });
+    expect(added.status).toBe(201);
+    const [prepare, build, docs, finish] = added.body.tasks.map((task: { id: string }) => task.id);
+    expect(engine.get().dependencies.map((dep) => [dep.source, dep.target])).toEqual([
+      [prepare, build], [prepare, docs], [build, finish], [docs, finish],
+    ]);
+    const manual = await request("tasks", { goal, name: "Manual", dependsOn: [{ task: prepare, gate: "completed" }] });
+    expect(manual.status).toBe(201);
+    expect(engine.get().dependencies.filter((dep) => dep.target === manual.body.tasks[0].id))
+      .toEqual([expect.objectContaining({ source: prepare, gate: "completed" })]);
+    const before = engine.get();
+    for (const body of [
+      { goal, name: "Conflict", depth: 0, dependsOn: [prepare] },
+      { goal, tasks: [{ name: "Valid", depth: 0 }, { name: "Conflict", depth: 1, dependsOn: [] }] },
+    ]) {
+      expect(await request("tasks", body)).toMatchObject({ status: 400, body: { error: expect.stringMatching(/pick one.*depth.*dependsOn/) } });
+      expect(engine.get()).toBe(before);
+    }
+  });
+
   it("lists choices for ambiguous project-only steps, drafts and plan commands", async () => {
     const { request, engine, runner } = await server();
     const created = await request("goals", { project: "Workspace", name: "Other", goal: "Other work" });
