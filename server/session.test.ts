@@ -8,6 +8,7 @@ import { guideText } from "./guide";
 import { removeSession, writeSession, type Session } from "./session";
 import { serverUrl, shepherdApi } from "./shepherdApi";
 import { startServer } from "./standalone";
+import * as startup from "./startup";
 
 const cleanup: (() => Promise<unknown> | void)[] = [];
 afterEach(async () => {
@@ -41,6 +42,7 @@ describe("session discovery", () => {
     expect(await response.text()).toBe(guideText(app.url));
     const refused = await fetch(`${app.url}/api/guide`);
     expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: expect.any(String) });
   });
 
   it("serves the guide address announced in session.json", async () => {
@@ -106,7 +108,7 @@ describe("session discovery", () => {
     expect(existsSync(path.join(dirs.dataDir, "session.json"))).toBe(false);
   });
 
-  it("does not announce a demo board", async () => {
+  it("serves the guide on a demo board without announcing a session", async () => {
     const dirs = folders();
     const app = await startServer({ ...dirs, port: 0, demo: { models: DEMO_MODELS } });
     cleanup.push(() => app.close());
@@ -114,7 +116,9 @@ describe("session discovery", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     expect(await response.text()).toBe(guideText(app.url));
-    expect((await fetch(`${app.url}/api/guide`)).status).toBe(403);
+    const refused = await fetch(`${app.url}/api/guide`);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toEqual({ error: expect.any(String) });
     expect(existsSync(path.join(dirs.dataDir, "session.json"))).toBe(false);
     app.announce();
     expect(existsSync(path.join(dirs.dataDir, "session.json"))).toBe(false);
@@ -126,6 +130,7 @@ describe("session discovery", () => {
     const dirs = folders();
     vi.stubEnv("SHEPHERD_DATA_DIR", dirs.dataDir);
     vi.stubEnv("SHEPHERD_PROJECTS_DIR", dirs.projectsDir);
+    vi.spyOn(startup, "startupWarnings").mockResolvedValue([]);
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const vite = await createViteServer({ configFile: false, root: dirs.distDir, plugins: [shepherdApi()], server: { host: "127.0.0.1", port: 0, hmr: false, watch: null }, logLevel: "silent" });
     cleanup.push(() => vite.close());
@@ -142,6 +147,7 @@ describe("session discovery", () => {
     expect(statSync(path.join(dirs.dataDir, "session.json")).mode & 0o777).toBe(0o600);
     const response = await fetch(`${session.url}/api/state`, { headers: { authorization: `Bearer ${session.token}` } });
     expect(response.status).toBe(200);
+    await response.json();
     const guide = await fetch(session.guide, { headers: { authorization: `Bearer ${session.token}` } });
     expect(guide.status).toBe(200);
     expect(guide.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
