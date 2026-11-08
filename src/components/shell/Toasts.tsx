@@ -2,6 +2,7 @@ import { Bookmark, CircleCheck, CircleX, UserRound, X } from "lucide-react";
 import { useEffect } from "react";
 import { create } from "zustand";
 import { cx } from "../../model/format";
+import { pathFor } from "../../model/route";
 import { firstLine, progress, stageOf, type Stage } from "../../model/stage";
 import { useShepherd } from "../../store";
 
@@ -90,27 +91,49 @@ export function Toasts() {
   const toasts = useToasts((store) => store.toasts);
   const dismiss = useToasts((store) => store.dismiss);
   const selectTask = useShepherd((store) => store.selectTask);
+  const tasks = useShepherd((store) => store.state.tasks);
   return (
     <div className="pointer-events-none fixed bottom-4 left-1/2 z-50 flex w-96 -translate-x-1/2 flex-col gap-2">
       {toasts.map((toast) => {
         const { icon: Icon, className } = TONE[toast.tone];
+        const task = tasks.find((task) => task.id === toast.taskId);
+        const content = (
+          <>
+            <div className="truncate text-[13px] font-medium text-text">{toast.title}</div>
+            {toast.detail ? <div className="line-clamp-2 text-[12px] text-muted">{toast.detail}</div> : null}
+          </>
+        );
         return (
           <div
             key={toast.id}
             className="enter pointer-events-auto flex items-start gap-3 rounded-lg border border-line-strong bg-surface-2 px-3 py-2.5 shadow-xl"
           >
             <Icon size={18} className={cx("mt-0.5 shrink-0", className)} />
-            <button
-              type="button"
-              className="min-w-0 flex-1 text-left"
-              onClick={() => {
-                if (toast.taskId) selectTask(toast.taskId);
-                dismiss(toast.id);
-              }}
-            >
-              <div className="truncate text-[13px] font-medium text-text">{toast.title}</div>
-              {toast.detail ? <div className="line-clamp-2 text-[12px] text-muted">{toast.detail}</div> : null}
-            </button>
+            {task ? (
+              <a
+                href={pathFor({ goalId: task.goalId, view: "canvas", stepId: task.id, tab: "step" })}
+                className="min-w-0 flex-1 text-left"
+                onClick={(event) => {
+                  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
+                  selectTask(task.id);
+                  dismiss(toast.id);
+                }}
+              >
+                {content}
+              </a>
+            ) : (
+              <button
+                type="button"
+                className="min-w-0 flex-1 text-left"
+                onClick={() => {
+                  if (toast.taskId) selectTask(toast.taskId);
+                  dismiss(toast.id);
+                }}
+              >
+                {content}
+              </button>
+            )}
             <button type="button" aria-label="Dismiss" className="text-faint hover:text-text" onClick={() => dismiss(toast.id)}>
               <X size={14} />
             </button>
