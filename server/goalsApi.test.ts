@@ -174,8 +174,20 @@ describe("goal API", () => {
     expect(engine.get().dependencies.map((dep) => [dep.source, dep.target])).toEqual([
       [prepare, build], [prepare, docs], [build, finish], [docs, finish],
     ]);
+    expect(added.body.steps).toEqual([
+      { id: prepare, name: "Prepare", depth: 0, runner: "agent", dependsOn: [] },
+      { id: build, name: "Build", depth: 1, runner: "agent", dependsOn: [{ task: prepare, gate: "verified" }] },
+      { id: docs, name: "Write docs", depth: 1, runner: "agent", dependsOn: [{ task: prepare, gate: "verified" }] },
+      { id: finish, name: "Finish", depth: 0, runner: "agent", dependsOn: [{ task: build, gate: "verified" }, { task: docs, gate: "verified" }] },
+    ]);
+    expect(added.body).not.toHaveProperty("note");
     const manual = await request("tasks", { goal, name: "Manual", dependsOn: [{ task: prepare, gate: "completed" }] });
     expect(manual.status).toBe(201);
+    expect(manual.body.tasks).toHaveLength(1);
+    expect(manual.body.steps).toHaveLength(5);
+    expect(manual.body.steps.slice(0, 4)).toEqual(added.body.steps);
+    expect(manual.body.steps[4]).toMatchObject({ name: "Manual", dependsOn: [{ task: prepare, gate: "completed" }] });
+    expect(manual.body).not.toHaveProperty("note");
     expect(engine.get().dependencies.filter((dep) => dep.target === manual.body.tasks[0].id))
       .toEqual([expect.objectContaining({ source: prepare, gate: "completed" })]);
     const before = engine.get();
@@ -186,6 +198,30 @@ describe("goal API", () => {
       expect(await request("tasks", body)).toMatchObject({ status: 400, body: { error: expect.stringMatching(/pick one.*depth.*dependsOn/) } });
       expect(engine.get()).toBe(before);
     }
+  });
+
+  it("returns advice without refusing single steps or long lines, based on the whole task", async () => {
+    const { request } = await server();
+    const goal = "goal-proj-local";
+    const first = await request("tasks", { goal, name: "Prepare" });
+    expect(first.status).toBe(201);
+    expect(first.body.steps).toEqual([{ id: first.body.tasks[0].id, name: "Prepare", depth: 0, runner: "agent", dependsOn: [] }]);
+    expect(first.body.note).toContain("one step");
+    expect(first.body.note).toContain("different files can run side by side");
+    expect(first.body.note).toContain("A person's step can close the task");
+    const short = await request("tasks", { goal, tasks: [{ name: "Build" }, { name: "Check" }] });
+    expect(short.status).toBe(201);
+    expect(short.body.steps).toHaveLength(3);
+    expect(short.body).not.toHaveProperty("note");
+    const line = await request("tasks", { goal, name: "Try", runner: "human" });
+    expect(line.status).toBe(201);
+    expect(line.body.steps.map((step: { name: string }) => step.name)).toEqual(["Prepare", "Build", "Check", "Try"]);
+    expect(line.body.steps[3]).toMatchObject({ runner: "human", dependsOn: [{ task: short.body.tasks[1].id, gate: "verified" }] });
+    expect(line.body.note).toContain("straight line of 4 steps");
+    const other = await request("goals", { project: "Workspace", name: "Other" });
+    const alone = await request("tasks", { goal: other.body.goal.id, name: "Other work" });
+    expect(alone.body.steps).toHaveLength(1);
+    expect(alone.body.note).toContain("one step");
   });
 
   it("lists choices for ambiguous project-only steps, drafts and plan commands", async () => {

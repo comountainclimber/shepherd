@@ -13,7 +13,7 @@ import { EFFORTS, type Action, type OrchestrationState, type Task } from "../src
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
-import { boardSummary, planGoal, planProject, planTasks } from "./intake";
+import { boardSummary, planGoal, planProject, planTasks, taskMap } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { markProgress } from "./progress";
@@ -259,7 +259,7 @@ async function route(
       return true;
     }
     planned.actions.forEach((action: Action) => engine.dispatch(action));
-    sendJson(res, 201, { project: planned.projectId, goal: planned.goalId, tasks: planned.tasks, note: "Added to the board." });
+    sendJson(res, 201, { project: planned.projectId, goal: planned.goalId, tasks: planned.tasks, ...taskMap(engine.get(), planned.goalId) });
     return true;
   }
   const openFolder = /^\/api\/goals\/([\w.-]+)\/open$/.exec(pathname);

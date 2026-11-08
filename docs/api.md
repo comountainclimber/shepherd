@@ -43,4 +43,8 @@ curl -X POST "$SHEPHERD_URL/api/tasks" -H "Authorization: Bearer $SHEPHERD_TOKEN
 - `dependsOn` lists steps by id or name, in the same task or earlier in the same request, for arrows the outline cannot express. For example, `"dependsOn": [{ "task": "Wave CLI", "gate": "completed" }]`. Those steps keep these arrows; the outline does not move them. An empty list keeps a step unconnected. The gate is `verified` (done) by default, or `completed` (finished, before its checks). Supplying both `depth` and `dependsOn` gets a 400 asking you to pick one.
 - A bad request gets a 400 that says what is wrong.
 
+A successful `POST /api/tasks` returns 201 with `project`, `goal`, `tasks` (the newly added ids and names), and `steps` (every step in that task, in run order). Each entry in `steps` has `id`, `name`, `depth`, `runner` and `dependsOn`, a list of `{ "task": "<step id>", "gate": "verified" | "completed" }`. Steps that can run together keep their outline order. The dependencies show the actual arrows, including hand-drawn ones.
+
+When the whole map has one step, or is a straight line of four or more steps with nothing side by side, the response also includes a plain `note`: steps that touch different files can run side by side, and a person's step can close the task. This is advice; the steps are still added. Branched maps and lines of two or three steps have no note.
+
 `GET /api/saved-steps` returns `{ steps }`, your saved steps. `PUT /api/saved-steps` with `{ steps }` replaces them all and returns what it kept; entries it cannot add to a project, such as one with no steps, are left out.
