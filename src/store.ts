@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { loadState } from "./model/migrate";
 import { reducer } from "./model/reducer";
+import { pathFor, placeFromPath, type Place } from "./model/route";
 import type { Action, Filters, OrchestrationState, PanelTab, SavedPlace, UiState, ViewId } from "./model/types";
 import { WORKSPACE_PROJECT_ID, workspace } from "./model/workspace";
 
@@ -256,6 +257,54 @@ if (typeof localStorage !== "undefined") {
     if (view === before.view && projectId === before.projectId && goalId === before.goalId && selectedTaskId === before.selectedTaskId) return;
     localStorage.setItem(UI_KEY, JSON.stringify({ view, projectId, goalId, selectedTaskId } satisfies SavedUi));
   });
+}
+
+function placeForUi(ui: UiState): Place {
+  return { goalId: ui.goalId, view: ui.view, stepId: ui.inspectorOpen && ui.view === "canvas" ? ui.selectedTaskId : null, tab: ui.panelTab };
+}
+
+if (typeof window !== "undefined") {
+  let applyingPath = false;
+
+  const writePath = (replace: boolean) => {
+    const path = pathFor(placeForUi(useShepherd.getState().ui));
+    if (path === location.pathname) return;
+    if (replace) history.replaceState(null, "", path);
+    else history.pushState(null, "", path);
+  };
+
+  const applyPath = () => {
+    const store = useShepherd.getState();
+    if (!store.loaded) return;
+    const place = placeFromPath(location.pathname);
+    applyingPath = true;
+    try {
+      if (place && store.state.goals.some((goal) => goal.id === place.goalId)) {
+        store.setGoal(place.goalId);
+        store.setView(place.view);
+        if (place.stepId && store.state.tasks.some((task) => task.id === place.stepId && task.goalId === place.goalId)) {
+          store.openTask(place.stepId, place.tab);
+        }
+      }
+    } finally {
+      applyingPath = false;
+    }
+    writePath(true);
+  };
+
+  useShepherd.subscribe((store, previous) => {
+    if (!store.loaded || applyingPath) return;
+    if (!previous.loaded) {
+      applyPath();
+      return;
+    }
+    const place = placeForUi(store.ui);
+    const before = placeForUi(previous.ui);
+    if (pathFor(place) === pathFor(before)) return;
+    const replace = place.goalId === before.goalId && place.view === before.view && (place.stepId === null || place.stepId === before.stepId);
+    writePath(replace);
+  });
+  window.addEventListener("popstate", applyPath);
 }
 
 export function clearWorkspace() {
