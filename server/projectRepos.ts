@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { OrchestrationState } from "../src/model/types";
@@ -22,4 +22,23 @@ export async function availableRepo(value: string, state: OrchestrationState | (
     if (real === result.repo) throw new Error(`${value} is already the repository for ${project.name}. Open that project instead.`);
   }
   return result;
+}
+
+/**
+ * Shepherd folders that are really links to a git repo outside the workspace, such as
+ * .agent-sandbox/shepherd -> ~/projects/shepherd. Each comes back with the repo it points at.
+ */
+export function linkedRepos(board: OrchestrationState, sandbox: string): { id: string; repo: string }[] {
+  let root: string;
+  try { root = realpathSync(board.workspace || sandbox); } catch { return []; }
+  const found: { id: string; repo: string }[] = [];
+  for (const project of board.projects) {
+    if (project.repo || !project.directory?.trim()) continue;
+    let real: string;
+    try { real = realpathSync(path.resolve(root, project.directory)); } catch { continue; }
+    const relative = path.relative(root, real);
+    const inside = relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+    if (!inside && existsSync(path.join(real, ".git"))) found.push({ id: project.id, repo: real });
+  }
+  return found;
 }

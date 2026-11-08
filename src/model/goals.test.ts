@@ -20,7 +20,8 @@ function add(state = board(), goalId = G, name = "Build") {
 describe("tasks between projects and steps", () => {
   it("creates and edits a task without accepting run or git state from its creator", () => {
     const state = reducer(workspace(1), { type: "createGoal", goal: { ...blankGoal(P, "  Timeout  ", "new", "Fix it"), running: true, branch: "other", status: "archived" } });
-    expect(state.goals.at(-1)).toEqual(blankGoal(P, "Timeout", "new", "Fix it"));
+    expect(state.goals.at(-1)).toEqual({ ...blankGoal(P, "Timeout", "new", "Fix it"), objectiveId: "objective-new", color: "#c084fc" });
+    expect(state.objectives.at(-1)).toEqual({ id: "objective-new", projectId: P, name: "Timeout" });
     const edited = reducer(state, { type: "updateGoal", id: "new", patch: { name: " Fix timeout ", goal: " Keep it fast " } });
     expect(edited.goals.at(-1)).toMatchObject({ name: "Fix timeout", goal: "Keep it fast" });
     expect(reducer(edited, { type: "createGoal", goal: blankGoal(P, "Duplicate", "new") })).toBe(edited);
@@ -91,5 +92,53 @@ describe("task selection for outside callers", () => {
     expect(resolveGoal(state, "Second task")).toEqual({ error: expect.stringContaining("Use its goal id") });
     state = reducer(state, { type: "createProject", project: { id: "other", name: "Other", summary: "" } });
     expect(resolveGoal(state, "second", "other")).toEqual({ error: "There is no task second." });
+  });
+});
+
+describe("objectives and graphs", () => {
+  const objective = { id: "obj-2", projectId: P, name: "Dark mode" };
+  const graph = (id: string, extra: Partial<ReturnType<typeof blankGoal>> = {}) => ({ ...blankGoal(P, id, id), objectiveId: objective.id, ...extra });
+
+  it("makes graphs in an objective with round-robin colours and keeps them in order", () => {
+    let state = reducer(workspace(1), { type: "createObjective", objective });
+    state = reducer(state, { type: "createGoal", goal: graph("a") });
+    state = reducer(state, { type: "createGoal", goal: graph("b") });
+    state = reducer(state, { type: "createGoal", goal: graph("c", { color: "#2dd4bf" }) });
+    const ids = () => state.goals.filter((goal) => goal.objectiveId === objective.id).map((goal) => goal.id);
+    expect(state.goals.filter((goal) => goal.objectiveId === objective.id).map((goal) => goal.color)).toEqual(["#c084fc", "#4fb3f6", "#2dd4bf"]);
+    state = reducer(state, { type: "moveGoal", id: "c", by: -1 });
+    expect(ids()).toEqual(["a", "c", "b"]);
+    expect(reducer(state, { type: "moveGoal", id: "a", by: -1 })).toBe(state);
+    state = reducer(state, { type: "updateGoal", id: "a", patch: { color: "#f26d7d" } });
+    expect(state.goals.find((goal) => goal.id === "a")?.color).toBe("#f26d7d");
+    expect(reducer(state, { type: "updateGoal", id: "a", patch: { color: "red" } })).toEqual(state);
+  });
+
+  it("archives an objective with its open graphs, and reopening a graph brings it back", () => {
+    let state = reducer(workspace(1), { type: "createObjective", objective });
+    state = reducer(state, { type: "createGoal", goal: graph("a") });
+    state = reducer(state, { type: "updateObjective", id: objective.id, patch: { name: " Theme " } });
+    expect(state.objectives.find((item) => item.id === objective.id)?.name).toBe("Theme");
+    state = reducer(state, { type: "archiveObjective", id: objective.id });
+    expect(state.objectives.find((item) => item.id === objective.id)?.archived).toBe(true);
+    expect(state.goals.find((goal) => goal.id === "a")?.status).toBe("archived");
+    state = reducer(state, { type: "reopenGoal", id: "a" });
+    expect(state.objectives.find((item) => item.id === objective.id)?.archived).toBe(false);
+  });
+
+  it("restores an archived objective with its archived graphs", () => {
+    let state = reducer(workspace(1), { type: "createObjective", objective });
+    state = reducer(state, { type: "createGoal", goal: graph("a") });
+    state = reducer(state, { type: "createGoal", goal: graph("b") });
+    state = reducer(state, { type: "archiveObjective", id: objective.id });
+    expect(reducer(state, { type: "restoreObjective", id: "missing" })).toBe(state);
+    state = reducer(state, { type: "restoreObjective", id: objective.id });
+    expect(state.objectives.find((item) => item.id === objective.id)?.archived).toBe(false);
+    expect(state.goals.filter((goal) => goal.objectiveId === objective.id).map((goal) => goal.status)).toEqual(["open", "open"]);
+  });
+
+  it("gives a goal made without an objective one of its own", () => {
+    const state = reducer(workspace(1), { type: "createGoal", goal: { ...blankGoal(P, "Loose", "loose"), objectiveId: "missing" } });
+    expect(state.goals.at(-1)?.objectiveId).toBe("objective-loose");
   });
 });

@@ -1,5 +1,6 @@
 import { mergeRequestUrl } from "./mergeRequest";
 import { blankGoal } from "./factory";
+import { isGraphColor, withObjectives } from "./graphs";
 import { keptMarks } from "./acceptance";
 import { isEffort, isModelId } from "./models";
 import { isDemoState, projectDirectory } from "./workspace";
@@ -11,6 +12,7 @@ import type {
   Issue,
   Look,
   Notification,
+  Objective,
   OrchestrationState,
   Project,
   Task,
@@ -241,6 +243,8 @@ export function loadState(saved: unknown): OrchestrationState | null {
           ...parseOutline(value),
           running: value.running === true,
           status: value.status === "done" || value.status === "archived" ? value.status : "open",
+          ...(typeof value.objectiveId === "string" && value.objectiveId ? { objectiveId: value.objectiveId } : {}),
+          ...(isGraphColor(value.color) ? { color: value.color } : {}),
           ...(typeof value.branch === "string" ? { branch: value.branch } : {}),
           ...(typeof value.folder === "string" ? { folder: value.folder } : {}),
           ...(typeof value.base === "string" ? { base: value.base } : {}),
@@ -256,8 +260,14 @@ export function loadState(saved: unknown): OrchestrationState | null {
       });
   const tasks = list(raw.tasks).flatMap((item) => (record(item) ? [task(item as Raw)] : []));
   if (raw.schema !== 3) for (const task of tasks) task.goalId = goals.find((goal) => goal.projectId === task.projectId)?.id ?? "";
-  return {
+  const objectives = list(raw.objectives).flatMap((item): Objective[] => {
+    const value = record(item);
+    if (!value || typeof value.id !== "string" || !value.id || !projects.some((project) => project.id === value.projectId)) return [];
+    return [{ id: value.id, projectId: text(value.projectId), name: text(value.name, "Untitled objective"), ...(value.archived === true ? { archived: true } : {}) }];
+  });
+  return withObjectives({
     schema: 3,
+    objectives,
     goals,
     projects,
     tasks,
@@ -267,7 +277,7 @@ export function loadState(saved: unknown): OrchestrationState | null {
     now: typeof raw.now === "number" ? raw.now : Date.now(),
     seq: typeof raw.seq === "number" ? raw.seq : 1,
     ...(typeof raw.workspace === "string" && raw.workspace.trim() ? { workspace: raw.workspace.trim() } : {}),
-  };
+  });
 }
 
 function parseOutline(raw: Raw): Pick<Goal, "outline"> {

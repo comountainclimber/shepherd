@@ -1,4 +1,5 @@
-import { blankGoal, commandCheck, reviewCheck, workCheck } from "./factory";
+import { blankGoal, commandCheck, defaultGoalId, reviewCheck, workCheck } from "./factory";
+import { GRAPH_COLORS, colorForNewGraph, isGraphColor, objectiveIdFor, withObjectives } from "./graphs";
 import { workCheckInput, workCheckPassed } from "./workCheck";
 import { acceptanceItems, keptMarks } from "./acceptance";
 import { EFFORT_LABEL, isEffort, isModelId } from "./models";
@@ -15,6 +16,7 @@ import type {
   Goal,
   Look,
   Notification,
+  Objective,
   OrchestrationState,
   OutlineItem,
   Project,
@@ -131,14 +133,52 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return disconnect(state, action.id);
     case "createProject":
       return createProject(state, action.project);
+    case "createObjective":
+      return createObjective(state, action.objective);
+    case "linkRepo": {
+      const repo = typeof action.repo === "string" ? action.repo.trim() : "";
+      if (!repo || !state.projects.some((project) => project.id === action.id && !project.repo)) return state;
+      return {
+        ...state,
+        projects: state.projects.map((project) => {
+          if (project.id !== action.id) return project;
+          const { directory: _directory, ...rest } = project;
+          return { ...rest, repo };
+        }),
+      };
+    }
+    case "updateObjective": {
+      const name = typeof action.patch?.name === "string" ? action.patch.name.trim() : "";
+      if (!name) return state;
+      return { ...state, objectives: state.objectives.map((objective) => (objective.id === action.id ? { ...objective, name } : objective)) };
+    }
+    case "archiveObjective": {
+      if (!state.objectives.some((objective) => objective.id === action.id && !objective.archived)) return state;
+      return {
+        ...state,
+        objectives: state.objectives.map((objective) => (objective.id === action.id ? { ...objective, archived: true } : objective)),
+        goals: state.goals.map((goal) => (goal.objectiveId === action.id && goal.status === "open" ? { ...goal, status: "archived", running: false } : goal)),
+      };
+    }
+    case "restoreObjective": {
+      if (!state.objectives.some((objective) => objective.id === action.id && objective.archived)) return state;
+      return {
+        ...state,
+        objectives: state.objectives.map((objective) => (objective.id === action.id ? { ...objective, archived: false } : objective)),
+        goals: state.goals.map((goal) => (goal.objectiveId === action.id && goal.status === "archived" ? { ...goal, status: "open" } : goal)),
+      };
+    }
     case "createGoal":
       return createGoal(state, action.goal);
+    case "moveGoal":
+      return moveGoal(state, action.id, action.by);
     case "updateGoal": {
       const name = typeof action.patch?.name === "string" ? action.patch.name.trim() : "";
+      const color = isGraphColor(action.patch?.color) ? action.patch.color : undefined;
       return {
         ...state,
         goals: state.goals.map((goal) => goal.id === action.id
-          ? { ...goal, ...(name ? { name } : {}), ...(typeof action.patch?.goal === "string" ? { goal: action.patch.goal.trim() } : {}) }
+          ? { ...goal, ...(name ? { name } : {}), ...(typeof action.patch?.goal === "string" ? { goal: action.patch.goal.trim() } : {}), ...(color ? { color } : {}) }
           : goal),
       };
     }
@@ -146,13 +186,17 @@ function reduce(state: OrchestrationState, action: Action): OrchestrationState {
       return { ...state, goals: state.goals.map((goal) => goal.id === action.id ? { ...goal, ...action.patch } : goal) };
     case "finishGoal":
     case "archiveGoal":
-    case "reopenGoal":
+    case "reopenGoal": {
+      const reopened = action.type === "reopenGoal" ? state.goals.find((goal) => goal.id === action.id)?.objectiveId : undefined;
       return {
         ...state,
+        // Reopening a graph of an archived objective brings the objective back with it.
+        ...(reopened ? { objectives: state.objectives.map((objective) => (objective.id === reopened && objective.archived ? { ...objective, archived: false } : objective)) } : {}),
         goals: state.goals.map((goal) => goal.id === action.id
           ? { ...goal, status: action.type === "finishGoal" ? "done" : action.type === "archiveGoal" ? "archived" : "open", running: false }
           : goal),
       };
+    }
     case "deleteGoal": {
       let next = state;
       for (const task of state.tasks.filter((task) => task.goalId === action.id)) next = deleteTask(next, task.id);
@@ -323,7 +367,8 @@ function createProject(state: OrchestrationState, project: Project): Orchestrati
   return {
     ...state,
     seq: state.seq + 1,
-    goals: [...state.goals, blankGoal(project.id, name)],
+    goals: [...state.goals, { ...blankGoal(project.id, name), objectiveId: objectiveIdFor(defaultGoalId(project.id)), color: GRAPH_COLORS[0] }],
+    objectives: [...state.objectives, { id: objectiveIdFor(defaultGoalId(project.id)), projectId: project.id, name }],
     projects: [
       ...state.projects,
       {
@@ -960,7 +1005,32 @@ function deleteTask(state: OrchestrationState, id: string): OrchestrationState {
 
 function createGoal(state: OrchestrationState, goal: Goal): OrchestrationState {
   if (!goal || !goal.id || (typeof goal.name !== "string" || !goal.name.trim()) || !state.projects.some((project) => project.id === goal.projectId) || state.goals.some((item) => item.id === goal.id)) return state;
-  return { ...state, seq: state.seq + 1, goals: [...state.goals, blankGoal(goal.projectId, goal.name.trim(), goal.id, typeof goal.goal === "string" ? goal.goal.trim() : "")] };
+  const objective = state.objectives.find((item) => item.id === goal.objectiveId && item.projectId === goal.projectId && !item.archived);
+  const made: Goal = {
+    ...blankGoal(goal.projectId, goal.name.trim(), goal.id, typeof goal.goal === "string" ? goal.goal.trim() : ""),
+    ...(objective ? { objectiveId: objective.id, color: isGraphColor(goal.color) ? goal.color : colorForNewGraph(state, objective.id) } : {}),
+  };
+  // A goal made without an objective gets one of its own.
+  return withObjectives({ ...state, seq: state.seq + 1, goals: [...state.goals, made] });
+}
+
+function createObjective(state: OrchestrationState, objective: Objective): OrchestrationState {
+  const name = typeof objective?.name === "string" ? objective.name.trim() : "";
+  if (!objective?.id || !name || state.objectives.some((item) => item.id === objective.id) || !state.projects.some((project) => project.id === objective.projectId)) return state;
+  return { ...state, objectives: [...state.objectives, { id: objective.id, projectId: objective.projectId, name }] };
+}
+
+/** Swaps a graph with its neighbour among the objective's graphs, keeping every other goal where it is. */
+function moveGoal(state: OrchestrationState, id: string, by: -1 | 1): OrchestrationState {
+  const goal = state.goals.find((item) => item.id === id);
+  if (!goal || goal.status === "archived" || (by !== -1 && by !== 1)) return state;
+  const siblings = state.goals.flatMap((item, index) => (item.objectiveId === goal.objectiveId && item.status !== "archived" ? [index] : []));
+  const at = siblings.indexOf(state.goals.indexOf(goal));
+  const other = siblings[at + by];
+  if (other === undefined) return state;
+  const goals = [...state.goals];
+  [goals[siblings[at]!], goals[other]] = [goals[other]!, goals[siblings[at]!]!];
+  return { ...state, goals };
 }
 
 function setWorkCheck(state: OrchestrationState, id: string, on: boolean): OrchestrationState {

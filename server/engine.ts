@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { interruptWork, loadState } from "../src/model/migrate";
+import { isGraphColor } from "../src/model/graphs";
 import { isEffort, isModelId } from "../src/model/models";
 import { reducer } from "../src/model/reducer";
 import type { Action, OrchestrationState } from "../src/model/types";
@@ -17,8 +18,13 @@ export const TAB_ACTIONS = new Set<Action["type"]>([
   "connect",
   "disconnect",
   "createProject",
+  "createObjective",
+  "updateObjective",
+  "archiveObjective",
+  "restoreObjective",
   "createGoal",
   "updateGoal",
+  "moveGoal",
   "finishGoal",
   "archiveGoal",
   "reopenGoal",
@@ -184,10 +190,28 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
       return { error: "A new task needs an id, name, goal text and a project." };
     }
   }
-  if (action.type === "updateGoal") {
-    if (!action.patch || Object.keys(action.patch).some((key) => key !== "name" && key !== "goal")) {
-      return { error: "A tab can only edit a task's name and goal directly." };
+  if (action.type === "createGoal" && action.goal) {
+    const goal = action.goal;
+    if (goal.objectiveId !== undefined && !state.objectives.some((objective) => objective.id === goal.objectiveId && objective.projectId === goal.projectId && !objective.archived)) {
+      return { error: "Make the graph in an open objective of the same repo." };
     }
+    if (goal.color !== undefined && !isGraphColor(goal.color)) return { error: "Pick one of the graph colours." };
+  }
+  if (action.type === "createObjective") {
+    const objective = action.objective;
+    if (!objective || typeof objective.id !== "string" || !objective.id || typeof objective.name !== "string" || !objective.name.trim() || !state.projects.some((project) => project.id === objective.projectId)) {
+      return { error: "A new objective needs an id, a name and a repo." };
+    }
+  }
+  if (action.type === "updateObjective" && (!action.patch || Object.keys(action.patch).some((key) => key !== "name") || typeof action.patch.name !== "string" || !action.patch.name.trim())) {
+    return { error: "A tab can only rename an objective, to a nonempty name." };
+  }
+  if (action.type === "moveGoal" && action.by !== -1 && action.by !== 1) return { error: "Move a graph up or down by one." };
+  if (action.type === "updateGoal") {
+    if (!action.patch || Object.keys(action.patch).some((key) => key !== "name" && key !== "goal" && key !== "color")) {
+      return { error: "A tab can only edit a task's name, goal and colour directly." };
+    }
+    if (action.patch.color !== undefined && !isGraphColor(action.patch.color)) return { error: "Pick one of the graph colours." };
     if ((action.patch.name !== undefined && (typeof action.patch.name !== "string" || !action.patch.name.trim())) || (action.patch.goal !== undefined && typeof action.patch.goal !== "string")) {
       return { error: "Use a nonempty name and text for the task's goal." };
     }

@@ -18,7 +18,7 @@ import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { markProgress } from "./progress";
 import { openTaskFolder } from "./openTaskFolder";
-import { availableRepo } from "./projectRepos";
+import { availableRepo, linkedRepos } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
 
@@ -47,6 +47,7 @@ export function createApp(options: AppOptions) {
   mkdirSync(sandbox, { recursive: true, mode: 0o700 });
   const security = createSecurity(options.origin);
   const engine = createEngine(path.join(shepherd, "state.json"), undefined, options.demo ? { ...workspace(), projects: [], goals: [] } : undefined);
+  for (const link of linkedRepos(engine.get(), sandbox)) engine.dispatch({ type: "linkRepo", ...link });
   const evidence = path.join(shepherd, "evidence");
   const looks = path.join(shepherd, "looks");
   const runner: Runner = options.demo ? {
@@ -218,8 +219,12 @@ async function route(
         }
       }
       if (action.type === "deleteTask") runner.cancel(action.id);
-      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal") {
-        for (const step of engine.get().tasks.filter((step) => step.goalId === action.id)) {
+      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal" || action.type === "archiveObjective") {
+        const board = engine.get();
+        const goalIds = action.type === "archiveObjective"
+          ? new Set(board.goals.filter((goal) => goal.objectiveId === action.id && goal.status === "open").map((goal) => goal.id))
+          : new Set([action.id]);
+        for (const step of board.tasks.filter((step) => goalIds.has(step.goalId))) {
           runner.cancel(step.id);
           if (step.status === "running" && action.type !== "deleteGoal") engine.dispatch({ type: "setStatus", id: step.id, status: "blocked" });
         }
