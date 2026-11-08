@@ -3,7 +3,7 @@ import { outlineOf, parseList } from "../src/model/outline";
 import { reducer } from "../src/model/reducer";
 import type { OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
-import { boardSummary, planProject, planTasks } from "./intake";
+import { boardSummary, planProject, planTasks, taskMap } from "./intake";
 
 function board(): OrchestrationState {
   return reducer(workspace(1), { type: "createProject", project: { id: "proj-2", name: "Greeter", summary: "", directory: "greeter" } });
@@ -181,6 +181,38 @@ describe("planTasks", () => {
     expect(error({ project: "Greeter", name: "X", model: "--yolo" })).toMatch(/^model is not a model name/);
     expect(error({ project: "Greeter", name: "X", thinking: "lots" })).toBe("thinking must be one of: low, medium, high, xhigh, max, ultra.");
     expect(error({ project: "Greeter", name: "X", runner: "human", model: "opus" })).toMatch(/done by a person/);
+  });
+});
+
+describe("taskMap", () => {
+  it("lists the whole task in run order, keeping outline order for steps that can run together", () => {
+    const result = planned(board(), { project: "Greeter", tasks: [
+      { name: "Prepare" }, { name: "Build", depth: 1 }, { name: "Docs", depth: 1 },
+      { name: "Try", runner: "human" },
+    ] });
+    const state = result.actions.reduce(reducer, board());
+    expect(taskMap(state, result.goalId)).toEqual({ steps: [
+      { id: "api-1", name: "Prepare", depth: 0, runner: "agent", dependsOn: [] },
+      { id: "api-2", name: "Build", depth: 1, runner: "agent", dependsOn: [{ task: "api-1", gate: "verified" }] },
+      { id: "api-3", name: "Docs", depth: 1, runner: "agent", dependsOn: [{ task: "api-1", gate: "verified" }] },
+      { id: "api-4", name: "Try", depth: 0, runner: "human", dependsOn: [{ task: "api-2", gate: "verified" }, { task: "api-3", gate: "verified" }] },
+    ] });
+  });
+
+  it("uses actual arrows and gates when hand wiring runs against outline order", () => {
+    const result = planned(board(), { project: "Greeter", tasks: [
+      { name: "A", dependsOn: [] }, { name: "B", dependsOn: [] },
+      { name: "C", dependsOn: [] }, { name: "D", dependsOn: [] },
+    ] });
+    let state = result.actions.reduce(reducer, board());
+    for (const [source, target] of [["api-4", "api-3"], ["api-3", "api-2"], ["api-2", "api-1"]]) {
+      state = reducer(state, { type: "connect", source, target, gate: "completed" });
+    }
+    const map = taskMap(state, result.goalId);
+    expect(map.steps.map((step) => step.id)).toEqual(["api-4", "api-3", "api-2", "api-1"]);
+    expect(map.steps[1].dependsOn).toEqual([{ task: "api-4", gate: "completed" }]);
+    expect(map.note).toContain("straight line of 4 steps");
+    expect(taskMap(state, "goal-proj-local")).toEqual({ steps: [] });
   });
 });
 

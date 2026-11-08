@@ -1,7 +1,8 @@
 import { blankGoal, blankTask, nextPosition, slugify } from "../src/model/factory";
 import { resolveGoal } from "../src/model/goals";
+import { mapShapeNote } from "../src/model/mapShape";
 import { isEffort, isModelId } from "../src/model/models";
-import { MAX_DEPTH, outlineOf } from "../src/model/outline";
+import { dependencyOrder, MAX_DEPTH, outlineOf } from "../src/model/outline";
 import { reducer } from "../src/model/reducer";
 import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
@@ -9,6 +10,24 @@ import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
 import { repoPath } from "./projectRepos";
 
 export const MAX_TASKS = 50;
+
+export function taskMap(state: OrchestrationState, goalId: string) {
+  const outline = outlineOf(state, goalId);
+  const byId = new Map(state.tasks.map((task) => [task.id, task]));
+  const depths = new Map(outline.map((item) => [item.id, item.depth]));
+  const tasks = dependencyOrder(outline.map((item) => byId.get(item.id)!), state.dependencies);
+  const note = mapShapeNote(tasks, state.dependencies);
+  return {
+    steps: tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      depth: depths.get(task.id)!,
+      runner: task.runner,
+      dependsOn: state.dependencies.filter((dep) => dep.target === task.id).map((dep) => ({ task: dep.source, gate: dep.gate })),
+    })),
+    ...(note ? { note } : {}),
+  };
+}
 
 export interface Planned {
   projectId: string;
