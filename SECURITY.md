@@ -17,7 +17,10 @@ sensitive data from that work.
 
 Both the standalone server and development server listen only on
 `127.0.0.1`. Each start creates a random token. The printed address exchanges
-that token for an HttpOnly, SameSite=Strict browser cookie; API clients and
+that token for an HttpOnly, SameSite=Strict browser cookie. Opening any page
+path with `?token=<token>` unlocks the browser and redirects to the same path,
+removing the token from the address and keeping other query parameters. A wrong
+token is refused. API paths do not accept query tokens; API clients and
 agent helpers can use a bearer token. Every API route, including the event
 stream, screenshots and reports, requires authentication. Requests with a
 foreign Origin or Host are refused. Restarting the server invalidates the old
