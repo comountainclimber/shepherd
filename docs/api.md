@@ -4,6 +4,18 @@
 
 Everything the UI does goes through these, so agents and scripts can use them too. They live on the local server and run agents and shell commands on your machine. Every API request, including streams, screenshots and reports, needs the startup token: the browser uses an HTTP-only, SameSite cookie set by the printed address; scripts send `Authorization: Bearer <token>`. A supplied Origin must exactly match the printed address's origin, and requests to other hostnames are refused. Every POST and PUT needs `content-type: application/json`. Shepherd gives agents `SHEPHERD_TOKEN` along with `SHEPHERD_URL`, so `SHEPHERD_LOOK` and `SHEPHERD_DONE` authenticate automatically. There are no accounts, hosted database or telemetry; your agents, connectors, commands and git remotes may contact services using your own configuration.
 
+## Agents Shepherd did not launch
+
+Read `session.json` in the configured [data folder](storage.md): `~/.shepherd/` when installed, or the checkout's `.shepherd/` in development, unless changed with `--data-dir` or `SHEPHERD_DATA_DIR`. While Shepherd runs, it contains:
+
+```json
+{"url":"http://127.0.0.1:5194","token":"<startup token>","guide":"http://127.0.0.1:5194/api/guide","pid":12345}
+```
+
+Send `GET` to the file's `guide` address with `Authorization: Bearer <token>`, using its `token` value. It returns a short Markdown guide to using Shepherd. Use the file's `url` for further API requests; its port matches the running server, which may differ from this example. The file is private to your user and removed on stop. Demo boards do not write it.
+
+## Routes
+
 - `GET /api/state` returns the whole board. `GET /api/stream` streams it as server-sent events.
 - `POST /api/actions` applies edits, such as `{ "action": { "type": "addSteps", "goalId": "...", "after": null, "steps": [...] } }`. See `Action` in `src/model/types.ts`.
 - `POST /api/commands` runs things: `{ "command": "runPlan" | "stopPlan" | "mergePlan", "goalId": "..." }`, or `{ "command": "run" | "stop" | "instruct" | "check" | "complete" | "merge" | "forward", "taskId": "..." }`. `{ "command": "sendBack", "taskId": "<your step>", "to": "<an earlier agent step>", "text": "..." }` reruns that agent with your note. `{ "command": "checklist", "taskId": "<your step>" }` has Codex suggest a checklist, which waits on the step as `checklist` until a `settleChecklist` edit uses or discards it. `merge` collects an accepted step into its task branch; `mergePlan` is the explicit request to merge the task branch into its recorded base. A goal reports any pending merge in `blocker`, its last explicit merge in `merged`, and the merge request link reported by a push-enabled step in `mergeRequestUrl`.

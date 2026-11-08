@@ -156,7 +156,7 @@ The outline sets dependencies unless you draw arrows by hand. Checks gate accept
 - 🌿 **Separate work, collected on purpose.** A branch and folder per task, a worktree per agent step, and explicit merging into the base.
 - 📦 **Steps worth keeping.** Save a useful review, browser check or merge request step for the next task.
 - 🐛 **Problems that stay visible.** Keep known issues with the work, pass them to later steps or turn them into new steps.
-- 🔌 **A local API.** Script the same board actions the app uses, with the startup token. [API reference →](docs/api.md)
+- 🔌 **A local API.** Script the same board actions the app uses, with the startup token. Agents Shepherd did not launch can find its address, token and guide in the data folder's `session.json` while it runs. [API reference →](docs/api.md)
 
 ## 🔒 Your machine. Your agents. Your work.
 
