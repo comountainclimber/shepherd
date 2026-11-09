@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+- Browse each repository's objectives and graphs in a sidebar tree, and open
+  any graph's steps from it.
+- Keep your place in the address bar: refresh, Back, Forward, pasted links and
+  new tabs reopen the same task, step and tab.
+- Let agents Shepherd did not launch find a running Shepherd through a private
+  `session.json` in the data folder, and learn the API from `/api/guide`.
+- Draft maps with side-by-side steps, Done when lines and check commands by
+  default. `POST /api/goals` can draft a new task in one request, `POST
+  /api/tasks` accepts `depth`, and responses describe the resulting map.
+- Send a step whose merge conflicts back to its agent with the conflict left
+  in its folder before asking a person.
+
+Known issue: Shepherd only commits an agent's conflict resolution once the
+resolved files are staged, so a conflicting step usually still ends up waiting
+for you.
+
 ## 0.1.0
 
 Initial open-source release.
