@@ -12,7 +12,9 @@ import {
   type Edge,
   type NodeChange,
 } from "@xyflow/react";
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { FALLBACK_COLOR, graphColor } from "../../model/graphs";
 import { hasCycle, isTaskDimmed, taskMatches, tasksForGoal, waitingOn } from "../../model/selectors";
 import { dependencySatisfied } from "../../model/verify";
 import { AGENTS } from "../../model/workspace";
@@ -20,10 +22,21 @@ import { initialFilters, useShepherd } from "../../store";
 import { markComplete, runLabel, runTask, stopTask } from "../../runner/live";
 import { placeFor } from "../saved/addSaved";
 import { Sheep } from "../shell/Hud";
+import { appendStep } from "../outline/appendStep";
+import { newGraph } from "../outline/Tree";
 import { Button, GateSelect } from "../ui";
 import { NODE_HEIGHT, NODE_WIDTH, TaskNodeView, type TaskFlowNode } from "./TaskNode";
 
 const nodeTypes = { task: TaskNodeView };
+
+/** The inspector floats over the map's right side, 440px wide with a 12px margin. */
+const INSPECTOR_SPACE = 452;
+
+/** Fits a graph at most at 0.85, 48px from the edges, below the chip and clear of an open inspector. */
+function fitOptions(width: number, inspectorOpen: boolean) {
+  const beside = inspectorOpen && width - INSPECTOR_SPACE >= 360;
+  return { maxZoom: 0.85, padding: { top: "64px", right: `${beside ? INSPECTOR_SPACE + 48 : 48}px`, bottom: "48px", left: "48px" } } as const;
+}
 
 export function OrchestrationCanvas() {
   return (
@@ -40,18 +53,23 @@ function CanvasInner() {
   const state = useShepherd((store) => store.state);
   const ui = useShepherd((store) => store.ui);
   const dispatch = useShepherd((store) => store.dispatch);
+  const requestDraft = useShepherd((store) => store.requestDraft);
   const selectTask = useShepherd((store) => store.selectTask);
   const selectEdge = useShepherd((store) => store.selectEdge);
   const setContextMenu = useShepherd((store) => store.setContextMenu);
   const setFilters = useShepherd((store) => store.setFilters);
   const [dragging, setDragging] = useState<Record<string, { x: number; y: number }>>({});
+  const box = useRef<HTMLDivElement>(null);
+  const objective = state.objectives.find((item) => item.id === ui.objectiveId);
+  const graph = state.goals.find((goal) => goal.id === ui.goalId);
+  const color = graph ? graphColor(graph) : FALLBACK_COLOR;
 
   const projectTasks = useMemo(
     () => tasksForGoal(state, ui.goalId),
     [state.tasks, ui.goalId],
   );
   const visibleCount = projectTasks.filter((task) => taskMatches(task, ui.filters, state.tasks, state.dependencies)).length;
-  const layoutKey = projectTasks
+  const layoutKey = color + projectTasks
     .map((task) => {
       const position = dragging[task.id] ?? task.position;
       const dimmed = isTaskDimmed(task, ui.filters, state.tasks, state.dependencies, ui.selectedTaskId);
@@ -71,6 +89,7 @@ function CanvasInner() {
         data: {
           taskId: task.id,
           dimmed: isTaskDimmed(task, ui.filters, state.tasks, state.dependencies, ui.selectedTaskId),
+          color,
         },
         zIndex: task.id === ui.selectedTaskId ? 10 : 0,
       })),
@@ -140,15 +159,33 @@ function CanvasInner() {
   nodesRef.current = nodes;
   const fitViewRef = useRef(fitView);
   fitViewRef.current = fitView;
+  const fitRef = useRef(() => {});
+  fitRef.current = () => void fitView({ ...fitOptions(box.current?.clientWidth ?? 0, ui.inspectorOpen), duration: 200 });
   const shape = state.goals
     .find((project) => project.id === ui.goalId)
     ?.outline?.map((item) => `${item.id}:${item.depth}`)
     .join("|");
 
   useEffect(() => {
-    const id = window.setTimeout(() => fitViewRef.current({ padding: 0.2, duration: 200 }), 80);
+    const id = window.setTimeout(() => fitRef.current(), 80);
     return () => window.clearTimeout(id);
-  }, [ui.goalId, ui.fitToken, shape]);
+  }, [ui.goalId, ui.fitToken, shape, ui.inspectorOpen]);
+
+  // The graph fits again whenever the map changes size.
+  useEffect(() => {
+    const element = box.current;
+    if (!element) return;
+    let timer = 0;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => fitRef.current(), 120);
+    });
+    observer.observe(element);
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     const search = ui.filters.search.trim();
@@ -178,16 +215,16 @@ function CanvasInner() {
       const { key, code } = event;
       if (key === "=" || key === "+" || code === "Equal" || code === "NumpadAdd") void zoomIn({ duration: 150 });
       else if (key === "-" || key === "_" || code === "Minus" || code === "NumpadSubtract") void zoomOut({ duration: 150 });
-      else if (key === "0" || code === "Digit0" || code === "Numpad0") void fitView({ padding: 0.2, duration: 200 });
+      else if (key === "0" || code === "Digit0" || code === "Numpad0") fitRef.current();
       else return;
       event.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [zoomIn, zoomOut, fitView]);
+  }, [zoomIn, zoomOut]);
 
   return (
-    <div className="relative h-full w-full">
+    <div ref={box} className="relative h-full w-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -217,7 +254,7 @@ function CanvasInner() {
           setContextMenu({ x: event.clientX, y: event.clientY, taskId: node.id });
         }}
         fitView
-        fitViewOptions={{ padding: 0.18 }}
+        fitViewOptions={fitOptions(box.current?.clientWidth ?? 0, ui.inspectorOpen)}
         minZoom={0.35}
         maxZoom={1.5}
         proOptions={{ hideAttribution: true }}
@@ -264,14 +301,38 @@ function CanvasInner() {
         ) : null}
       </ReactFlow>
       {ui.contextMenu ? <TaskMenu /> : null}
-      {projectTasks.length === 0 ? (
+      {objective ? (
+        <div className="pointer-events-none absolute left-4 right-4 top-3.5 z-10 flex items-center gap-2">
+          <span className="inline-flex h-7 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border border-line bg-surface pl-2 pr-2.5 text-[12px] text-muted">
+            <span className="max-w-48 truncate text-faint">{objective.name}</span>
+            <span className="text-faint">/</span>
+            <span aria-hidden className="size-[9px] rounded-[2px]" style={{ background: color }} />
+            <span className="max-w-56 truncate font-semibold text-text">{graph?.name ?? "No graph yet"}</span>
+            <span className="font-mono text-[11px] text-faint">{projectTasks.length}</span>
+          </span>
+          <span className="hidden min-w-0 truncate text-[11px] text-faint md:inline">Each graph is isolated · pick another in the tree</span>
+        </div>
+      ) : null}
+      {graph?.blocker ? (
+        <p
+          role="status"
+          className="absolute left-4 top-[52px] z-10 max-w-[min(560px,calc(100%-32px))] rounded-lg border border-approval/20 bg-surface px-3 py-2 text-[12px] leading-5 text-approval shadow-lg [overflow-wrap:anywhere]"
+        >
+          {graph.blocker}
+        </p>
+      ) : null}
+      {objective && !graph ? (
+        <EmptyCard color={FALLBACK_COLOR} label="New graph" onClick={() => newGraph(objective)} />
+      ) : graph && graph.status === "open" && projectTasks.length === 0 ? (
+        <EmptyCard color={color} label="Add the first step" onClick={() => appendStep(graph.id)} onDraft={() => requestDraft()} />
+      ) : projectTasks.length === 0 ? (
         <Overlay>
           <div className="flex justify-center">
             <Sheep size={48} />
           </div>
-          <div className="mt-3 text-[16px] font-semibold text-text">The map of your steps shows up here</div>
+          <div className="mt-3 text-[16px] font-semibold text-text">{objective ? "This graph has no steps" : "The map of your steps shows up here"}</div>
           <p className="mx-auto mt-1 max-w-xs text-[14px] leading-5 text-muted">
-            Write the steps on the left, or describe what you want done and let Codex draft them.
+            {objective ? "Pick another graph in the tree." : "Pick an objective in the tree, or make one, to see its graphs."}
           </p>
         </Overlay>
       ) : null}
@@ -283,6 +344,42 @@ function CanvasInner() {
           </Button>
         </Overlay>
       ) : null}
+    </div>
+  );
+}
+
+/** Where the first node goes: a dashed card in the graph's colour. */
+function EmptyCard({ color, label, onClick, onDraft }: { color: string; label: string; onClick: () => void; onDraft?: () => void }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+          event.preventDefault();
+          onClick();
+        }}
+        className="enter pointer-events-auto flex h-28 w-64 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed text-[14px] text-muted outline-none hover:text-text focus-visible:text-text"
+        style={{ borderColor: color }}
+      >
+        <span className="flex items-center gap-1.5">
+          <Plus size={16} /> {label}
+        </span>
+        {onDraft ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDraft();
+            }}
+            className="text-[12px] text-faint hover:text-text"
+          >
+            or draft steps from a goal
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

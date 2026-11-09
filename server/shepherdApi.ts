@@ -12,15 +12,17 @@ import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/mode
 import { EFFORTS, type Action, type Goal, type OrchestrationState, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
+import { guideText } from "./guide";
 import { checklistInput, draftChecklist, draftSteps } from "./draft";
 import { boardSummary, planGoal, planProject, planTasks, taskMap } from "./intake";
 import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { markProgress } from "./progress";
 import { openTaskFolder } from "./openTaskFolder";
-import { availableRepo } from "./projectRepos";
+import { availableRepo, linkedRepos } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
+import { removeSession, writeSession } from "./session";
 
 /** The longest goal Shepherd sends to an agent to plan. */
 const GOAL_LIMIT = 4000;
@@ -47,6 +49,7 @@ export function createApp(options: AppOptions) {
   mkdirSync(sandbox, { recursive: true, mode: 0o700 });
   const security = createSecurity(options.origin);
   const engine = createEngine(path.join(shepherd, "state.json"), undefined, options.demo ? { ...workspace(), projects: [], goals: [] } : undefined);
+  for (const link of linkedRepos(engine.get(), sandbox)) engine.dispatch({ type: "linkRepo", ...link });
   const evidence = path.join(shepherd, "evidence");
   const looks = path.join(shepherd, "looks");
   const runner: Runner = options.demo ? {
@@ -64,16 +67,22 @@ export function createApp(options: AppOptions) {
     checklist: (board, task, signal) => writeChecklist(board, task, sandbox, signal),
   });
   const saved = createSavedSteps(path.join(shepherd, "saved-steps.json"));
-  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo });
+  const handle = apiHandler({ engine, runner, sandbox, evidence, looks, look: createLooks(engine, looks), saved, demo: !!options.demo, origin: options.origin });
   const stop = () => {
     runner.close();
     engine.close();
+    if (!options.demo) removeSession(shepherd, security.token);
   };
   return {
     engine,
     runner,
     security,
     stop,
+    announce() {
+      if (options.demo) return;
+      const url = options.origin();
+      if (url) writeSession(shepherd, { url, token: security.token, guide: `${url}/api/guide`, pid: process.pid });
+    },
     handle(req: IncomingMessage, res: ServerResponse, next: () => void) {
       if (!security.allow(req, res)) return;
       if (options.demo) {
@@ -81,7 +90,7 @@ export function createApp(options: AppOptions) {
         if (url.pathname === "/api/models") return sendJson(res, 200, options.demo.models);
         if (url.pathname === "/api/agents") return sendJson(res, 200, { codex: true, claude: true, git: true, workspace: "Demo workspace" });
         if (url.pathname.startsWith("/api/") && ![
-          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps",
+          "/api/state", "/api/stream", "/api/tasks", "/api/goals", "/api/saved-steps", "/api/guide",
         ].includes(url.pathname) && !/^\/api\/tasks\/[\w.-]+\/timeline$/.test(url.pathname) && url.pathname !== "/api/actions" && url.pathname !== "/api/progress") {
           return sendJson(res, 409, { error: "This is a demo. Agent runs, drafts and external actions are disabled." });
         }
@@ -111,6 +120,7 @@ export function shepherdApi(): Plugin {
       server.httpServer?.once("close", stop);
       process.once("exit", stop);
       server.httpServer?.once("listening", () => {
+        app.announce();
         console.log(`\nShepherd: ${app.security.address()}\nOpen this address to unlock the board.\n`);
         void startupWarnings().then((warnings) => warnings.forEach((warning) => console.warn(warning)));
       });
@@ -175,6 +185,7 @@ interface Context {
   look: ReturnType<typeof createLooks>;
   saved: SavedSteps;
   demo?: boolean;
+  origin?: () => string | null;
 }
 
 export function apiHandler(context: Context) {
@@ -202,7 +213,7 @@ export function apiHandler(context: Context) {
 }
 
 async function route(
-  { engine, runner, sandbox, evidence, looks, look, saved, demo }: Context,
+  { engine, runner, sandbox, evidence, looks, look, saved, demo, origin }: Context,
   url: URL,
   req: IncomingMessage,
   res: ServerResponse,
@@ -210,6 +221,13 @@ async function route(
 ): Promise<boolean> {
   const { pathname } = url;
   const method = req.method ?? "GET";
+  if (pathname === "/api/guide" && method === "GET") {
+    const own = origin?.();
+    if (!own) throw new Error("Server origin is unavailable.");
+    res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+    res.end(guideText(own));
+    return true;
+  }
   if (pathname === "/api/progress" && method === "POST") {
     const result = markProgress(engine, await readJson(req));
     sendJson(res, "error" in result ? 409 : 200, result);
@@ -249,8 +267,12 @@ async function route(
         }
       }
       if (action.type === "deleteTask") runner.cancel(action.id);
-      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal") {
-        for (const step of engine.get().tasks.filter((step) => step.goalId === action.id)) {
+      if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal" || action.type === "archiveObjective") {
+        const board = engine.get();
+        const goalIds = action.type === "archiveObjective"
+          ? new Set(board.goals.filter((goal) => goal.objectiveId === action.id && goal.status === "open").map((goal) => goal.id))
+          : new Set([action.id]);
+        for (const step of board.tasks.filter((step) => goalIds.has(step.goalId))) {
           runner.cancel(step.id);
           if (step.status === "running" && action.type !== "deleteGoal") engine.dispatch({ type: "setStatus", id: step.id, status: "blocked" });
         }
