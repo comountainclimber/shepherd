@@ -15,7 +15,8 @@ import { useModels } from "../useModels";
 import { Button } from "../ui";
 import { appendStep } from "./appendStep";
 import { GraphDialogs } from "./GraphActions";
-import { editable, stepFrom } from "./Steps";
+import { editable } from "./Steps";
+import { stepFrom } from "./stepFrom";
 import { Tree, currentRepo, moveGraph, newGraph, newObjective, pickerRow, useTree } from "./Tree";
 
 /** The sidebar: every repo's objectives and graphs as a tree, then what you can do where you are. */
@@ -268,7 +269,7 @@ function Draft({ goalId }: { goalId: string }) {
       return;
     }
     const after = outlineOf(useShepherd.getState().state, goalId).at(-1)?.id ?? null;
-    const steps = result.map((step) => ({ task: stepFrom(goalId, step.name, step.prompt, DEFAULT_AGENT_ID, text), depth: step.depth }));
+    const steps = result.map((step) => ({ task: stepFrom(goalId, step.name, step.prompt, DEFAULT_AGENT_ID, text, step), depth: step.depth }));
     dispatch({ type: "addSteps", goalId, after, steps });
     setGoal("");
     setOpen(false);

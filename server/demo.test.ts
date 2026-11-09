@@ -74,6 +74,7 @@ describe("the throwaway demo", () => {
     for (const route of ["commands", "draft", "look", "goals/goal-apple-pay/open", "projects"]) {
       expect((await request(route, { command: "runPlan", goalId: "goal-apple-pay" })).status).toBe(409);
     }
+    expect((await request("goals", { project: "proj-pizza", name: "Draft", goal: "Plan a change", draft: true })).status).toBe(409);
     expect((await request("actions", { action: { type: "createProject", project: { id: "external", name: "External", summary: "", repo: personal } } })).status).toBe(400);
     await request("actions", { action: { type: "setPlanRunning", goalId: "goal-apple-pay", running: true } });
     expect(runner).not.toHaveBeenCalled();

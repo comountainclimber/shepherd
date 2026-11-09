@@ -1,6 +1,8 @@
 import { blankGoal, blankTask, nextPosition, slugify } from "../src/model/factory";
 import { resolveGoal } from "../src/model/goals";
+import { mapShapeNote } from "../src/model/mapShape";
 import { isEffort, isModelId } from "../src/model/models";
+import { dependencyOrder, MAX_DEPTH, outlineOf } from "../src/model/outline";
 import { reducer } from "../src/model/reducer";
 import { EFFORTS, GATE_LABEL, type Action, type Effort, type Gate, type OrchestrationState, type Project, type Runner } from "../src/model/types";
 import { isFullyVerified } from "../src/model/verify";
@@ -8,6 +10,24 @@ import { AGENTS, agentById, projectDirectory } from "../src/model/workspace";
 import { repoPath } from "./projectRepos";
 
 export const MAX_TASKS = 50;
+
+export function taskMap(state: OrchestrationState, goalId: string) {
+  const outline = outlineOf(state, goalId);
+  const byId = new Map(state.tasks.map((task) => [task.id, task]));
+  const depths = new Map(outline.map((item) => [item.id, item.depth]));
+  const tasks = dependencyOrder(outline.map((item) => byId.get(item.id)!), state.dependencies);
+  const note = mapShapeNote(tasks, state.dependencies);
+  return {
+    steps: tasks.map((task) => ({
+      id: task.id,
+      name: task.name,
+      depth: depths.get(task.id)!,
+      runner: task.runner,
+      dependsOn: state.dependencies.filter((dep) => dep.target === task.id).map((dep) => ({ task: dep.source, gate: dep.gate })),
+    })),
+    ...(note ? { note } : {}),
+  };
+}
 
 export interface Planned {
   projectId: string;
@@ -23,7 +43,7 @@ function fail(message: string): never {
 }
 
 /**
- * Turns an API request into the createTask actions the New task dialog would dispatch.
+ * Turns an API request into outline additions or steps with hand-drawn arrows.
  * Dependencies can name tasks already on the board or earlier tasks in the same request.
  */
 export function planTasks(state: OrchestrationState, body: unknown, newId: (index: number) => string): Planned | { error: string } {
@@ -54,6 +74,12 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
     const field = (key: string) => (batch ? `${where}.${key}` : key);
     const request = record(item) ?? fail(`${where} must be an object.`);
     const name = text(request.name, field("name")) || fail(`${where} needs a name.`);
+    const handWired = request.dependsOn !== undefined;
+    if (handWired && request.depth !== undefined) fail(`${where}: pick one of depth or dependsOn.`);
+    const depth = request.depth === undefined ? 0 : request.depth;
+    if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0 || depth > MAX_DEPTH) {
+      fail(`${field("depth")} must be an integer from 0 to ${MAX_DEPTH}.`);
+    }
     const runner = runnerFor(request.runner, field("runner"));
     const checkCommand = text(request.checkCommand, field("checkCommand"));
     const workCheck = flag(request.workCheck, field("workCheck"), false);
@@ -92,8 +118,11 @@ function plan(state: OrchestrationState, body: unknown, newId: (index: number) =
       }),
       ...(model ? { model } : {}),
       ...(effort ? { effort: effort as Effort } : {}),
+      ...(handWired ? { wired: true } : {}),
     };
-    const action: Action = { type: "createTask", task, dependsOn };
+    const action: Action = handWired
+      ? { type: "createTask", task, dependsOn }
+      : { type: "addSteps", goalId: goal.id, after: outlineOf(scratch, goal.id).at(-1)?.id ?? null, steps: [{ task, depth }] };
     scratch = reducer(scratch, action);
     actions.push(action);
     tasks.push({ id, name });

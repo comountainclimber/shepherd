@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { outlineOf, parseList } from "../src/model/outline";
 import { reducer } from "../src/model/reducer";
 import type { OrchestrationState } from "../src/model/types";
 import { workspace } from "../src/model/workspace";
-import { boardSummary, planProject, planTasks } from "./intake";
+import { boardSummary, planProject, planTasks, taskMap } from "./intake";
 
 function board(): OrchestrationState {
   return reducer(workspace(1), { type: "createProject", project: { id: "proj-2", name: "Greeter", summary: "", directory: "greeter" } });
@@ -47,7 +48,89 @@ describe("planTasks", () => {
   it("takes a single task and gives it a free worktree name", () => {
     const once = apply(board(), { project: "proj-2", name: "Greet module" });
     const twice = planned(once, { project: "proj-2", name: "Greet module" });
-    expect(twice.actions[0]).toMatchObject({ type: "createTask", task: { worktree: "greet-module-2" } });
+    expect(twice.actions[0]).toMatchObject({ type: "addSteps", after: "api-1", steps: [{ task: { worktree: "greet-module-2" }, depth: 0 }] });
+  });
+
+  it("adds nested steps with the same arrows and layout as an outline typed in the app", () => {
+    const initial = board();
+    const items = parseList("Prepare\n  Build\n    Unit tests\n    Integration tests\n  Write docs\nFinish");
+    const result = planned(initial, { project: "Greeter", tasks: items });
+    const state = result.actions.reduce(reducer, initial);
+    const goalId = result.goalId;
+    const typed = reducer(initial, {
+      type: "addSteps", goalId, after: null,
+      steps: state.tasks.map((task, index) => ({ task, depth: items[index]!.depth })),
+    });
+    expect(result.actions.every((action) => action.type === "addSteps")).toBe(true);
+    expect(outlineOf(state, goalId)).toEqual(items.map((item, index) => ({ id: ids(index), depth: item.depth })));
+    expect(state.dependencies).toEqual(typed.dependencies);
+    expect(state.tasks.map((task) => task.position)).toEqual(typed.tasks.map((task) => task.position));
+    expect(state.dependencies.map((dep) => [dep.source, dep.target, dep.outline])).toEqual([
+      ["api-1", "api-2", true],
+      ["api-2", "api-3", true],
+      ["api-2", "api-4", true],
+      ["api-1", "api-5", true],
+      ["api-3", "api-6", true],
+      ["api-4", "api-6", true],
+      ["api-5", "api-6", true],
+    ]);
+  });
+
+  it("appends single steps after the last outline step, with depth defaulting to zero", () => {
+    const initial = apply(board(), { project: "Greeter", tasks: [{ name: "A" }, { name: "B" }, { name: "C" }] });
+    const goalId = initial.tasks[0]!.goalId;
+    const ordered = reducer(initial, { type: "setOutline", goalId, items: [
+      { id: "api-3", depth: 0 }, { id: "api-1", depth: 1 }, { id: "api-2", depth: 1 },
+    ] });
+    const nested = planTasks(ordered, { goal: goalId, name: "D", depth: 1 }, () => "nested");
+    if ("error" in nested) throw new Error(nested.error);
+    expect(nested.actions[0]).toMatchObject({ type: "addSteps", after: "api-2", steps: [{ depth: 1 }] });
+    const withNested = nested.actions.reduce(reducer, ordered);
+    const final = planTasks(withNested, { goal: goalId, name: "E" }, () => "final");
+    if ("error" in final) throw new Error(final.error);
+    const state = final.actions.reduce(reducer, withNested);
+    expect(outlineOf(state, goalId)).toEqual([
+      { id: "api-3", depth: 0 }, { id: "api-1", depth: 1 }, { id: "api-2", depth: 1 },
+      { id: "nested", depth: 1 }, { id: "final", depth: 0 },
+    ]);
+    expect(state.dependencies.filter((dep) => dep.target === "nested").map((dep) => dep.source)).toEqual(["api-3"]);
+    expect(state.dependencies.filter((dep) => dep.target === "final").map((dep) => dep.source)).toEqual(["api-1", "api-2", "nested"]);
+  });
+
+  it("normalizes depth jumps the way the outline does", () => {
+    const state = apply(board(), { project: "Greeter", tasks: [
+      { name: "A", depth: 2 }, { name: "B", depth: 2 }, { name: "C", depth: 2 },
+    ] });
+    expect(outlineOf(state, state.tasks[0]!.goalId).map((item) => item.depth)).toEqual([0, 1, 2]);
+  });
+
+  it("keeps explicit dependencies and gates when the outline changes, including an empty list", () => {
+    const result = planned(board(), { project: "Greeter", tasks: [
+      { name: "A" }, { name: "B", depth: 1 },
+      { name: "C", dependsOn: [{ task: "A", gate: "completed" }] },
+      { name: "D", dependsOn: [] }, { name: "E" },
+    ] });
+    const state = result.actions.reduce(reducer, board());
+    expect(result.actions[2]).toMatchObject({ type: "createTask", task: { wired: true } });
+    const manual = state.dependencies.filter((dep) => dep.target === "api-3");
+    expect(manual).toEqual([{ id: "api-1->api-3", source: "api-1", target: "api-3", gate: "completed" }]);
+    expect(state.dependencies.filter((dep) => dep.target === "api-4")).toEqual([]);
+    const reordered = reducer(state, { type: "setOutline", goalId: result.goalId,
+      items: ["api-4", "api-1", "api-3", "api-2", "api-5"].map((id) => ({ id, depth: 0 })),
+    });
+    expect(reordered.dependencies.filter((dep) => dep.target === "api-3")).toEqual(manual);
+    expect(reordered.dependencies.filter((dep) => dep.target === "api-4")).toEqual([]);
+  });
+
+  it.each([-1, 3, 0.5, "1", null, true, {}, []])("rejects invalid depth %j", (depth) => {
+    expect(planTasks(board(), { project: "Greeter", name: "A", depth }, ids)).toEqual({ error: "depth must be an integer from 0 to 2." });
+    expect(planTasks(board(), { project: "Greeter", tasks: [{ name: "A", depth }] }, ids)).toEqual({ error: "tasks[0].depth must be an integer from 0 to 2." });
+  });
+
+  it.each([[], ["A"], null])("asks callers to pick one when depth and dependsOn %j are both supplied", (dependsOn) => {
+    expect(planTasks(board(), { project: "Greeter", name: "B", depth: 0, dependsOn }, ids)).toEqual({ error: "The task: pick one of depth or dependsOn." });
+    expect(planTasks(board(), { project: "Greeter", tasks: [{ name: "A" }, { name: "B", depth: 1, dependsOn }] }, ids))
+      .toEqual({ error: "tasks[1]: pick one of depth or dependsOn." });
   });
 
   it("explains what is wrong with a request", () => {
@@ -98,6 +181,38 @@ describe("planTasks", () => {
     expect(error({ project: "Greeter", name: "X", model: "--yolo" })).toMatch(/^model is not a model name/);
     expect(error({ project: "Greeter", name: "X", thinking: "lots" })).toBe("thinking must be one of: low, medium, high, xhigh, max, ultra.");
     expect(error({ project: "Greeter", name: "X", runner: "human", model: "opus" })).toMatch(/done by a person/);
+  });
+});
+
+describe("taskMap", () => {
+  it("lists the whole task in run order, keeping outline order for steps that can run together", () => {
+    const result = planned(board(), { project: "Greeter", tasks: [
+      { name: "Prepare" }, { name: "Build", depth: 1 }, { name: "Docs", depth: 1 },
+      { name: "Try", runner: "human" },
+    ] });
+    const state = result.actions.reduce(reducer, board());
+    expect(taskMap(state, result.goalId)).toEqual({ steps: [
+      { id: "api-1", name: "Prepare", depth: 0, runner: "agent", dependsOn: [] },
+      { id: "api-2", name: "Build", depth: 1, runner: "agent", dependsOn: [{ task: "api-1", gate: "verified" }] },
+      { id: "api-3", name: "Docs", depth: 1, runner: "agent", dependsOn: [{ task: "api-1", gate: "verified" }] },
+      { id: "api-4", name: "Try", depth: 0, runner: "human", dependsOn: [{ task: "api-2", gate: "verified" }, { task: "api-3", gate: "verified" }] },
+    ] });
+  });
+
+  it("uses actual arrows and gates when hand wiring runs against outline order", () => {
+    const result = planned(board(), { project: "Greeter", tasks: [
+      { name: "A", dependsOn: [] }, { name: "B", dependsOn: [] },
+      { name: "C", dependsOn: [] }, { name: "D", dependsOn: [] },
+    ] });
+    let state = result.actions.reduce(reducer, board());
+    for (const [source, target] of [["api-4", "api-3"], ["api-3", "api-2"], ["api-2", "api-1"]]) {
+      state = reducer(state, { type: "connect", source, target, gate: "completed" });
+    }
+    const map = taskMap(state, result.goalId);
+    expect(map.steps.map((step) => step.id)).toEqual(["api-4", "api-3", "api-2", "api-1"]);
+    expect(map.steps[1].dependsOn).toEqual([{ task: "api-4", gate: "completed" }]);
+    expect(map.note).toContain("straight line of 4 steps");
+    expect(taskMap(state, "goal-proj-local")).toEqual({ steps: [] });
   });
 });
 

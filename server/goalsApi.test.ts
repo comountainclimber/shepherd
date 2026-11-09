@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as folders from "./openTaskFolder";
 import * as drafting from "./draft";
+import * as models from "./models";
 import { createEngine, type Engine } from "./engine";
 import { createLooks } from "./looks";
 import { createRunner, type Runner } from "./runner";
@@ -146,6 +147,7 @@ describe("goal API", () => {
   });
 
   it("lists and creates tasks and accepts steps by goal id or name", async () => {
+    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([]);
     const { request, engine } = await server();
     expect((await request("goals")).body.goals).toHaveLength(1);
     const created = await request("goals", { project: "Workspace", name: "Fix timeout", goal: "Finish checkout quickly" });
@@ -160,6 +162,149 @@ describe("goal API", () => {
     }
     expect(engine.get().tasks.every((task) => task.goalId === goal.id)).toBe(true);
     expect((await request("tasks")).body.projects[0].goals).toHaveLength(2);
+    expect(draft).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { model: "gpt-6-astra", thinking: "high" }] as const)("creates a task with a drafted outline and preserves step details (%j)", async (choice) => {
+    vi.spyOn(models, "modelCatalog").mockReturnValue({
+      codex: { models: [], default: { model: null, effort: null } },
+      claude: { models: [], default: { model: null, effort: null } },
+    });
+    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([
+      { name: "Prepare", prompt: "Set up shared types", depth: 0, runner: "agent", acceptance: ["Types compile"], checkCommand: "npm run typecheck" },
+      { name: "Build", prompt: "Build the feature", depth: 1, runner: "agent", acceptance: ["Feature works"], checkCommand: "npm test" },
+      { name: "Document", prompt: "Write usage examples", depth: 1, runner: "agent", acceptance: ["Examples are current"] },
+      { name: "Try it", prompt: "Try the finished feature", depth: 0, runner: "human", acceptance: ["Looks right", "Works on mobile"] },
+    ]);
+    const { request, engine, sandbox } = await server();
+    const created = await request("goals", { project: "Workspace", name: "Feature", goal: "  Ship the feature  ", draft: true, ...choice });
+    expect(created.status).toBe(201);
+    const goal = created.body.goal;
+    expect(goal).toMatchObject({ name: "Feature", goal: "Ship the feature", status: "open", running: false });
+    expect(draft).toHaveBeenCalledExactlyOnceWith("Ship the feature", path.join(sandbox, "workspace"), {
+      model: "model" in choice ? choice.model : undefined,
+      effort: "thinking" in choice ? choice.thinking : undefined,
+    }, expect.any(AbortSignal));
+    const tasks = engine.get().tasks.filter((task) => task.goalId === goal.id);
+    expect(tasks).toHaveLength(4);
+    const [prepare, build, docs, tryIt] = tasks;
+    expect(prepare).toMatchObject({ objective: "Set up shared types", acceptance: ["Types compile"], runner: "agent", checkCommand: "npm run typecheck", verification: [{ kind: "command", command: "npm run typecheck", state: "pending" }] });
+    expect(build).toMatchObject({ objective: "Build the feature", acceptance: ["Feature works"], checkCommand: "npm test" });
+    expect(docs).toMatchObject({ objective: "Write usage examples", acceptance: ["Examples are current"] });
+    expect(tryIt).toMatchObject({ objective: "Try the finished feature", runner: "human", agentId: null, acceptance: ["Looks right", "Works on mobile"], verification: [] });
+    expect(tryIt).not.toHaveProperty("checkCommand");
+    expect(goal.outline).toEqual(tasks.map((task, index) => ({ id: task.id, depth: index === 1 || index === 2 ? 1 : 0 })));
+    expect(created.body.steps).toEqual([
+      { id: prepare!.id, name: "Prepare", depth: 0, runner: "agent", dependsOn: [] },
+      { id: build!.id, name: "Build", depth: 1, runner: "agent", dependsOn: [{ task: prepare!.id, gate: "verified" }] },
+      { id: docs!.id, name: "Document", depth: 1, runner: "agent", dependsOn: [{ task: prepare!.id, gate: "verified" }] },
+      { id: tryIt!.id, name: "Try it", depth: 0, runner: "human", dependsOn: [{ task: build!.id, gate: "verified" }, { task: docs!.id, gate: "verified" }] },
+    ]);
+    expect(created.body).not.toHaveProperty("note");
+    expect(engine.get().goals.find((item) => item.id === goal.id)).toEqual(goal);
+  });
+
+  it("includes map advice for a drafted single step", async () => {
+    vi.spyOn(drafting, "draftSteps").mockResolvedValue([{ name: "Fix", prompt: "Fix the timeout", depth: 0, runner: "agent", acceptance: [] }]);
+    const { request } = await server();
+    const created = await request("goals", { project: "Workspace", name: "Timeout", goal: "Fix the timeout", draft: true });
+    expect(created.status).toBe(201);
+    expect(created.body.steps).toHaveLength(1);
+    expect(created.body.note).toContain("one step");
+  });
+
+  it.each([false, true])("keeps the task without steps when drafting fails, and lets the caller retry (throws: %s)", async (throws) => {
+    const draft = vi.spyOn(drafting, "draftSteps");
+    if (throws) draft.mockRejectedValueOnce(new Error("Codex is unavailable"));
+    else draft.mockResolvedValueOnce({ error: "Codex is unavailable" });
+    const { request, engine } = await server();
+    const failed = await request("goals", { project: "Workspace", name: "Timeout", goal: "Fix checkout", draft: true });
+    expect(failed.status).toBe(throws ? 500 : 409);
+    expect(failed.body).toEqual({ error: "Codex is unavailable", goal: expect.any(String) });
+    expect(engine.get().goals.find((goal) => goal.id === failed.body.goal)).toMatchObject({ name: "Timeout", goal: "Fix checkout", outline: [], status: "open" });
+    expect(engine.get().tasks).toEqual([]);
+    expect(engine.get().dependencies).toEqual([]);
+    draft.mockResolvedValueOnce([{ name: "Fix", prompt: "Fix checkout", depth: 0, runner: "agent", acceptance: [] }]);
+    const retry = await request("draft", { goal: failed.body.goal });
+    expect(retry.status).toBe(200);
+    expect(retry.body.steps).toHaveLength(1);
+    expect(draft.mock.calls[1]?.[0]).toBe("Fix checkout");
+    expect(engine.get().tasks).toEqual([]);
+  });
+
+  it.each([
+    { goal: "" }, { goal: "x".repeat(4001) }, { model: "--bad" }, { thinking: "sometimes" },
+  ])("uses draft endpoint validation and keeps the created task (%j)", async (invalid) => {
+    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([]);
+    const { request, engine } = await server();
+    const failed = await request("goals", { project: "Workspace", name: "Timeout", goal: "Fix checkout", draft: true, ...invalid });
+    expect(failed.status).toBe(400);
+    expect(failed.body).toEqual({ error: expect.any(String), goal: expect.any(String) });
+    expect(engine.get().goals.find((goal) => goal.id === failed.body.goal)?.outline).toEqual([]);
+    expect(engine.get().tasks).toEqual([]);
+    expect(draft).not.toHaveBeenCalled();
+  });
+
+  it("adds outline branches through POST tasks and rejects depth with explicit dependencies without adding steps", async () => {
+    const { request, engine } = await server();
+    const goal = "goal-proj-local";
+    const added = await request("tasks", { goal, tasks: [
+      { name: "Prepare", depth: 0 }, { name: "Build", depth: 1 },
+      { name: "Write docs", depth: 1 }, { name: "Finish", depth: 0 },
+    ] });
+    expect(added.status).toBe(201);
+    const [prepare, build, docs, finish] = added.body.tasks.map((task: { id: string }) => task.id);
+    expect(engine.get().dependencies.map((dep) => [dep.source, dep.target])).toEqual([
+      [prepare, build], [prepare, docs], [build, finish], [docs, finish],
+    ]);
+    expect(added.body.steps).toEqual([
+      { id: prepare, name: "Prepare", depth: 0, runner: "agent", dependsOn: [] },
+      { id: build, name: "Build", depth: 1, runner: "agent", dependsOn: [{ task: prepare, gate: "verified" }] },
+      { id: docs, name: "Write docs", depth: 1, runner: "agent", dependsOn: [{ task: prepare, gate: "verified" }] },
+      { id: finish, name: "Finish", depth: 0, runner: "agent", dependsOn: [{ task: build, gate: "verified" }, { task: docs, gate: "verified" }] },
+    ]);
+    expect(added.body).not.toHaveProperty("note");
+    const manual = await request("tasks", { goal, name: "Manual", dependsOn: [{ task: prepare, gate: "completed" }] });
+    expect(manual.status).toBe(201);
+    expect(manual.body.tasks).toHaveLength(1);
+    expect(manual.body.steps).toHaveLength(5);
+    expect(manual.body.steps.slice(0, 4)).toEqual(added.body.steps);
+    expect(manual.body.steps[4]).toMatchObject({ name: "Manual", dependsOn: [{ task: prepare, gate: "completed" }] });
+    expect(manual.body).not.toHaveProperty("note");
+    expect(engine.get().dependencies.filter((dep) => dep.target === manual.body.tasks[0].id))
+      .toEqual([expect.objectContaining({ source: prepare, gate: "completed" })]);
+    const before = engine.get();
+    for (const body of [
+      { goal, name: "Conflict", depth: 0, dependsOn: [prepare] },
+      { goal, tasks: [{ name: "Valid", depth: 0 }, { name: "Conflict", depth: 1, dependsOn: [] }] },
+    ]) {
+      expect(await request("tasks", body)).toMatchObject({ status: 400, body: { error: expect.stringMatching(/pick one.*depth.*dependsOn/) } });
+      expect(engine.get()).toBe(before);
+    }
+  });
+
+  it("returns advice without refusing single steps or long lines, based on the whole task", async () => {
+    const { request } = await server();
+    const goal = "goal-proj-local";
+    const first = await request("tasks", { goal, name: "Prepare" });
+    expect(first.status).toBe(201);
+    expect(first.body.steps).toEqual([{ id: first.body.tasks[0].id, name: "Prepare", depth: 0, runner: "agent", dependsOn: [] }]);
+    expect(first.body.note).toContain("one step");
+    expect(first.body.note).toContain("different files can run side by side");
+    expect(first.body.note).toContain("A person's step can close the task");
+    const short = await request("tasks", { goal, tasks: [{ name: "Build" }, { name: "Check" }] });
+    expect(short.status).toBe(201);
+    expect(short.body.steps).toHaveLength(3);
+    expect(short.body).not.toHaveProperty("note");
+    const line = await request("tasks", { goal, name: "Try", runner: "human" });
+    expect(line.status).toBe(201);
+    expect(line.body.steps.map((step: { name: string }) => step.name)).toEqual(["Prepare", "Build", "Check", "Try"]);
+    expect(line.body.steps[3]).toMatchObject({ runner: "human", dependsOn: [{ task: short.body.tasks[1].id, gate: "verified" }] });
+    expect(line.body.note).toContain("straight line of 4 steps");
+    const other = await request("goals", { project: "Workspace", name: "Other" });
+    const alone = await request("tasks", { goal: other.body.goal.id, name: "Other work" });
+    expect(alone.body.steps).toHaveLength(1);
+    expect(alone.body.note).toContain("one step");
   });
 
   it("lists choices for ambiguous project-only steps, drafts and plan commands", async () => {
@@ -183,12 +328,12 @@ describe("goal API", () => {
   });
 
   it("drafts from the selected task's text or an explicit prompt without invoking an agent", async () => {
-    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([{ name: "Test it", prompt: "Test checkout", depth: 0 }]);
+    const draft = vi.spyOn(drafting, "draftSteps").mockResolvedValue([{ name: "Test it", prompt: "Test checkout", depth: 0, runner: "agent", acceptance: ["Checkout works"], checkCommand: "npm test" }, { name: "Try it", prompt: "Try checkout", depth: 1, runner: "human", acceptance: ["Looks right"] }]);
     const { request } = await server();
     const created = await request("goals", { project: "Workspace", name: "Timeout", goal: "Fix checkout" });
     const result = await request("draft", { goal: created.body.goal.id });
     expect(result.status).toBe(200);
-    expect(result.body.steps).toHaveLength(1);
+    expect(result.body.steps).toEqual(await draft.mock.results[0]?.value);
     expect(draft.mock.calls[0]?.[0]).toBe("Fix checkout");
     expect((await request("draft", { project: "Workspace", goal: "Timeout", prompt: "Investigate first" })).status).toBe(200);
     expect(draft.mock.calls[1]?.[0]).toBe("Investigate first");
