@@ -206,7 +206,7 @@ describe("address and place", () => {
       "/t/second", "/t/second/agents", "/t/second", "/t/second/s/step-other", "/t/second/s/step-next/output",
     ]);
     expect(history.replaceState.mock.calls.map((call) => call[2])).toEqual(["/t/second/s/step-other/output", "/t/second"]);
-    expect(JSON.parse(localStorage.setItem.mock.lastCall![1])).toEqual({ view: "canvas", projectId: "proj-local", goalId: "second", selectedTaskId: "step-next" });
+    expect(JSON.parse(localStorage.setItem.mock.lastCall![1])).toEqual({ view: "canvas", projectId: "proj-local", objectiveId: "objective-second", goalId: "second", selectedTaskId: "step-next" });
     const writes = localStorage.setItem.mock.calls.length;
     ui.setPanelTab("log");
     expect(localStorage.setItem).toHaveBeenCalledTimes(writes);
