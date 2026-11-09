@@ -35,16 +35,18 @@ export function createSecurity(origin: () => string | null) {
         return refuse("This request address is not valid.");
       }
       const cookieName = `shepherd_${new URL(own).port}`;
-      if (url.pathname === "/" && url.searchParams.has("token")) {
+      const isApi = url.pathname === "/api" || url.pathname.startsWith("/api/");
+      if (!isApi && url.searchParams.has("token")) {
         if (req.method !== "GET" || !matches(url.searchParams.get("token"))) return refuse("This Shepherd token is not valid.");
+        url.searchParams.delete("token");
         res.writeHead(303, {
           "Set-Cookie": `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict`,
-          Location: "/",
+          Location: url.pathname.startsWith("//") ? url.href : `${url.pathname}${url.search}`,
         });
         res.end();
         return false;
       }
-      if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+      if (isApi) {
         const cookie = req.headers.cookie?.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
         const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
         if (!matches(bearer) && !matches(cookie)) return refuse("Open the address with the token printed in Shepherd's terminal, or send Authorization: Bearer <token>.");

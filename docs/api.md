@@ -4,6 +4,8 @@
 
 Everything the UI does goes through these, so agents and scripts can use them too. They live on the local server and run agents and shell commands on your machine. Every API request, including streams, screenshots and reports, needs the startup token: the browser uses an HTTP-only, SameSite cookie set by the printed address; scripts send `Authorization: Bearer <token>`. A supplied Origin must exactly match the printed address's origin, and requests to other hostnames are refused. Every POST and PUT needs `content-type: application/json`. Shepherd gives agents `SHEPHERD_TOKEN` along with `SHEPHERD_URL`, so `SHEPHERD_LOOK` and `SHEPHERD_DONE` authenticate automatically. There are no accounts, hosted database or telemetry; your agents, connectors, commands and git remotes may contact services using your own configuration.
 
+Opening any page path with `?token=<token>` unlocks the browser. A valid token sets the cookie and redirects with 303 to the same path, removing the token from the address and keeping other query parameters. A wrong token is refused with 403. API paths do not accept query tokens; use the cookie or bearer token.
+
 ## Agents Shepherd did not launch
 
 Read `session.json` in the configured [data folder](storage.md): `~/.shepherd/` when installed, or the checkout's `.shepherd/` in development, unless changed with `--data-dir` or `SHEPHERD_DATA_DIR`. While Shepherd runs, it contains:
