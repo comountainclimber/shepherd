@@ -1,4 +1,5 @@
-import { blankGoal, slugify } from "./factory";
+import { blankGoal, defaultGoalId, slugify } from "./factory";
+import { GRAPH_COLORS, objectiveIdFor } from "./graphs";
 import type { Agent, OrchestrationState, Project } from "./types";
 
 export const WORKSPACE_PROJECT_ID = "proj-local";
@@ -23,7 +24,8 @@ export function projectDirectory(name: string, projects: Project[]): string {
 export function workspace(now = Date.now()): OrchestrationState {
   return {
     schema: 3,
-    goals: [blankGoal(WORKSPACE_PROJECT_ID, "Workspace")],
+    objectives: [{ id: objectiveIdFor(defaultGoalId(WORKSPACE_PROJECT_ID)), projectId: WORKSPACE_PROJECT_ID, name: "Workspace" }],
+    goals: [{ ...blankGoal(WORKSPACE_PROJECT_ID, "Workspace"), objectiveId: objectiveIdFor(defaultGoalId(WORKSPACE_PROJECT_ID)), color: GRAPH_COLORS[0] }],
     projects: [
       {
         id: WORKSPACE_PROJECT_ID,

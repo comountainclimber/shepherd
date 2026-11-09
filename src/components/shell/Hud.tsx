@@ -1,11 +1,10 @@
-import { CircleX, LayoutGrid, ScrollText, Settings, UserRound, Users, Zap } from "lucide-react";
+import { CircleX, LayoutGrid, Play, ScrollText, Settings, Square, UserRound, Users, Zap } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ProjectSwitcher } from "./ProjectSwitcher";
 import { cx, formatClock } from "../../model/format";
-import { needsYou } from "../../model/stage";
+import { needsYou, progress } from "../../model/stage";
 import { tasksForGoal } from "../../model/selectors";
 import { pathFor } from "../../model/route";
-import { agentStatus, setWorkspacePath, workspacePath } from "../../runner/live";
+import { agentStatus, runPlan, setWorkspacePath, stopPlan, workspacePath } from "../../runner/live";
 import { clearWorkspace, initialFilters, useShepherd } from "../../store";
 
 export function Hud() {
@@ -29,7 +28,6 @@ export function Hud() {
         <Sheep size={26} />
         <span className="hidden md:inline text-[15px] font-semibold text-text">Shepherd</span>
       </div>
-      <ProjectSwitcher />
       <div className="flex items-center gap-1">
         <Counter
           icon={<Zap size={13} />}
@@ -55,6 +53,7 @@ export function Hud() {
           active={filter.status === "failed"}
           onClick={() => toggle(filter.status === "failed", { status: "failed" })}
         />
+        <RunControl />
       </div>
       <div className="ml-auto flex items-center gap-1.5">
         <div className="flex rounded-lg bg-black/25 p-0.5">
@@ -65,6 +64,53 @@ export function Hud() {
         <SettingsMenu />
       </div>
     </header>
+  );
+}
+
+/** Runs or stops the focused graph's steps. Nothing shows before it has steps or once they are all done. */
+function RunControl() {
+  const goal = useShepherd((store) => store.state.goals.find((item) => item.id === store.ui.goalId));
+  const allTasks = useShepherd((store) => store.state.tasks);
+  const [busy, setBusy] = useState(false);
+  const tasks = goal ? allTasks.filter((task) => task.goalId === goal.id) : [];
+  if (!goal || !tasks.length) return null;
+  const started = tasks.some((task) => task.status !== "queued" || task.git);
+  const act = async (work: () => Promise<unknown>) => {
+    setBusy(true);
+    await work();
+    setBusy(false);
+  };
+  let button: ReactNode = null;
+  if (goal.running) {
+    button = (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void act(() => stopPlan(goal.id))}
+        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line-strong bg-surface-2 px-3 text-[12px] font-medium text-text hover:bg-surface-3 disabled:opacity-50"
+      >
+        <Square size={11} /> Stop
+      </button>
+    );
+  } else if (goal.status === "open" && !progress(tasks).complete) {
+    button = (
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => void act(() => runPlan(goal.id))}
+        title={`Run the steps of ${goal.name}`}
+        className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-brass px-3 text-[12px] font-medium text-ink hover:bg-brass-2 disabled:opacity-50"
+      >
+        <Play size={12} /> {started ? "Run the rest" : "Run"}
+      </button>
+    );
+  }
+  if (!button) return null;
+  return (
+    <>
+      <span aria-hidden className="mx-1 h-[18px] w-px bg-white/10" />
+      {button}
+    </>
   );
 }
 

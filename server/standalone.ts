@@ -64,8 +64,10 @@ export async function startServer(options: Omit<AppOptions, "origin"> & { port: 
         port += 1;
       }
     }
+    app.announce();
   } catch (error) {
     app.stop();
+    if (http.listening) await new Promise<void>((resolve) => http.close(() => resolve()));
     throw error;
   }
   return {
@@ -89,7 +91,7 @@ export async function main(args = process.argv.slice(2)) {
   const options = launchOptions(args);
   for (const warning of await startupWarnings()) console.warn(warning);
   const app = await startServer(options);
-  console.log(`\nShepherd: ${app.address}\nBoard: ${options.dataDir}\nNew projects: ${options.projectsDir}\n\nKeep this terminal running. Press Ctrl+C to stop.\n`);
+  console.log(`\nShepherd: ${app.address}\nBoard: ${options.dataDir}\nNew projects: ${options.projectsDir}\nAgents: ${path.join(options.dataDir, "session.json")}\n\nKeep this terminal running. Press Ctrl+C to stop.\n`);
   const stop = () => { void app.close(); };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);

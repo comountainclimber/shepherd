@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { graphsOf } from "./model/graphs";
 import { loadState } from "./model/migrate";
 import { reducer } from "./model/reducer";
 import { pathFor, placeFromPath, type Place } from "./model/route";
@@ -15,7 +16,7 @@ export const initialFilters: Filters = {
 
 const UI_KEY = "shepherd.ui";
 
-type SavedUi = Pick<UiState, "view" | "projectId" | "goalId" | "selectedTaskId">;
+type SavedUi = Pick<UiState, "view" | "projectId" | "objectiveId" | "goalId" | "selectedTaskId">;
 
 function savedUi(): Partial<SavedUi> {
   try {
@@ -30,6 +31,7 @@ const restored = savedUi();
 export const initialUi: UiState = {
   view: restored.view === "agents" ? "agents" : "canvas",
   projectId: restored.projectId ?? WORKSPACE_PROJECT_ID,
+  objectiveId: restored.objectiveId ?? "",
   goalId: restored.goalId ?? `goal-${WORKSPACE_PROJECT_ID}`,
   selectedTaskId: restored.selectedTaskId ?? null,
   selectedAgentId: null,
@@ -67,6 +69,10 @@ interface ShepherdStore {
   setView: (view: ViewId) => void;
   setProject: (projectId: string) => void;
   setGoal: (goalId: string) => void;
+  /** Picks an objective and focuses its first graph, if it has one. */
+  setObjective: (objectiveId: string) => void;
+  /** Picks nothing in the sidebar: no objective, graph or step. */
+  clearSelection: () => void;
   selectTask: (id: string | null) => void;
   /** Selects a step without opening its panel; an open panel follows it. */
   focusTask: (id: string) => void;
@@ -157,6 +163,7 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
         ui: {
           ...store.ui,
           projectId,
+          objectiveId: store.state.goals.find((goal) => goal.id === goalId)?.objectiveId ?? "",
           goalId,
           selectedTaskId: selected,
           selectedEdgeId: null,
@@ -174,9 +181,16 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
   setGoal: (goalId) => set((store) => {
     const goal = store.state.goals.find((goal) => goal.id === goalId);
     if (!goal) return store;
-    return { ui: { ...store.ui, projectId: goal.projectId, goalId, selectedTaskId: null,
+    return { ui: { ...store.ui, projectId: goal.projectId, objectiveId: goal.objectiveId ?? "", goalId, selectedTaskId: null,
       selectedEdgeId: null, selectedAgentId: null, contextMenu: null, addSaved: null, saveFor: null, filters: initialFilters, inspectorOpen: false, draftSeed: "", draftToken: 0, fitToken: store.ui.fitToken + 1 } };
   }),
+  setObjective: (objectiveId) => set((store) => {
+    const objective = store.state.objectives.find((item) => item.id === objectiveId);
+    if (!objective) return store;
+    const goalId = graphsOf(store.state, objectiveId)[0]?.id ?? "";
+    return { ui: { ...store.ui, ...cleared(store.ui), projectId: objective.projectId, objectiveId, goalId } };
+  }),
+  clearSelection: () => set((store) => ({ ui: { ...store.ui, ...cleared(store.ui), objectiveId: "", goalId: "" } })),
   selectTask: (id) =>
     set((store) => ({
       ui: {
@@ -212,13 +226,22 @@ export const useShepherd = create<ShepherdStore>()((set) => ({
     set((store) => ({ ui: { ...store.ui, draftToken: store.ui.draftToken + 1, draftSeed: seed, view: "canvas", paletteOpen: false } })),
 }));
 
-function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
+/**
+ * Keeps the picked repo, objective, graph and step pointing at things on the board. An empty graph
+ * is a choice (an objective with no graph yet, or nothing picked) and stays empty.
+ */
+export function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
   const projectId = state.projects.some((project) => project.id === ui.projectId) ? ui.projectId : (state.projects[0]?.id ?? WORKSPACE_PROJECT_ID);
-  const goalId = state.goals.find((goal) => goal.id === ui.goalId && goal.projectId === projectId)?.id
+  const kept = state.goals.find((goal) => goal.id === ui.goalId && goal.projectId === projectId);
+  const objective = state.objectives.find((item) => item.id === (kept ? kept.objectiveId : ui.objectiveId) && item.projectId === projectId && !item.archived);
+  const goalId = kept?.id
+    ?? (!ui.goalId ? "" : undefined)
+    ?? (objective ? graphsOf(state, objective.id)[0]?.id : undefined)
     ?? state.goals.find((goal) => goal.projectId === projectId && goal.status === "open")?.id
     ?? state.goals.find((goal) => goal.projectId === projectId)?.id ?? "";
+  const objectiveId = state.goals.find((goal) => goal.id === goalId)?.objectiveId ?? objective?.id ?? "";
   const task = state.tasks.find((item) => item.id === ui.selectedTaskId && item.goalId === goalId);
-  return { ...ui, projectId, goalId, selectedTaskId: task?.id ?? null, inspectorOpen: !!task && ui.inspectorOpen };
+  return { ...ui, projectId, objectiveId, goalId, selectedTaskId: task?.id ?? null, inspectorOpen: !!task && ui.inspectorOpen };
 }
 
 function receive(revision: number, state: OrchestrationState) {
@@ -252,10 +275,10 @@ export function connectToServer(): () => void {
 
 if (typeof localStorage !== "undefined") {
   useShepherd.subscribe((store, previous) => {
-    const { view, projectId, goalId, selectedTaskId } = store.ui;
+    const { view, projectId, objectiveId, goalId, selectedTaskId } = store.ui;
     const before = previous.ui;
-    if (view === before.view && projectId === before.projectId && goalId === before.goalId && selectedTaskId === before.selectedTaskId) return;
-    localStorage.setItem(UI_KEY, JSON.stringify({ view, projectId, goalId, selectedTaskId } satisfies SavedUi));
+    if (view === before.view && projectId === before.projectId && objectiveId === before.objectiveId && goalId === before.goalId && selectedTaskId === before.selectedTaskId) return;
+    localStorage.setItem(UI_KEY, JSON.stringify({ view, projectId, objectiveId, goalId, selectedTaskId } satisfies SavedUi));
   });
 }
 
@@ -314,5 +337,11 @@ export function clearWorkspace() {
 
 function selection(state: OrchestrationState, id: string | null): Partial<UiState> {
   const task = state.tasks.find((task) => task.id === id);
-  return task ? { projectId: task.projectId, goalId: task.goalId } : {};
+  const objectiveId = state.goals.find((goal) => goal.id === task?.goalId)?.objectiveId ?? "";
+  return task ? { projectId: task.projectId, objectiveId, goalId: task.goalId } : {};
+}
+
+/** What picking another objective or graph lets go of. */
+function cleared(ui: UiState): Partial<UiState> {
+  return { selectedTaskId: null, selectedEdgeId: null, selectedAgentId: null, contextMenu: null, addSaved: null, saveFor: null, filters: initialFilters, inspectorOpen: false, draftSeed: "", draftToken: 0, fitToken: ui.fitToken + 1 };
 }

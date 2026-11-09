@@ -27,6 +27,8 @@ import {
   isTaskBranch,
   isTaskName,
   mergeBranch,
+  mergeConflict,
+  MergeConflictError,
   markAccepted,
   openWorktree,
   personAuthor,
@@ -110,6 +112,7 @@ export function createRunner(options: RunnerOptions): Runner {
   const refreshing = new Set<string>();
   const collecting = new Set<string>();
   const retryMergeAt = new Map<string, number>();
+  const mergeHandOffs = new Map<string, number>();
   const work = new Set<Promise<unknown>>();
   const closing = new AbortController();
   const closed = () => closing.signal.aborted;
@@ -264,7 +267,7 @@ export function createRunner(options: RunnerOptions): Runner {
           if (attempt.stopped) throw new Error("The step was stopped.");
         }
         const opened = await openWorktree(repo, worktrees, taskId, named.worktree, current.git?.branch, { start: goal.branch, prefix: "shepherd-step" });
-        return [opened, await prepareRun(opened, [goal.branch, ...branches(upstreamTasks(state(), current))], author)] as const;
+        return [opened, await prepareRun(opened, [goal.branch, ...branches(upstreamTasks(state(), current))], author, { keepConflicts: true })] as const;
       });
     } catch (error) {
       return attempt.stopped ? null : fail(taskId, message(error));
@@ -276,6 +279,16 @@ export function createRunner(options: RunnerOptions): Runner {
       patch: { git: { ...find(taskId)?.git, branch: tree.branch, folder: tree.folder, target: tree.target } },
     });
     if (merged.length) dispatch({ type: "updateTask", id: taskId, patch: { activity: `Merged ${merged.join(", ")} into ${tree.branch}` } });
+    const conflict = await mergeConflict(tree.folder);
+    if (attempt.stopped || !find(taskId)) return null;
+    const conflictSteps = conflict ? state().tasks.filter((step) =>
+      step.id !== taskId && step.goalId === task.goalId && collected(step) && step.filesChanged.some((file) => conflict.files.includes(file)),
+    ).map((step) => step.name) : [];
+    if (conflict) {
+      const activity = `Combining changes in ${conflict.files.join(", ")}`;
+      dispatch({ type: "updateTask", id: taskId, patch: { activity } });
+      engine.timelines.append(taskId, { kind: "note", text: activity }, attempt.timelineRun);
+    }
 
     const latest = find(taskId)!;
     const runStartHead = await head(tree.folder);
@@ -300,6 +313,7 @@ export function createRunner(options: RunnerOptions): Runner {
       look: !!tools.SHEPHERD_LOOK,
       done: !!tools.SHEPHERD_DONE,
       taskBranch: goal.branch,
+      ...(conflict ? { conflict: { ...conflict, steps: conflictSteps } } : {}),
       ...(pushRemote ? { pushed: { remote: pushRemote, branch: goal.branch!, base: goal.base! } } : {}),
     });
     const spec = command(provider, prompt, latest.sessionId ?? null, agentChoice({ model: latest.model, effort: latest.effort }, models()[provider].default));
@@ -373,6 +387,7 @@ export function createRunner(options: RunnerOptions): Runner {
         return changes(tree.folder, tree.branch);
       });
     } catch (error) {
+      if (error instanceof MergeConflictError) return fail(taskId, `Could not commit the run: unresolved merge conflicts in ${error.files.join(", ")}. Run the step to have its agent combine the changes.`);
       return fail(taskId, `Could not commit the run: ${message(error)}`);
     }
     const git = find(taskId)?.git;
@@ -661,7 +676,7 @@ export function createRunner(options: RunnerOptions): Runner {
   }
 
   /** Accepted steps collect on the task branch; only mergePlan touches the project checkout. */
-  async function merge(taskId: string): Promise<string | null> {
+  async function merge(taskId: string, collect = false): Promise<string | null> {
     const task = find(taskId);
     if (!task?.git) return "This step has no branch yet. Run it first.";
     if (!isFullyVerified(task)) return "Verify the step before merging it.";
@@ -682,11 +697,21 @@ export function createRunner(options: RunnerOptions): Runner {
       const blocker = state().tasks.find((step) => step.goalId === task.goalId && step.id !== taskId && isFullyVerified(step) && !collected(step) && step.blocker)?.blocker ?? null;
       dispatch({ type: "goalRuntime", id: task.goalId, patch: { blocker, merged: undefined } });
       retryMergeAt.delete(taskId);
+      mergeHandOffs.delete(taskId);
       return null;
     } catch (error) {
+      if (error instanceof MergeConflictError && collect && task.runner === "agent" && (task.autoRun || planRunning(task.goalId)) && (mergeHandOffs.get(taskId) ?? 0) < 2) {
+        mergeHandOffs.set(taskId, (mergeHandOffs.get(taskId) ?? 0) + 1);
+        retryMergeAt.delete(taskId);
+        engine.timelines.append(taskId, { kind: "note", text: `Merging ${task.name} conflicts in ${error.files.join(", ")}. Sending it back to its agent to combine the changes.` });
+        dispatch({ type: "updateTask", id: taskId, patch: { blocker: null } });
+        dispatch({ type: "goalRuntime", id: task.goalId, patch: { blocker: null } });
+        track(run(taskId, `Your accepted work conflicts with work already on the task branch in ${error.files.join(", ")}. Combine the two so both changes survive and fit together. Resolve every conflict and remove every conflict marker.`, false));
+        return null;
+      }
       const note = error instanceof DirtyWorktreeError
         ? `Waiting to merge ${task.name}: the task folder has uncommitted changes. Commit or stash them; Shepherd will try again.`
-        : `Waiting to merge ${task.name}: ${message(error)}`;
+        : `Waiting to merge ${task.name}: ${message(error)}${error instanceof MergeConflictError ? " Run the step to have its agent combine the changes." : ""}`;
       retryMergeAt.set(taskId, Date.now() + 1000);
       if (find(taskId)?.blocker !== note) engine.timelines.append(taskId, { kind: "wait", text: note });
       if (find(taskId)?.blocker !== note) dispatch({ type: "updateTask", id: taskId, patch: { blocker: note, activity: note } });
@@ -697,7 +722,7 @@ export function createRunner(options: RunnerOptions): Runner {
 
   async function collect(taskId: string) {
     collecting.add(taskId);
-    try { await merge(taskId); }
+    try { await merge(taskId, true); }
     finally { collecting.delete(taskId); schedule(); }
   }
 

@@ -26,6 +26,12 @@ stream, screenshots and reports, requires authentication. Requests with a
 foreign Origin or Host are refused. Restarting the server invalidates the old
 token. Static page assets alone do not grant API access.
 
+While Shepherd runs, the startup token is also stored in `session.json` in the
+configured data folder, alongside the server URL, guide address and process id.
+The file has mode `0600`, readable and writable only by your user; the data
+folder has mode `0700`. Shepherd removes its session file on stop, unless another
+server has replaced it with a different token. Demo boards do not write it.
+
 Treat the token address like a password. An authenticated client can start
 commands with your permissions. Do not expose Shepherd through a public proxy
 or tunnel, bind it to a public interface, or share the token. Loopback and the

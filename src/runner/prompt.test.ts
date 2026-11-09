@@ -25,6 +25,50 @@ function board(...more: Action[]): OrchestrationState {
 const get = (state: OrchestrationState, id: string) => state.tasks.find((task) => task.id === id)!;
 
 describe("prompts", () => {
+  it("puts conflict guidance after the task branch and names its source, files and accepted steps", () => {
+    const prompt = taskPrompt(step("a"), undefined, [], {
+      taskBranch: "shepherd/fix",
+      conflict: {
+        source: "shepherd/fix",
+        files: ["src/runner/prompt.ts", "src/runner/prompt.test.ts"],
+        steps: ["Add merge recovery", "Track accepted work"],
+      },
+    });
+    expect(prompt).toContain("This step belongs to task branch shepherd/fix. Accepted work collects there; the project checkout stays untouched.\nResolve the merge conflict before continuing:");
+    expect(prompt).toContain("Shepherd merged shepherd/fix into this worktree and git could not combine it with this step's work.");
+    expect(prompt).toContain("Files with conflict markers:\n- src/runner/prompt.ts\n- src/runner/prompt.test.ts");
+    expect(prompt).toContain("Accepted steps that changed the same files: Add merge recovery, Track accepted work.");
+    expect(prompt).toContain("Resolve every conflict so this step's change and the other work both survive and still fit together. Remove every conflict marker.");
+    expect(prompt).toContain("Do not run git merge --abort. Do not run git reset or git checkout on these files. Do not commit; Shepherd concludes the merge when you finish.");
+    expect(prompt).toContain("Then finish this step's own objective and run its check as usual.");
+  });
+
+  it("leaves the prompt unchanged without a conflict", () => {
+    const task = step("a");
+    const expected = [
+      "You are doing one step of a plan that Shepherd runs with several agents.",
+      "Work only in the current directory. It is this step's own git worktree, so other steps cannot see or overwrite your changes.",
+      "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
+      "This step belongs to task branch shepherd/fix. Accepted work collects there; the project checkout stays untouched.",
+      "Task: a",
+      "Objective: Do a",
+      "When you finish, summarize what changed and how to verify it.",
+    ].join("\n");
+    expect(taskPrompt(task, undefined, [], { taskBranch: "shepherd/fix" })).toBe(expected);
+    expect(taskPrompt(task, undefined, [], { taskBranch: "shepherd/fix", conflict: undefined })).toBe(expected);
+    expect(taskPrompt(task)).not.toContain("Resolve the merge conflict");
+  });
+
+  it("omits the accepted steps clause when no steps changed the conflicted files", () => {
+    const prompt = taskPrompt(step("a"), undefined, [], {
+      conflict: { source: "shepherd/fix", files: ["src/runner/prompt.ts"], steps: [] },
+    });
+    expect(prompt).toContain("Resolve the merge conflict before continuing:");
+    expect(prompt).toContain("Shepherd merged shepherd/fix");
+    expect(prompt).toContain("Files with conflict markers:\n- src/runner/prompt.ts");
+    expect(prompt).not.toContain("Accepted steps that changed the same files");
+  });
+
   it("numbers Done when items and asks for evidence as each is confirmed, with a way to withdraw", () => {
     const task = { ...step("a"), acceptance: ["Page loads", "Works on mobile"] };
     const prompt = taskPrompt(task, undefined, [], { done: true });

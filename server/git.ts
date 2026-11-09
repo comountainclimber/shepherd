@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 export class GitError extends Error {}
 export class DirtyWorktreeError extends GitError {}
+export class MergeConflictError extends GitError {
+  constructor(message: string, public readonly files: string[]) {
+    super(message);
+  }
+}
 
 export interface Author {
   name: string;
@@ -204,8 +209,32 @@ async function ownerOf(repo: string, branch: string): Promise<string | null> {
 }
 
 async function conflicts(cwd: string): Promise<string[]> {
-  const result = await git(cwd, ["diff", "--name-only", "--diff-filter=U"]);
-  return result.stdout.split("\n").filter(Boolean);
+  const result = await git(cwd, ["diff", "--name-only", "--diff-filter=U", "-z"]);
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+export async function mergeConflict(folder: string): Promise<{ source: string; files: string[] } | null> {
+  if (!process.env.GIT_DIR && !process.env.GIT_WORK_TREE) {
+    try {
+      let directory = path.join(folder, ".git");
+      if (statSync(directory).isFile()) {
+        const pointer = /^gitdir: (.+)\r?\n?$/.exec(readFileSync(directory, "utf8"));
+        if (!pointer) throw new Error("Not a gitdir pointer");
+        directory = path.resolve(folder, pointer[1]!);
+      }
+      if (!existsSync(path.join(directory, "MERGE_HEAD"))) return null;
+    } catch {
+      // Let Git resolve subfolders and nonstandard repository layouts.
+    }
+  }
+  const head = await git(folder, ["rev-parse", "--verify", "-q", "MERGE_HEAD"]);
+  if (head.code !== 0) return null;
+  const sha = head.stdout.trim();
+  const name = await git(folder, ["name-rev", "--name-only", "--no-undefined", "--refs=refs/heads/*", sha]);
+  const source = name.code === 0 ? name.stdout.trim() : await must(folder, ["rev-parse", "--short", sha]);
+  const markers = await git(folder, ["grep", "--threads=1", "--untracked", "--exclude-standard", "-I", "-l", "-z", "-e", "^<<<<<<< ", "-e", "^>>>>>>> ", "--"]);
+  const files = [...new Set([...await conflicts(folder), ...markers.stdout.split("\0").filter(Boolean)])].sort();
+  return { source, files };
 }
 
 /**
@@ -257,8 +286,12 @@ export async function commitAll(folder: string, message: string[], author: Autho
   if (!branch || !BRANCH.test(branch) || !(await ownerOf(folder, branch))) {
     throw new GitError(`Shepherd cannot commit in ${folder}: its checked-out branch was not created by Shepherd.`);
   }
+  const conflict = await mergeConflict(folder);
+  if (conflict?.files.length) {
+    throw new MergeConflictError(`Could not commit: conflicts in ${conflict.files.join(", ")}.`, conflict.files);
+  }
   await must(folder, ["add", "-A"]);
-  if ((await git(folder, ["diff", "--cached", "--quiet"])).code === 0) return false;
+  if (!conflict && (await git(folder, ["diff", "--cached", "--quiet"])).code === 0) return false;
   await must(folder, ["commit", "-q", ...message.filter(Boolean).flatMap((part) => ["-m", part])], identity(author));
   return true;
 }
@@ -301,8 +334,13 @@ async function advanceBase(folder: string, branch: string, upstream: string, tas
  * Gets the worktree ready for a run: commits anything a stopped run left behind, then merges in
  * upstream task branches. Returns the branches it merged.
  */
-export async function prepareRun(worktree: Worktree, upstream: string[], author: Author): Promise<string[]> {
+export async function prepareRun(worktree: Worktree, upstream: string[], author: Author, options: { keepConflicts?: boolean } = {}): Promise<string[]> {
   const { folder, branch } = worktree;
+  const conflict = await mergeConflict(folder);
+  if (conflict) {
+    if (options.keepConflicts) return [];
+    throw new MergeConflictError(`Could not merge ${conflict.source} into ${branch}: both changed ${conflict.files.join(", ")}.`, conflict.files);
+  }
   await commitAll(folder, ["Shepherd: changes left by a stopped run"], author);
   const merged: string[] = [];
   for (const source of upstream) {
@@ -311,12 +349,14 @@ export async function prepareRun(worktree: Worktree, upstream: string[], author:
     const result = await git(folder, ["merge", "--no-edit", "-m", `Shepherd: bring in ${source}`, source], identity());
     if (result.code !== 0) {
       const files = await conflicts(folder);
+      if (files.length && options.keepConflicts) {
+        await advanceBase(folder, branch, source, source === worktree.target);
+        merged.push(source);
+        return merged;
+      }
       await git(folder, ["merge", "--abort"]);
-      throw new GitError(
-        files.length
-          ? `Could not merge ${source} into ${branch}: both changed ${files.join(", ")}.`
-          : `Could not merge ${source} into ${branch}: ${lastLine(result.stderr || result.stdout)}`,
-      );
+      if (files.length) throw new MergeConflictError(`Could not merge ${source} into ${branch}: both changed ${files.join(", ")}.`, files);
+      throw new GitError(`Could not merge ${source} into ${branch}: ${lastLine(result.stderr || result.stdout)}`);
     }
     await advanceBase(folder, branch, source, source === worktree.target);
     merged.push(source);
@@ -356,6 +396,10 @@ export async function mergeBranch(repo: string, branch: string, message: string,
   const into = await currentBranch(repo);
   if (expectedInto && into !== expectedInto) throw new GitError(`${repo} is no longer on ${expectedInto}. Switch it back before merging.`);
   if (!into) throw new GitError(`${repo} is not on a branch, so there is nothing to merge into.`);
+  const conflict = await mergeConflict(repo);
+  if (conflict) {
+    throw new MergeConflictError(`Merging ${conflict.source} into ${into} conflicts in ${conflict.files.join(", ")}. Nothing was changed.`, conflict.files);
+  }
   if (await contains(repo, branch, "HEAD")) return { into, sha: await must(repo, ["rev-parse", "--short", "HEAD"]) };
   if (await must(repo, ["status", "--porcelain", "--untracked-files=no"])) {
     throw new DirtyWorktreeError(`${repo} has uncommitted changes on ${into}. Commit or stash them, then merge again.`);
@@ -364,11 +408,8 @@ export async function mergeBranch(repo: string, branch: string, message: string,
   if (result.code !== 0) {
     const files = await conflicts(repo);
     await git(repo, ["merge", "--abort"]);
-    throw new GitError(
-      files.length
-        ? `Merging ${branch} into ${into} conflicts in ${files.join(", ")}. Nothing was changed.`
-        : `Could not merge ${branch} into ${into}: ${lastLine(result.stderr || result.stdout)}`,
-    );
+    if (files.length) throw new MergeConflictError(`Merging ${branch} into ${into} conflicts in ${files.join(", ")}. Nothing was changed.`, files);
+    throw new GitError(`Could not merge ${branch} into ${into}: ${lastLine(result.stderr || result.stdout)}`);
   }
   return { into, sha: await must(repo, ["rev-parse", "--short", "HEAD"]) };
 }

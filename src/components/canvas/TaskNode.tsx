@@ -1,14 +1,16 @@
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { cx, formatDuration } from "../../model/format";
+import { tint } from "../../model/graphs";
 import { choiceLabel } from "../../model/models";
 import { assigneeFor, needsYou, nextStep, openIssues, STEP_LABEL, stageHint, stageOf } from "../../model/stage";
 import { useShepherd } from "../../store";
 import { useModels } from "../useModels";
 import { useNextStep } from "../useNextStep";
 import { AcceptanceCount } from "../inspector/AcceptanceProgress";
-import { Avatar, CheckDots, StageBadge, stageBg, stageBorder } from "../ui";
+import { Avatar, CheckDots, StageBadge, stageBg } from "../ui";
 
-export type TaskNodeData = { taskId: string; dimmed: boolean };
+/** `color` is the graph's; the node is tinted with it. */
+export type TaskNodeData = { taskId: string; dimmed: boolean; color: string };
 export type TaskFlowNode = Node<TaskNodeData, "task">;
 
 export const NODE_WIDTH = 256;
@@ -33,11 +35,14 @@ export function TaskNodeView({ data, selected }: NodeProps<TaskFlowNode>) {
     <div
       className={cx(
         "group relative overflow-hidden rounded-xl border-2 bg-surface text-left shadow-[0_4px_14px_rgb(0_0_0/0.3)] transition-opacity",
-        stageBorder[stage],
         selected && "ring-2 ring-brass ring-offset-2 ring-offset-bg",
         data.dimmed && "opacity-30",
       )}
-      style={{ width: NODE_WIDTH }}
+      style={{
+        width: NODE_WIDTH,
+        borderColor: selected ? "var(--color-brass)" : tint(data.color, 70),
+        backgroundImage: `linear-gradient(180deg, ${tint(data.color, 16)}, var(--color-surface) 70%)`,
+      }}
     >
       <div className="flex items-start gap-2.5 px-3 pt-3">
         <Avatar kind={assigneeFor(task).kind} size={28} />
