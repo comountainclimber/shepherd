@@ -139,7 +139,8 @@ export function Tree() {
   const projects = useShepherd((store) => store.state.projects);
   const setNewProjectOpen = useShepherd((store) => store.setNewProjectOpen);
   const repos = projects.filter((project) => project.repo);
-  const folders = projects.filter((project) => !project.repo);
+  const workspaces = projects.filter((project) => project.workspace);
+  const folders = projects.filter((project) => !project.repo && !project.workspace);
   return (
     <ol className="flex flex-col" aria-label="Repos, objectives and graphs">
       <Section label="Your repos" count={repos.length} hint="Git repositories on your disk. Each graph works on its own branch and worktree of the repo." first />
@@ -153,6 +154,12 @@ export function Tree() {
           </button>
         </li>
       )}
+      {workspaces.length ? (
+        <>
+          <Section label="Your workspaces" count={workspaces.length} hint="Tasks span all repositories, each in its own isolated worktree." />
+          {workspaces.map((project, index) => <RepoBranch key={project.id} project={project} first={index === 0} />)}
+        </>
+      ) : null}
       {folders.length ? (
         <>
           <Section label="Shepherd folders" count={folders.length} hint="Folders Shepherd made in its own workspace, for trying things out. None of these is one of your repos." />
@@ -201,13 +208,14 @@ function RepoBranch({ project, first }: { project: Project; first: boolean }) {
         aria-expanded={open}
         onClick={toggle}
         onKeyDown={activate(toggle)}
-        title={project.repo ? `Repo: ${project.repo}` : `Shepherd folder: ${project.directory ?? project.name}, in Shepherd's workspace`}
+        title={project.workspace ? `Workspace: ${project.workspace.root} (${project.workspace.repositories.length} repositories)` : project.repo ? `Repo: ${project.repo}` : `Shepherd folder: ${project.directory ?? project.name}, in Shepherd's workspace`}
         className={cx("flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-lg px-1.5 hover:bg-surface-2", FOCUS, !first && "mt-2")}
       >
         <ChevronRight size={12} className={cx("shrink-0 text-faint transition-transform duration-150", open && "rotate-90")} />
-        {project.repo ? <FolderGit2 size={14} className="shrink-0 text-text" /> : <Folder size={14} className="shrink-0 text-faint" />}
+        {project.repo || project.workspace ? <FolderGit2 size={14} className="shrink-0 text-text" /> : <Folder size={14} className="shrink-0 text-faint" />}
         <span className={cx("min-w-0 truncate text-[13px] font-semibold", !project.repo && "flex-1")}>{project.name}</span>
         {project.repo ? <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint">{shortPath(project.repo)}</span> : null}
+        {project.workspace ? <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint">{project.workspace.repositories.length} repos</span> : null}
         <span className="font-mono text-[11px] text-faint">{objectives.length}</span>
       </li>
       {open ? objectives.map((objective) => <ObjectiveBranch key={objective.id} objective={objective} />) : null}

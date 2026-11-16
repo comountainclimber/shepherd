@@ -3,7 +3,7 @@ import { blankGoal, newStep } from "./model/factory";
 import { reducer } from "./model/reducer";
 import type { OrchestrationState, UiState } from "./model/types";
 import { workspace } from "./model/workspace";
-import { connectToServer, initialUi, useShepherd } from "./store";
+import { connectToServer, initialUi, refreshFromServer, useShepherd } from "./store";
 
 const browserWindow = vi.hoisted(() => {
   const target = new EventTarget();
@@ -32,6 +32,18 @@ afterEach(() => {
 });
 
 describe("task selection", () => {
+  it("refreshes the saved board after importing a workspace before selecting its task", async () => {
+    const collection = { root: "/projects/product", repositories: [{ name: "api", repo: "/projects/product/api" }] };
+    const state = reducer(board(), { type: "createProject", project: { id: "imported", name: "Product", summary: "", workspace: collection } });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, json: async () => ({ state: { state }, version: 3, revision: 100 }),
+    })));
+    await refreshFromServer();
+    useShepherd.getState().setProject("imported");
+    expect(useShepherd.getState().state.projects.find((project) => project.id === "imported")?.workspace).toEqual(collection);
+    expect(useShepherd.getState().ui).toMatchObject({ projectId: "imported", goalId: "goal-imported" });
+  });
+
   it("selects a task alongside its project and clears the previous step and picker", () => {
     useShepherd.setState({ state: board(), ui: { ...initialUi, selectedTaskId: "old", inspectorOpen: true, addSaved: { after: null, depth: 0, label: "Old task" } } });
     useShepherd.getState().setGoal("second");

@@ -18,6 +18,7 @@ export interface PromptOptions {
   look?: boolean;
   done?: boolean;
   taskBranch?: string;
+  repositories?: string[];
   conflict?: { source: string; files: string[]; steps: string[] };
   pushed?: { remote: string; branch: string; base: string };
 }
@@ -104,7 +105,9 @@ export function taskPrompt(task: Task, extra?: string, upstream: UpstreamContext
     : [];
   return [
     "You are doing one step of a plan that Shepherd runs with several agents.",
-    "Work only in the current directory. It is this step's own git worktree, so other steps cannot see or overwrite your changes.",
+    options.repositories
+      ? `Work only inside these repository subdirectories of the current directory: ${options.repositories.join(", ")}. Each is this step's isolated git worktree. Make cross-repository changes here, not in the original checkouts. Files outside these subdirectories are not collected. Run git commands inside the appropriate repository; the workspace root is not a git repository.`
+      : "Work only in the current directory. It is this step's own git worktree, so other steps cannot see or overwrite your changes.",
     "Shepherd commits your changes when you finish. Do not commit, push, or switch branches yourself.",
     "",
     options.taskBranch ? `This step belongs to task branch ${options.taskBranch}. Accepted work collects there; the project checkout stays untouched.` : "",

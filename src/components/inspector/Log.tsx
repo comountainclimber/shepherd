@@ -14,7 +14,7 @@ export function Log() {
   const [note, setNote] = useState("");
   const human = task.runner === "human";
   const git = task.git;
-  const folder = git?.folder ?? project?.repo ?? [workspacePath() || ".agent-sandbox", project?.directory].filter(Boolean).join("/");
+  const folder = git?.folder ?? project?.workspace?.root ?? project?.repo ?? [workspacePath() || ".agent-sandbox", project?.directory].filter(Boolean).join("/");
 
   return (
     <div className="space-y-3">

@@ -19,7 +19,7 @@ import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { markProgress } from "./progress";
 import { openTaskFolder } from "./openTaskFolder";
-import { availableRepo, linkedRepos } from "./projectRepos";
+import { availableRepo, availableWorkspace, directoryChoices, inspectWorkspace, linkedRepos } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
 import { removeSession, writeSession } from "./session";
@@ -138,7 +138,7 @@ export function serverUrl(address: AddressInfo | string | null | undefined): str
 /** A person's checklist, drafted in their step's folder once it exists, or else the project folder. */
 export async function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
   const project = board.projects.find((item) => item.id === task.projectId);
-  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
+  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo, project?.workspace);
   if ("error" in base) return base;
   const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : base;
   if (!project?.repo) mkdirSync(folder.path, { recursive: true });
@@ -161,7 +161,7 @@ async function draftGoal(board: OrchestrationState, selected: Goal, body: DraftR
   if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
   const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
   const project = board.projects.find((item) => item.id === selected.projectId)!;
-  const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
+  const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo, project.workspace);
   if ("error" in folder) return folder;
   if (!project.repo) mkdirSync(folder.path, { recursive: true });
   const abandon = new AbortController();
@@ -364,6 +364,35 @@ async function route(
     } catch (error) {
       if (!res.destroyed) sendJson(res, error instanceof BadRequest ? 400 : 500, { error: error instanceof Error ? error.message : String(error), goal: planned.goal.id });
     }
+    return true;
+  }
+  if (pathname === "/api/directories" && method === "GET") {
+    try { sendJson(res, 200, directoryChoices(url.searchParams.get("path") ?? "~")); }
+    catch (error) { sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    return true;
+  }
+  if (pathname === "/api/workspaces" && (method === "GET" || method === "POST")) {
+    try {
+      const body = method === "POST" ? await readJson(req) as { path?: unknown; name?: unknown; summary?: unknown } | null : null;
+      const value = method === "GET" ? url.searchParams.get("path") : body?.path;
+      if (typeof value !== "string" || !value.trim()) throw new BadRequest("Choose a workspace directory.");
+      const collection = availableWorkspace(await inspectWorkspace(value), engine.get(), sandbox);
+      if (method === "GET") {
+        sendJson(res, 200, collection);
+        return true;
+      }
+      if (typeof body?.name !== "string" || !body.name.trim() || (body.summary !== undefined && typeof body.summary !== "string")) {
+        throw new BadRequest("A workspace needs a name and an optional text summary.");
+      }
+      const name = body.name.trim();
+      if (engine.get().projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
+        throw new BadRequest("A project with this name already exists.");
+      }
+      const project = { id: `proj-api-${stamp()}`, name, summary: typeof body.summary === "string" ? body.summary.trim() : "", workspace: collection };
+      engine.dispatch({ type: "createProject", project });
+      engine.flush();
+      sendJson(res, 201, { project, revision: engine.version() });
+    } catch (error) { sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
     return true;
   }
   if (pathname === "/api/projects/repo" && method === "GET") {

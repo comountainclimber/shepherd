@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,6 +50,36 @@ async function cookieFor(address: string) {
 }
 
 describe("the standalone server", () => {
+  it("browses and imports a repository workspace, revalidates it, and persists the collection", async () => {
+    const app = await start();
+    const directory = path.join(app.root, "collection");
+    for (const name of ["api", "web"]) {
+      const repo = path.join(directory, name);
+      mkdirSync(repo, { recursive: true });
+      execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+      execFileSync("git", ["-c", "user.name=Person", "-c", "user.email=person@example.test", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "Initial"], { cwd: repo });
+    }
+    const get = (route: string) => fetch(`${app.url}${route}`, { headers: app.headers });
+    const post = (route: string, body: unknown) => fetch(`${app.url}${route}`, { method: "POST", headers: { ...app.headers, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await fetch(`${app.url}/api/directories`)).status).toBe(403);
+    expect(await (await get(`/api/directories?path=${encodeURIComponent(directory)}`)).json()).toMatchObject({ directories: ["api", "web"] });
+    expect((await get("/api/directories?path=relative")).status).toBe(400);
+    const preview = await get(`/api/workspaces?path=${encodeURIComponent(directory)}`);
+    expect(preview.status).toBe(200);
+    expect((await preview.json()).repositories.map((repo: { name: string }) => repo.name)).toEqual(["api", "web"]);
+    expect((await post("/api/workspaces", { path: directory })).status).toBe(400);
+    const response = await post("/api/workspaces", { path: directory, name: "Collection" });
+    expect(response.status).toBe(201);
+    const { project } = await response.json();
+    expect(project.workspace.repositories).toHaveLength(2);
+    expect(project.repo).toBeUndefined();
+    expect(project.directory).toBeUndefined();
+    expect(JSON.parse(readFileSync(path.join(app.dataDir, "state.json"), "utf8")).state.state.projects).toContainEqual(project);
+    expect((await post("/api/workspaces", { path: directory, name: "Again" })).status).toBe(400);
+    expect((await post("/api/projects", { name: "API", repo: path.join(directory, "api") })).status).toBe(400);
+    expect((await post("/api/actions", { action: { type: "createProject", project: { ...project, id: "forged" } } })).status).toBe(400);
+  });
+
   it("serves the built page and authenticates API, stream, screenshot and report routes", async () => {
     const app = await start();
     expect(app.url).toMatch(/^http:\/\/127\.0\.0\.1:5\d+/);

@@ -153,6 +153,7 @@ export function planProject(state: OrchestrationState, body: unknown, id: string
     const name = text(raw.name, "name") || fail("The project needs a name.");
     const taken = state.projects.find((project) => project.name.toLowerCase() === name.toLowerCase());
     if (taken) fail(`There is already a project named ${taken.name} (${taken.id}).`);
+    if (raw.workspace !== undefined) fail("Import a multi-repository workspace through POST /api/workspaces with its path.");
     if (raw.directory !== undefined) fail("Use repo for an existing repository's absolute path. Omit it for a new folder in the workspace.");
     const repo = text(raw.repo, "repo");
     if (raw.repo !== undefined && !repo) fail("repo must name an existing repository by its absolute path.");
@@ -242,6 +243,7 @@ export function boardSummary(state: OrchestrationState) {
       name: project.name,
       directory: project.directory ?? null,
       repo: project.repo ?? null,
+      ...(project.workspace ? { workspace: project.workspace } : {}),
       goals: state.goals.filter((goal) => goal.projectId === project.id),
       tasks: state.tasks
         .filter((task) => task.projectId === project.id)

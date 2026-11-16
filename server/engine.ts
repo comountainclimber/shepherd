@@ -174,6 +174,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
     if (!project || typeof project.id !== "string" || !project.id || typeof project.name !== "string" || !project.name.trim() || typeof project.summary !== "string" || (project.repo !== undefined && (typeof project.repo !== "string" || !project.repo.trim()))) {
       return { error: "A project needs an id, name, summary and a repository path or workspace folder." };
     }
+    if (project.workspace !== undefined) return { error: "Import a workspace through /api/workspaces." };
   }
   if (action.type === "readNotifications" && action.goalId !== undefined && (typeof action.goalId !== "string" || !state.goals.some((goal) => goal.id === action.goalId))) {
     return { error: "Choose a task whose activity to read." };
