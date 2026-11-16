@@ -40,17 +40,35 @@ export function directoryChoices(value: string) {
 }
 
 export function availableWorkspace(collection: RepositoryWorkspace, board: OrchestrationState, sandbox: string) {
+  const imported = [collection.root, ...collection.repositories.map((member) => member.repo)].map(canonicalFolder);
   for (const project of board.projects) {
-    const folders = project.workspace?.repositories.map((member) => member.repo)
-      ?? [project.repo ?? (project.directory ? path.resolve(board.workspace || sandbox, project.directory) : "")];
+    const folders = project.workspace
+      ? [project.workspace.root, ...project.workspace.repositories.map((member) => member.repo)]
+      : [project.repo ?? (project.directory ? path.resolve(board.workspace || sandbox, project.directory) : "")];
     for (const folder of folders) {
-      if (!folder || !existsSync(folder)) continue;
-      if (collection.repositories.some((member) => member.repo === realpathSync(folder))) {
-        throw new Error(`A repository in this workspace already belongs to ${project.name}. Open that project instead.`);
+      if (!folder) continue;
+      const existing = canonicalFolder(folder);
+      if (imported.some((directory) => containsFolder(directory, existing) || containsFolder(existing, directory))) {
+        throw new Error(`An overlapping directory already belongs to ${project.name}. Open that project instead.`);
       }
     }
   }
   return collection;
+}
+
+function canonicalFolder(folder: string): string {
+  try { return realpathSync(folder); }
+  catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+    const parent = path.dirname(folder);
+    if (parent === folder) throw error;
+    return path.join(canonicalFolder(parent), path.basename(folder));
+  }
+}
+
+function containsFolder(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 /** Resolves aliases before comparing, so a symlink cannot add the same checkout twice. */

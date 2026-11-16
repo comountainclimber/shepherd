@@ -245,6 +245,7 @@ export function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
 }
 
 function receive(revision: number, state: OrchestrationState) {
+  if (revision < confirmedRevision) return;
   confirmed = state;
   confirmedRevision = revision;
   pending = pending.filter((entry) => entry.revision === undefined || entry.revision > revision);
@@ -267,6 +268,7 @@ export function connectToServer(): () => void {
   source.onopen = () => {
     // A restarted server counts revisions from 1 again; edits it already answered are in its saved board.
     pending = pending.filter((entry) => entry.revision === undefined);
+    confirmedRevision = 0;
     useShepherd.setState({ connection: "open" });
   };
   source.onerror = () => useShepherd.setState({ connection: "lost" });

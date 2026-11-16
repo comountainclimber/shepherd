@@ -72,6 +72,56 @@ describe("multi-repository workspaces", () => {
     expect(await restarted.openWorktree(directory, worktrees, "one", "one", first.branch, { start: goal.branch })).toMatchObject({ folder: first.folder, branch: first.branch });
   });
 
+  it("rejects workspace roots overlapping folder projects, including aliases and folders not created yet", async () => {
+    const { root, directory } = fixture();
+    const collection = await inspectWorkspace(directory);
+    symlinkSync(directory, path.join(root, "alias"));
+    for (const folder of ["projects", ".", "projects/not-a-repo", "projects/not-created/child", "alias", "alias/not-created"]) {
+      const board = {
+        ...workspace(), workspace: root,
+        projects: [{ id: "folder", name: "Existing folder", summary: "", directory: folder }],
+      };
+      expect(() => availableWorkspace(collection, board, "/unused")).toThrow(/already belongs to Existing folder/);
+    }
+    const board = {
+      ...workspace(),
+      projects: [{ id: "folder", name: "Separate folder", summary: "", directory: "projects-sibling" }],
+    };
+    expect(availableWorkspace(collection, board, root)).toBe(collection);
+    expect(() => availableWorkspace(collection, {
+      ...board, projects: [{ id: "folder", name: "Default folder", summary: "", directory: "projects" }],
+    }, root)).toThrow(/already belongs/);
+  });
+
+  it.each(["deleted", "ownership changed"])("refuses a persisted step whose branch was %s without recreating it", async (damage) => {
+    const { root, directory, api } = fixture();
+    const collection = await inspectWorkspace(directory);
+    const worktrees = path.join(root, "worktrees");
+    const git = workspaceGit(collection, worktrees);
+    const goal = await git.openGoalWorktree(directory, worktrees, "goal", "integrity");
+    const step = await git.openWorktree(directory, worktrees, "step", "integrity-step", undefined, { start: goal.branch });
+    const folder = path.join(step.folder, "api");
+    const branch = command(folder, "branch", "--show-current");
+    writeFileSync(path.join(folder, "proof.txt"), "Keep this work\n");
+    await git.commitAll(step.folder, ["Step work"], { name: "Agent", email: "agent@example.test" });
+    const head = command(folder, "rev-parse", "HEAD");
+    if (damage === "deleted") {
+      command(api, "worktree", "remove", folder);
+      command(api, "branch", "-D", branch);
+    } else {
+      command(api, "config", `branch.${branch}.shepherdtask`, "another-step");
+    }
+    const reopened = workspaceGit(collection, worktrees);
+    await expect(reopened.openWorktree(directory, worktrees, "step", "integrity-step", step.branch, { start: goal.branch }))
+      .rejects.toThrow(/missing or no longer belongs/);
+    if (damage === "deleted") {
+      expect(command(api, "branch", "--list", branch)).toBe("");
+    } else {
+      expect(command(folder, "rev-parse", "HEAD")).toBe(head);
+      expect(readFileSync(path.join(folder, "proof.txt"), "utf8")).toBe("Keep this work\n");
+    }
+  });
+
   it("refuses two checkouts sharing one repository instead of reusing their branches", async () => {
     const { directory, api } = fixture();
     command(api, "worktree", "add", "-q", "-b", "other", path.join(directory, "api-other"));
