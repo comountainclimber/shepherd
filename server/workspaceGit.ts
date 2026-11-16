@@ -73,7 +73,7 @@ export function workspaceGit(workspace: RepositoryWorkspace, root: string) {
     for (const member of group.members) {
       const upstream = target && memberFor(target, member.name);
       const start = upstream?.tree.branch ?? member.base;
-      if (member.tree && owner.startsWith("goal:")) {
+      if (member.tree) {
         const owned = await git.git(member.repo, ["config", "--get", `branch.${member.tree.branch}.shepherdtask`]);
         const exists = await git.git(member.repo, ["rev-parse", "--verify", `refs/heads/${member.tree.branch}`]);
         if (exists.code !== 0 || owned.stdout.trim() !== owner) throw new git.GitError(`The task branch for ${member.name} is missing or no longer belongs to this task.`);
