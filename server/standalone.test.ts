@@ -68,12 +68,20 @@ describe("the standalone server", () => {
     expect(preview.status).toBe(200);
     expect((await preview.json()).repositories.map((repo: { name: string }) => repo.name)).toEqual(["api", "web"]);
     expect((await post("/api/workspaces", { path: directory })).status).toBe(400);
-    const response = await post("/api/workspaces", { path: directory, name: "Collection" });
+    const imports = await Promise.all([
+      post("/api/workspaces", { path: directory, name: "Collection" }),
+      post("/api/workspaces", { path: directory, name: "Other collection" }),
+    ]);
+    expect(imports.map((response) => response.status).sort()).toEqual([201, 400]);
+    const response = imports.find((response) => response.status === 201)!;
+    const refused = imports.find((response) => response.status === 400)!;
+    expect(await refused.json()).toHaveProperty("error", expect.stringContaining("already belongs"));
     expect(response.status).toBe(201);
     const { project } = await response.json();
     expect(project.workspace.repositories).toHaveLength(2);
     expect(project.repo).toBeUndefined();
     expect(project.directory).toBeUndefined();
+    expect(app.engine.get().projects.filter((project) => project.workspace)).toHaveLength(1);
     expect(JSON.parse(readFileSync(path.join(app.dataDir, "state.json"), "utf8")).state.state.projects).toContainEqual(project);
     expect((await post("/api/workspaces", { path: directory, name: "Again" })).status).toBe(400);
     expect((await post("/api/projects", { name: "API", repo: path.join(directory, "api") })).status).toBe(400);

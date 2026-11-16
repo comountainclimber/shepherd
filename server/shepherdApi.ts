@@ -376,9 +376,9 @@ async function route(
       const body = method === "POST" ? await readJson(req) as { path?: unknown; name?: unknown; summary?: unknown } | null : null;
       const value = method === "GET" ? url.searchParams.get("path") : body?.path;
       if (typeof value !== "string" || !value.trim()) throw new BadRequest("Choose a workspace directory.");
-      const collection = availableWorkspace(await inspectWorkspace(value), engine.get(), sandbox);
+      const collection = await inspectWorkspace(value);
       if (method === "GET") {
-        sendJson(res, 200, collection);
+        sendJson(res, 200, availableWorkspace(collection, engine.get(), sandbox));
         return true;
       }
       if (typeof body?.name !== "string" || !body.name.trim() || (body.summary !== undefined && typeof body.summary !== "string")) {
@@ -389,6 +389,8 @@ async function route(
         throw new BadRequest("A project with this name already exists.");
       }
       const project = { id: `proj-api-${stamp()}`, name, summary: typeof body.summary === "string" ? body.summary.trim() : "", workspace: collection };
+      // Keep board validation and dispatch synchronous so concurrent imports cannot share a stale board.
+      availableWorkspace(collection, engine.get(), sandbox);
       engine.dispatch({ type: "createProject", project });
       engine.flush();
       sendJson(res, 201, { project, revision: engine.version() });
