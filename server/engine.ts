@@ -175,6 +175,7 @@ export function tabAction(state: OrchestrationState, value: unknown): Action | {
       return { error: "A project needs an id, name, summary and a repository path or workspace folder." };
     }
     if (project.workspace !== undefined) return { error: "Import a workspace through /api/workspaces." };
+    if (project.directory !== undefined && typeof project.directory !== "string") return { error: "A project folder must be a path." };
   }
   if (action.type === "readNotifications" && action.goalId !== undefined && (typeof action.goalId !== "string" || !state.goals.some((goal) => goal.id === action.goalId))) {
     return { error: "Choose a task whose activity to read." };

@@ -41,7 +41,7 @@ describe("multi-repository workspaces", () => {
     const collection = await inspectWorkspace(directory);
     expect(collection.repositories.map((repo) => repo.name)).toEqual(["api", "web"]);
     const board = reducer(workspace(), { type: "createProject", project: { id: "multi", name: "Multi", summary: "", workspace: collection } });
-    expect(() => availableWorkspace(collection, board, root)).toThrow(/already belongs/);
+    await expect(availableWorkspace(collection, board, root)).rejects.toThrow(/already belongs/);
     await expect(availableRepo(api, board, root)).rejects.toThrow(/already belongs/);
     symlinkSync(api, path.join(directory, "alias"));
     await expect(inspectWorkspace(directory)).rejects.toThrow(/already included/);
@@ -81,16 +81,16 @@ describe("multi-repository workspaces", () => {
         ...workspace(), workspace: root,
         projects: [{ id: "folder", name: "Existing folder", summary: "", directory: folder }],
       };
-      expect(() => availableWorkspace(collection, board, "/unused")).toThrow(/already belongs to Existing folder/);
+      await expect(availableWorkspace(collection, board, "/unused")).rejects.toThrow(/already belongs to Existing folder/);
     }
     const board = {
       ...workspace(),
       projects: [{ id: "folder", name: "Separate folder", summary: "", directory: "projects-sibling" }],
     };
-    expect(availableWorkspace(collection, board, root)).toBe(collection);
-    expect(() => availableWorkspace(collection, {
+    await expect(availableWorkspace(collection, board, root)).resolves.toBe(collection);
+    await expect(availableWorkspace(collection, {
       ...board, projects: [{ id: "folder", name: "Default folder", summary: "", directory: "projects" }],
-    }, root)).toThrow(/already belongs/);
+    }, root)).rejects.toThrow(/already belongs/);
   });
 
   it.each(["deleted", "ownership changed"])("refuses a persisted step whose branch was %s without recreating it", async (damage) => {

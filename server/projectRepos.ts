@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { OrchestrationState, RepositoryWorkspace } from "../src/model/types";
+import type { OrchestrationState, Project, RepositoryWorkspace } from "../src/model/types";
+import { projectDirectory } from "../src/model/workspace";
 import { git, inspectRepo } from "./git";
 
 export function repoPath(value: string): string {
@@ -20,9 +21,7 @@ export async function inspectWorkspace(value: string): Promise<RepositoryWorkspa
     if (name.startsWith(".") || !existsSync(path.join(root, name, ".git"))) continue;
     const inspected = await inspectRepo(path.join(root, name));
     if (repositories.some((item) => item.repo === inspected.repo)) throw new Error(`${name} points to a repository already included in this workspace.`);
-    const common = await git(inspected.repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    if (common.code !== 0) throw new Error(`Could not check the Git directory for ${name}: ${common.stderr}`);
-    const gitDirectory = realpathSync(common.stdout.trim());
+    const gitDirectory = await commonDirectory(inspected.repo);
     if (gitDirectories.has(gitDirectory)) throw new Error(`${name} shares the same Git repository with another workspace folder. Include only one checkout of each repository.`);
     gitDirectories.add(gitDirectory);
     repositories.push({ name, repo: inspected.repo });
@@ -39,21 +38,53 @@ export function directoryChoices(value: string) {
   return { directory, parent: path.dirname(directory), directories };
 }
 
-export function availableWorkspace(collection: RepositoryWorkspace, board: OrchestrationState, sandbox: string) {
-  const imported = [collection.root, ...collection.repositories.map((member) => member.repo)].map(canonicalFolder);
+export async function availableWorkspace(collection: RepositoryWorkspace, board: OrchestrationState, sandbox: string) {
+  await checkLocation({ root: collection.root, checkouts: collection.repositories.map((member) => member.repo) }, board, sandbox);
+  return collection;
+}
+
+interface ProjectLocation {
+  root?: string;
+  checkouts: string[];
+}
+
+function projectLocation(project: Project, board: OrchestrationState, sandbox: string): ProjectLocation {
+  if (project.workspace) return { root: project.workspace.root, checkouts: project.workspace.repositories.map((member) => member.repo) };
+  const folder = project.repo ?? path.resolve(board.workspace || sandbox, project.directory?.trim() || projectDirectory(project.name.trim(), board.projects));
+  return { checkouts: [folder] };
+}
+
+async function commonDirectory(repo: string) {
+  const common = await git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (common.code !== 0) throw new Error(`Could not check the Git directory for ${repo}: ${common.stderr}`);
+  return realpathSync(common.stdout.trim());
+}
+
+async function checkLocation(candidate: ProjectLocation, board: OrchestrationState, sandbox: string, repo?: string) {
+  const paths = (location: ProjectLocation) => [...(location.root ? [location.root] : []), ...location.checkouts].map(canonicalFolder);
+  const candidatePaths = paths(candidate);
+  let commonDirs: Set<string> | undefined;
   for (const project of board.projects) {
-    const folders = project.workspace
-      ? [project.workspace.root, ...project.workspace.repositories.map((member) => member.repo)]
-      : [project.repo ?? (project.directory ? path.resolve(board.workspace || sandbox, project.directory) : "")];
-    for (const folder of folders) {
-      if (!folder) continue;
-      const existing = canonicalFolder(folder);
-      if (imported.some((directory) => containsFolder(directory, existing) || containsFolder(existing, directory))) {
-        throw new Error(`An overlapping directory already belongs to ${project.name}. Open that project instead.`);
+    const existing = projectLocation(project, board, sandbox);
+    if (!candidate.root && !existing.root) {
+      if (repo && paths(existing).includes(repo)) throw new Error(`${repo} is already the repository for ${project.name}. Open that project instead.`);
+      continue;
+    }
+    if (paths(existing).some((folder) => candidatePaths.some((incoming) => containsFolder(incoming, folder) || containsFolder(folder, incoming)))) {
+      throw new Error(`An overlapping directory already belongs to ${project.name}. Open that project instead.`);
+    }
+    commonDirs ??= new Set(await Promise.all(candidate.checkouts.filter(hasGitDirectory).map(commonDirectory)));
+    if (!commonDirs.size) continue;
+    for (const checkout of existing.checkouts.filter(hasGitDirectory)) {
+      if (commonDirs.has(await commonDirectory(checkout))) {
+        throw new Error(`The same Git repository already belongs to ${project.name} through a linked worktree. Open that project instead.`);
       }
     }
   }
-  return collection;
+}
+
+function hasGitDirectory(folder: string): boolean {
+  return existsSync(path.join(folder, ".git"));
 }
 
 function canonicalFolder(folder: string): string {
@@ -72,20 +103,17 @@ function containsFolder(parent: string, child: string): boolean {
 }
 
 /** Resolves aliases before comparing, so a symlink cannot add the same checkout twice. */
-export async function availableRepo(value: string, state: OrchestrationState | (() => OrchestrationState), sandbox: string) {
+export async function availableRepo(value: string, board: OrchestrationState, sandbox: string) {
   const result = await inspectRepo(repoPath(value));
-  const board = typeof state === "function" ? state() : state;
-  for (const project of board.projects) {
-    if (project.workspace?.repositories.some((member) => member.repo === result.repo)) {
-      throw new Error(`${value} already belongs to workspace ${project.name}. Open that project instead.`);
-    }
-    const folder = project.repo ?? (project.directory ? path.resolve(board.workspace || sandbox, project.directory) : null);
-    if (!folder) continue;
-    let real: string;
-    try { real = realpathSync(folder); } catch { continue; }
-    if (real === result.repo) throw new Error(`${value} is already the repository for ${project.name}. Open that project instead.`);
-  }
+  await checkLocation({ checkouts: [result.repo] }, board, sandbox, result.repo);
   return result;
+}
+
+export async function validateProjectLocation(project: Project, board: OrchestrationState, sandbox: string): Promise<Project> {
+  if (project.workspace) await availableWorkspace(project.workspace, board, sandbox);
+  else if (project.repo !== undefined) return { ...project, repo: (await availableRepo(project.repo, board, sandbox)).repo };
+  else await checkLocation(projectLocation(project, board, sandbox), board, sandbox);
+  return project;
 }
 
 /**
