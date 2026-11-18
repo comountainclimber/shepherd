@@ -15,6 +15,7 @@ import type {
   Objective,
   OrchestrationState,
   Project,
+  RepositoryWorkspace,
   Task,
   TaskGit,
   TaskStatus,
@@ -39,13 +40,25 @@ function text(value: unknown, fallback = ""): string {
 
 function project(raw: Raw): Project {
   const directory = text(raw.directory);
+  const collection = repositoryWorkspace(raw.workspace);
   return {
     id: text(raw.id),
     name: text(raw.name),
     summary: text(raw.summary),
     ...(directory ? { directory } : {}),
     ...(text(raw.repo) ? { repo: text(raw.repo) } : {}),
+    ...(collection ? { workspace: collection } : {}),
   };
+}
+
+function repositoryWorkspace(value: unknown): RepositoryWorkspace | null {
+  const raw = record(value);
+  if (!raw || !text(raw.root)) return null;
+  const repositories = list(raw.repositories).flatMap((value) => {
+    const item = record(value);
+    return item && text(item.name) && text(item.repo) ? [{ name: text(item.name), repo: text(item.repo) }] : [];
+  });
+  return repositories.length ? { root: text(raw.root), repositories } : null;
 }
 
 function check(raw: Raw): VerificationCheck | null {
@@ -231,7 +244,7 @@ export function loadState(saved: unknown): OrchestrationState | null {
   const projects = list(raw.projects).flatMap((item) => (record(item) ? [project(item as Raw)] : []));
   if (!projects.length) return null;
   // The workspace folder holds every project, so it cannot be one project's repository.
-  for (const item of projects) if (!item.repo) item.directory ||= projectDirectory(item.name, projects);
+  for (const item of projects) if (!item.repo && !item.workspace) item.directory ||= projectDirectory(item.name, projects);
   const goals: Goal[] = raw.schema === 3
     ? list(raw.goals).flatMap((item) => {
         const value = record(item);

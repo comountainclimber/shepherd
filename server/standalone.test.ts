@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,7 +49,92 @@ async function cookieFor(address: string) {
   return login.headers.get("set-cookie")!.split(";")[0];
 }
 
+function initRepo(repo: string) {
+  mkdirSync(repo, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+  execFileSync("git", ["-c", "user.name=Person", "-c", "user.email=person@example.test", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-qm", "Initial"], { cwd: repo });
+}
+
 describe("the standalone server", () => {
+  it("browses and imports a repository workspace, revalidates it, and persists the collection", async () => {
+    const app = await start();
+    const directory = path.join(app.root, "collection");
+    for (const name of ["api", "web"]) initRepo(path.join(directory, name));
+    const get = (route: string) => fetch(`${app.url}${route}`, { headers: app.headers });
+    const post = (route: string, body: unknown) => fetch(`${app.url}${route}`, { method: "POST", headers: { ...app.headers, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await fetch(`${app.url}/api/directories`)).status).toBe(403);
+    expect(await (await get(`/api/directories?path=${encodeURIComponent(directory)}`)).json()).toMatchObject({ directories: ["api", "web"] });
+    expect((await get("/api/directories?path=relative")).status).toBe(400);
+    const preview = await get(`/api/workspaces?path=${encodeURIComponent(directory)}`);
+    expect(preview.status).toBe(200);
+    expect((await preview.json()).repositories.map((repo: { name: string }) => repo.name)).toEqual(["api", "web"]);
+    expect((await post("/api/workspaces", { path: directory })).status).toBe(400);
+    const imports = await Promise.all([
+      post("/api/workspaces", { path: directory, name: "Collection" }),
+      post("/api/workspaces", { path: directory, name: "Other collection" }),
+    ]);
+    expect(imports.map((response) => response.status).sort()).toEqual([201, 400]);
+    const response = imports.find((response) => response.status === 201)!;
+    const refused = imports.find((response) => response.status === 400)!;
+    expect(await refused.json()).toHaveProperty("error", expect.stringContaining("already belongs"));
+    expect(response.status).toBe(201);
+    const { project } = await response.json();
+    expect(project.workspace.repositories).toHaveLength(2);
+    expect(project.repo).toBeUndefined();
+    expect(project.directory).toBeUndefined();
+    expect(app.engine.get().projects.filter((project) => project.workspace)).toHaveLength(1);
+    expect(JSON.parse(readFileSync(path.join(app.dataDir, "state.json"), "utf8")).state.state.projects).toContainEqual(project);
+    expect((await post("/api/workspaces", { path: directory, name: "Again" })).status).toBe(400);
+    expect((await post("/api/projects", { name: "API", repo: path.join(directory, "api") })).status).toBe(400);
+    expect((await post("/api/actions", { action: { type: "createProject", project: { ...project, id: "forged" } } })).status).toBe(400);
+  });
+
+  it("rejects linked worktrees across projects regardless of import order", async () => {
+    const app = await start();
+    const post = (route: string, body: unknown) => fetch(`${app.url}${route}`, { method: "POST", headers: { ...app.headers, "content-type": "application/json" }, body: JSON.stringify(body) });
+    for (const first of ["repo", "workspace"]) {
+      const collection = path.join(app.root, `${first}-collection`);
+      const member = path.join(collection, "api");
+      const linked = path.join(app.root, `${first}-linked`);
+      initRepo(member);
+      execFileSync("git", ["worktree", "add", "-q", "-b", "linked", linked], { cwd: member });
+      const addRepo = () => post("/api/projects", { repo: linked, name: `${first} repo` });
+      const addWorkspace = () => post("/api/workspaces", { path: collection, name: `${first} workspace` });
+      expect((await (first === "repo" ? addRepo() : addWorkspace())).status).toBe(201);
+      const refusal = await (first === "repo" ? addWorkspace() : addRepo());
+      expect(refusal.status).toBe(400);
+      expect(await refusal.json()).toHaveProperty("error", expect.stringContaining("through a linked worktree"));
+    }
+  });
+
+  it("rejects ordinary folder and repository projects overlapping an imported workspace root", async () => {
+    const app = await start();
+    const collection = path.join(app.projectsDir, "product");
+    initRepo(path.join(collection, "api"));
+    const post = (route: string, body: unknown) => fetch(`${app.url}${route}`, { method: "POST", headers: { ...app.headers, "content-type": "application/json" }, body: JSON.stringify(body) });
+    expect((await post("/api/workspaces", { path: collection, name: "Imported product" })).status).toBe(201);
+    const lateRepo = path.join(collection, "tools");
+    initRepo(lateRepo);
+    const action = (project: { name: string; directory?: string; repo?: string }) => ({
+      action: { type: "createProject", project: { id: `proj-${project.name}`, summary: "", ...project } },
+    });
+    for (const [route, body] of [
+      ["/api/projects", { name: "Product" }],
+      ["/api/projects", { name: "Tools", repo: lateRepo }],
+      ["/api/actions", action({ name: "Product" })],
+      ["/api/actions", action({ name: "Nested folder", directory: "product/not-yet-created" })],
+      ["/api/actions", action({ name: "Tools", repo: lateRepo })],
+    ] as const) {
+      const refusal = await post(route, body);
+      expect(refusal.status).toBe(400);
+      expect(await refusal.json()).toHaveProperty("error", expect.stringContaining("already belongs to Imported product"));
+    }
+    const preview = await fetch(`${app.url}/api/projects/repo?path=${encodeURIComponent(lateRepo)}`, { headers: app.headers });
+    expect(preview.status).toBe(400);
+    expect((await post("/api/projects", { name: "Product sibling" })).status).toBe(201);
+    expect(app.engine.get().projects.map((project) => project.name)).toEqual(["Workspace", "Imported product", "Product sibling"]);
+  });
+
   it("serves the built page and authenticates API, stream, screenshot and report routes", async () => {
     const app = await start();
     expect(app.url).toMatch(/^http:\/\/127\.0\.0\.1:5\d+/);

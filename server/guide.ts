@@ -6,7 +6,8 @@ It runs your agents in separate git worktrees and collects accepted work on a ta
 
 ## The words
 
-A project is a repository. A task is one piece of work with its own branch.
+A project is a repository or an imported workspace of repositories. A task is one piece of work with its own branch.
+For a workspace, every repository has an isolated worktree under the task folder. Run checks and git commands in the appropriate subfolder; the shared root is not a git repository.
 A step is one agent's or person's job inside a task.
 The API still calls a task a goal and a step a task.
 

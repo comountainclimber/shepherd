@@ -21,7 +21,8 @@ export function workCheckPrompt(task: Task, diff: string): string {
     "List changes the step did not ask for under unrequested. Those alone do not fail the check.",
     "Under violations list only work that does something the step explicitly said not to do, citing the instruction and evidence. An unmet item or a violation fails the check. Can't tell does not fail it.",
     "The diff is against where this step started. Large previews may be shortened; inspect the files or git diff against the base below when needed.",
-    `Base: refs/shepherd-base/${task.git?.branch ?? ""}`,
+    "If the current directory contains multiple repositories, run git commands inside each repository. Each repository's step branch has its own refs/shepherd-base/<branch> base.",
+    `Base for a single repository: refs/shepherd-base/${task.git?.branch ?? ""}`,
     diff || "No files changed.",
     'Reply only with JSON: {"items":[{"item":1,"verdict":"met","reason":"..."}],"unrequested":["..."],"violations":["..."]}. Use empty arrays when there is nothing to list.',
   ].join("\n");
@@ -48,9 +49,9 @@ export function parseWorkCheck(reply: string, acceptance: string[]): WorkCheckRe
   }
 }
 
-export async function checkWork(task: Task, signal: AbortSignal): Promise<WorkCheckResult | { error: string }> {
+export async function checkWork(task: Task, signal: AbortSignal, readChanges = changes): Promise<WorkCheckResult | { error: string }> {
   if (!task.git) return { error: "This step has no finished work folder yet." };
-  const diff = await changes(task.git.folder, task.git.branch);
+  const diff = await readChanges(task.git.folder, task.git.branch);
   if (signal.aborted) return { error: "Work check stopped." };
   const answer = await askCodex(workCheckPrompt(task, [
     `Changed files: ${diff.files.join(", ") || "none"}`,

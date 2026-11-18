@@ -9,7 +9,7 @@ import type { Plugin } from "vite";
 import { resolveGoal } from "../src/model/goals";
 import { workspace } from "../src/model/workspace";
 import { agentChoice, isEffort, isModelId, type ModelCatalog } from "../src/model/models";
-import { EFFORTS, type Action, type Goal, type OrchestrationState, type Task } from "../src/model/types";
+import { EFFORTS, type Action, type Goal, type OrchestrationState, type Project, type Task } from "../src/model/types";
 import { createEngine, envelope, tabAction, type Engine } from "./engine";
 import { gitAvailable } from "./git";
 import { guideText } from "./guide";
@@ -19,7 +19,7 @@ import { LookRefused, createLooks } from "./looks";
 import { modelCatalog } from "./models";
 import { markProgress } from "./progress";
 import { openTaskFolder } from "./openTaskFolder";
-import { availableRepo, linkedRepos } from "./projectRepos";
+import { availableRepo, availableWorkspace, directoryChoices, inspectWorkspace, linkedRepos, validateProjectLocation } from "./projectRepos";
 import { agentStatus, createRunner, inside, projectFolder, type Runner } from "./runner";
 import { createSavedSteps, type SavedSteps } from "./savedSteps";
 import { removeSession, writeSession } from "./session";
@@ -138,7 +138,7 @@ export function serverUrl(address: AddressInfo | string | null | undefined): str
 /** A person's checklist, drafted in their step's folder once it exists, or else the project folder. */
 export async function writeChecklist(board: OrchestrationState, task: Task, sandbox: string, signal?: AbortSignal): Promise<{ text: string } | { error: string }> {
   const project = board.projects.find((item) => item.id === task.projectId);
-  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo);
+  const base = await projectFolder(board.workspace, project?.directory, sandbox, project?.repo, project?.workspace);
   if ("error" in base) return base;
   const folder = task.git?.folder && existsSync(task.git.folder) ? { path: task.git.folder } : base;
   if (!project?.repo) mkdirSync(folder.path, { recursive: true });
@@ -161,7 +161,7 @@ async function draftGoal(board: OrchestrationState, selected: Goal, body: DraftR
   if (thinking !== null && !isEffort(thinking)) throw new BadRequest(`thinking must be one of: ${EFFORTS.join(", ")}.`);
   const choice = agentChoice({ model: model ?? undefined, effort: thinking ?? undefined }, modelCatalog().codex.default);
   const project = board.projects.find((item) => item.id === selected.projectId)!;
-  const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo);
+  const folder = await projectFolder(board.workspace, project.directory, sandbox, project.repo, project.workspace);
   if ("error" in folder) return folder;
   if (!project.repo) mkdirSync(folder.path, { recursive: true });
   const abandon = new AbortController();
@@ -186,6 +186,18 @@ interface Context {
   saved: SavedSteps;
   demo?: boolean;
   origin?: () => string | null;
+}
+
+async function addProject(engine: Engine, sandbox: string, plan: (board: OrchestrationState) => Project): Promise<Project> {
+  for (;;) {
+    const board = engine.get();
+    const project = await validateProjectLocation(plan(board), board, sandbox);
+    const current = engine.get();
+    // Git inspection yields to other requests. Recheck if another request changed project locations.
+    if (current.projects !== board.projects || current.workspace !== board.workspace) continue;
+    engine.dispatch({ type: "createProject", project });
+    return project;
+  }
 }
 
 export function apiHandler(context: Context) {
@@ -257,14 +269,14 @@ async function route(
         errors.push(action.error);
         continue;
       }
-      if (action.type === "createProject" && action.project.repo !== undefined) {
-        if (demo) { errors.push("Demo projects use throwaway folders only."); continue; }
+      if (action.type === "createProject") {
+        if (demo && action.project.repo !== undefined) { errors.push("Demo projects use throwaway folders only."); continue; }
         try {
-          action.project.repo = (await availableRepo(action.project.repo, engine.get, sandbox)).repo;
+          await addProject(engine, sandbox, () => action.project);
         } catch (error) {
           errors.push(error instanceof Error ? error.message : String(error));
-          continue;
         }
+        continue;
       }
       if (action.type === "deleteTask") runner.cancel(action.id);
       if (action.type === "deleteGoal" || action.type === "finishGoal" || action.type === "archiveGoal" || action.type === "archiveObjective") {
@@ -366,30 +378,59 @@ async function route(
     }
     return true;
   }
+  if (pathname === "/api/directories" && method === "GET") {
+    try { sendJson(res, 200, directoryChoices(url.searchParams.get("path") ?? "~")); }
+    catch (error) { sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    return true;
+  }
+  if (pathname === "/api/workspaces" && (method === "GET" || method === "POST")) {
+    try {
+      const body = method === "POST" ? await readJson(req) as { path?: unknown; name?: unknown; summary?: unknown } | null : null;
+      const value = method === "GET" ? url.searchParams.get("path") : body?.path;
+      if (typeof value !== "string" || !value.trim()) throw new BadRequest("Choose a workspace directory.");
+      const collection = await inspectWorkspace(value);
+      if (method === "GET") {
+        sendJson(res, 200, await availableWorkspace(collection, engine.get(), sandbox));
+        return true;
+      }
+      if (typeof body?.name !== "string" || !body.name.trim() || (body.summary !== undefined && typeof body.summary !== "string")) {
+        throw new BadRequest("A workspace needs a name and an optional text summary.");
+      }
+      const name = body.name.trim();
+      const id = `proj-api-${stamp()}`;
+      const summary = typeof body.summary === "string" ? body.summary.trim() : "";
+      const project = await addProject(engine, sandbox, (board) => {
+        if (board.projects.some((item) => item.name.toLowerCase() === name.toLowerCase())) {
+          throw new BadRequest("A project with this name already exists.");
+        }
+        return { id, name, summary, workspace: collection };
+      });
+      engine.flush();
+      sendJson(res, 201, { project, revision: engine.version() });
+    } catch (error) { sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
+    return true;
+  }
   if (pathname === "/api/projects/repo" && method === "GET") {
     try {
-      sendJson(res, 200, await availableRepo(url.searchParams.get("path") ?? "", engine.get, sandbox));
+      sendJson(res, 200, await availableRepo(url.searchParams.get("path") ?? "", engine.get(), sandbox));
     } catch (error) {
       sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
     return true;
   }
   if (pathname === "/api/projects" && method === "POST") {
-    const planned = planProject(engine.get(), await readJson(req), `proj-api-${stamp()}`);
-    if ("error" in planned) {
-      sendJson(res, 400, planned);
-      return true;
+    const body = await readJson(req);
+    const id = `proj-api-${stamp()}`;
+    try {
+      const project = await addProject(engine, sandbox, (board) => {
+        const planned = planProject(board, body, id);
+        if ("error" in planned) throw new BadRequest(planned.error);
+        return planned.project;
+      });
+      sendJson(res, 201, { project, note: "Added to the board." });
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
     }
-    if (planned.project.repo) {
-      try {
-        planned.project.repo = (await availableRepo(planned.project.repo, engine.get, sandbox)).repo;
-      } catch (error) {
-        sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
-        return true;
-      }
-    }
-    engine.dispatch(planned.action);
-    sendJson(res, 201, { project: planned.project, note: "Added to the board." });
     return true;
   }
   if (pathname === "/api/draft" && method === "POST") {

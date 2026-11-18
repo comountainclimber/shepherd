@@ -241,6 +241,12 @@ export interface Project {
   directory?: string;
   /** Absolute path to a repository supplied by the person, outside or inside the workspace. */
   repo?: string;
+  workspace?: RepositoryWorkspace;
+}
+
+export interface RepositoryWorkspace {
+  root: string;
+  repositories: { name: string; repo: string }[];
 }
 
 export type GoalStatus = "open" | "done" | "archived";

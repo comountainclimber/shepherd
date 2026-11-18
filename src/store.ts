@@ -245,11 +245,21 @@ export function reconcileUi(ui: UiState, state: OrchestrationState): UiState {
 }
 
 function receive(revision: number, state: OrchestrationState) {
+  if (revision < confirmedRevision) return;
   confirmed = state;
   confirmedRevision = revision;
   pending = pending.filter((entry) => entry.revision === undefined || entry.revision > revision);
   rebase();
   useShepherd.setState((store) => ({ loaded: true, ui: reconcileUi(store.ui, store.state) }));
+}
+
+export async function refreshFromServer() {
+  const response = await fetch("/api/state");
+  const body = await response.json() as { state?: { state?: unknown }; revision?: number; error?: string };
+  if (!response.ok) throw new Error(body.error ?? "Could not refresh the board.");
+  const state = loadState(body.state?.state);
+  if (!state || typeof body.revision !== "number") throw new Error("The server returned an invalid board.");
+  if (body.revision >= confirmedRevision) receive(body.revision, state);
 }
 
 /** Follows the server's board for as long as the tab is open. EventSource reconnects by itself. */
@@ -258,6 +268,7 @@ export function connectToServer(): () => void {
   source.onopen = () => {
     // A restarted server counts revisions from 1 again; edits it already answered are in its saved board.
     pending = pending.filter((entry) => entry.revision === undefined);
+    confirmedRevision = 0;
     useShepherd.setState({ connection: "open" });
   };
   source.onerror = () => useShepherd.setState({ connection: "lost" });

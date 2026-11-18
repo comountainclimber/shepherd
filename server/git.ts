@@ -243,7 +243,7 @@ export async function mergeConflict(folder: string): Promise<{ source: string; f
  */
 export async function openWorktree(
   repo: string, root: string, taskId: string, name: string, branch?: string,
-  options: { start?: string; prefix?: "shepherd" | "shepherd-step" } = {},
+  options: { start?: string; prefix?: "shepherd" | "shepherd-step"; folder?: string } = {},
 ): Promise<Worktree> {
   if (!NAME.test(name)) throw new GitError(`Not a usable folder name: ${name}`);
   const target = options.start ?? (await currentBranch(repo)) ?? "HEAD";
@@ -256,7 +256,7 @@ export async function openWorktree(
   for (let index = 1; !chosen; index += 1) {
     const candidate = index === 1 ? `${prefix}/${name}` : `${prefix}/${name}-${index}`;
     if (!(await exists(repo, `refs/heads/${candidate}`)) && !(await must(repo, ["for-each-ref", "--format=%(refname)", `refs/heads/${candidate}/`])) && !existsSync(worktreeFolder(root, repo, candidate))) {
-      const folder = worktreeFolder(root, repo, candidate);
+      const folder = options.folder ?? worktreeFolder(root, repo, candidate);
       await must(repo, ["worktree", "prune"]);
       mkdirSync(path.dirname(folder), { recursive: true });
       await must(repo, ["worktree", "add", "-q", "-b", candidate, folder, target]);
@@ -266,7 +266,7 @@ export async function openWorktree(
     }
     if ((await ownerOf(repo, candidate)) === taskId) chosen = candidate;
   }
-  const folder = worktreeFolder(root, repo, chosen);
+  const folder = options.folder ?? worktreeFolder(root, repo, chosen);
   if ((await currentBranch(repo)) === chosen) throw new GitError(`${repo} has ${chosen} checked out. Switch the project checkout to another branch before running this step.`);
   if (!existsSync(path.join(folder, ".git"))) {
     await must(repo, ["worktree", "prune"]);

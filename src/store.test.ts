@@ -3,7 +3,7 @@ import { blankGoal, newStep } from "./model/factory";
 import { reducer } from "./model/reducer";
 import type { OrchestrationState, UiState } from "./model/types";
 import { workspace } from "./model/workspace";
-import { connectToServer, initialUi, useShepherd } from "./store";
+import { connectToServer, initialUi, refreshFromServer, useShepherd } from "./store";
 
 const browserWindow = vi.hoisted(() => {
   const target = new EventTarget();
@@ -32,6 +32,52 @@ afterEach(() => {
 });
 
 describe("task selection", () => {
+  it("ignores stale stream events after a refresh, rebases pending edits, and accepts a restarted server", async () => {
+    const { receive, reconnect } = browser("/");
+    const original = board();
+    receive(original, 1);
+    const imported = reducer(original, { type: "createProject", project: {
+      id: "imported", name: "Product", summary: "",
+      workspace: { root: "/projects/product", repositories: [{ name: "api", repo: "/projects/product/api" }] },
+    } });
+    let confirmEdit!: () => void;
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ state: { state: imported }, revision: 3 }) })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        confirmEdit = () => resolve({ ok: true, json: async () => ({ revision: 1 }) });
+      }));
+    vi.stubGlobal("fetch", fetch);
+    await refreshFromServer();
+    useShepherd.getState().dispatch({ type: "updateTask", id: "step-other", patch: { name: "Pending edit" } });
+    useShepherd.getState().setProject("imported");
+
+    receive(original, 2);
+    expect(useShepherd.getState().state.projects.some((project) => project.id === "imported")).toBe(true);
+    expect(useShepherd.getState().ui.projectId).toBe("imported");
+    expect(useShepherd.getState().state.tasks.find((task) => task.id === "step-other")?.name).toBe("Pending edit");
+    receive(imported, 4);
+    expect(useShepherd.getState().state.tasks.find((task) => task.id === "step-other")?.name).toBe("Pending edit");
+
+    reconnect();
+    receive(original, 1);
+    expect(useShepherd.getState().state.projects.some((project) => project.id === "imported")).toBe(false);
+    expect(useShepherd.getState().state.tasks.find((task) => task.id === "step-other")?.name).toBe("Pending edit");
+    confirmEdit();
+    await vi.waitFor(() => expect(useShepherd.getState().state.tasks.find((task) => task.id === "step-other")?.name).toBe("Other step"));
+  });
+
+  it("refreshes the saved board after importing a workspace before selecting its task", async () => {
+    const collection = { root: "/projects/product", repositories: [{ name: "api", repo: "/projects/product/api" }] };
+    const state = reducer(board(), { type: "createProject", project: { id: "imported", name: "Product", summary: "", workspace: collection } });
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, json: async () => ({ state: { state }, version: 3, revision: 100 }),
+    })));
+    await refreshFromServer();
+    useShepherd.getState().setProject("imported");
+    expect(useShepherd.getState().state.projects.find((project) => project.id === "imported")?.workspace).toEqual(collection);
+    expect(useShepherd.getState().ui).toMatchObject({ projectId: "imported", goalId: "goal-imported" });
+  });
+
   it("selects a task alongside its project and clears the previous step and picker", () => {
     useShepherd.setState({ state: board(), ui: { ...initialUi, selectedTaskId: "old", inspectorOpen: true, addSaved: { after: null, depth: 0, label: "Old task" } } });
     useShepherd.getState().setGoal("second");
@@ -41,13 +87,15 @@ describe("task selection", () => {
   });
 
   it("reconciles removed tasks on server updates without opening an inspector while typing", () => {
-    let stream: { onmessage?: (message: { data: string }) => void };
+    let stream!: { onopen?: () => void; onmessage?: (message: { data: string }) => void };
     vi.stubGlobal("EventSource", class {
+      onopen?: () => void;
       onmessage?: (message: { data: string }) => void;
       constructor() { stream = this; }
       close() {}
     });
     const disconnect = connectToServer();
+    stream.onopen?.();
     const receive = (state: OrchestrationState, revision: number) => stream.onmessage?.({ data: JSON.stringify({ revision, state }) });
     const state = board();
     useShepherd.setState({ state, ui: { ...initialUi, goalId: "second", selectedTaskId: "step-other", inspectorOpen: false } });
@@ -100,12 +148,13 @@ function browser(pathname: string, saved: Partial<UiState> = {}) {
     setItem: vi.fn(),
     removeItem: vi.fn(),
   };
-  let stream!: { onmessage?: (message: { data: string }) => void };
+  let stream!: { onopen?: () => void; onmessage?: (message: { data: string }) => void };
   vi.stubGlobal("window", window);
   vi.stubGlobal("location", location);
   vi.stubGlobal("history", history);
   vi.stubGlobal("localStorage", localStorage);
   vi.stubGlobal("EventSource", class {
+    onopen?: () => void;
     onmessage?: (message: { data: string }) => void;
     constructor() { stream = this; }
     close() {}
@@ -113,8 +162,9 @@ function browser(pathname: string, saved: Partial<UiState> = {}) {
   useShepherd.setState({ state: workspace(1), ui: { ...initialUi, view: "canvas", goalId: "goal-proj-local", selectedTaskId: null, ...saved }, loaded: false });
   localStorage.setItem.mockClear();
   connectToServer();
+  stream.onopen?.();
   const receive = (state = board(), revision = 1) => stream.onmessage?.({ data: JSON.stringify({ revision, state }) });
-  return { store: useShepherd, location, history, localStorage, receive, window, entries };
+  return { store: useShepherd, location, history, localStorage, receive, window, entries, reconnect: () => stream.onopen?.() };
 }
 
 describe("address and place", () => {
