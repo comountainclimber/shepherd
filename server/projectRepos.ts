@@ -66,9 +66,8 @@ async function checkLocation(candidate: ProjectLocation, board: OrchestrationSta
   let commonDirs: Set<string> | undefined;
   for (const project of board.projects) {
     const existing = projectLocation(project, board, sandbox);
-    if (!candidate.root && !existing.root) {
-      if (repo && paths(existing).includes(repo)) throw new Error(`${repo} is already the repository for ${project.name}. Open that project instead.`);
-      continue;
+    if (!candidate.root && !existing.root && repo && paths(existing).includes(repo)) {
+      throw new Error(`${repo} is already the repository for ${project.name}. Open that project instead.`);
     }
     if (paths(existing).some((folder) => candidatePaths.some((incoming) => containsFolder(incoming, folder) || containsFolder(folder, incoming)))) {
       throw new Error(`An overlapping directory already belongs to ${project.name}. Open that project instead.`);
